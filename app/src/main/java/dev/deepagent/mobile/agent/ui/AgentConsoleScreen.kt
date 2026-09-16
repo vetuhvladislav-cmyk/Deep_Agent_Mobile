@@ -189,6 +189,14 @@ fun AgentConsoleScreen(
                 fontWeight = FontWeight.SemiBold,
             )
 
+            state.lastError?.takeIf { it.isNotBlank() }?.let { error ->
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = statusColor(state.status),
+                )
+            }
+
             OutlinedTextField(
                 value = task,
                 onValueChange = { task = it },
@@ -514,7 +522,7 @@ fun AgentConsoleScreen(
             ) {
                 items(
                     items = events,
-                    key = { event -> event.createdAt.toString() + event.message.hashCode() },
+                    key = { event -> event.eventId },
                 ) { event ->
                     AgentEventCard(event)
                 }
