@@ -176,7 +176,7 @@ fun AgentConsoleScreen(
         }
     }
 
-    val submitCurrentTask = {
+    val submitCurrentTask: () -> Unit = {
         localError = null
         scope.launch {
             runCatching {
@@ -203,6 +203,7 @@ fun AgentConsoleScreen(
                 }
             }
         }
+        Unit
     }
 
     Scaffold(
