@@ -1,516 +1,157 @@
-# План архитектуры и реализации Deep Agent
+# Дорожная карта реализации Deep Agent
 
-> Текущий проход: P1-A local controlled write реализуется в исходниках без запуска сборки и тестов. P0 уже реализован статически; ручная build/test-проверка остаётся отдельным gate.
+> Единственный источник порядка этапов, capabilityStatus, карточек реализации и критериев выхода.
 
-## Текущий статус
+Архитектурные контракты и permission matrix находятся в [ANDROID_AGENT_ARCHITECTURE_RU.md](./ANDROID_AGENT_ARCHITECTURE_RU.md). Этот документ не переопределяет их и не дублирует их полные определения.
 
-| Подэтап | Состояние | Граница |
-|---|---|---|
-| P0-A Workspace | Реализовано в коде | App-private import, стабильный workspace root и path boundary |
-| P0-A ToolRouter | Реализовано в коде | Пять read-only tools; generic shell отсутствует |
-| P0-A DeepSeek loop | Реализовано в коде | Ограниченный function_call/function_call_output round |
-| P0-B Journal | Реализовано в коде | События и request summary без токенов, recovery без replay |
-| P0-C Console setup | Частично реализовано в коде | Основной экран и импорт; UI regression ещё не запускалась |
-| P1-A WorkspaceIdentity | Реализовано в коде | Детерминированный \`sha256-tree\`, лимиты и symlink fail-closed |
-| P1-A apply_patch preview | Реализовано в коде | Unified/structured replacement, path/base hash/conflict/size checks |
-| P1-A controlled local write | Реализовано в коде | \`LOCAL_WRITE\`, explicit approval, checkpoint и atomic move |
-| P1-A Git/PR | Не реализовано | Отдельный следующий подэтап, без commit/push/PR |
-| Build/test gate | Не запускался | Требует отдельной команды пользователя |
+## 1. Правила статусов и этапов
 
-> Статус: утверждённый план реализации рабочего прототипа.
-> Последнее обновление: 2026-09-16.
-> Workflow остаётся ручным \`workflow_dispatch\`; изменения не должны автоматически запускать build/test.
-> В текущем проходе сборка, unit-тесты и ручной workflow не запускались.
+Допустимые значения capabilityStatus:
 
-## 1. Продуктовый контракт
+- available — capability прошла свой exit criterion и явно отмечена как доступная;
+- planned — capability утверждена для реализации, но exit criterion не закрыт;
+- deferred — направление отложено и хранится в ideas-файле;
+- out-of-scope — capability исключена архитектурой.
 
-`Deep_Agent_Mobile` — одно цельное Android-приложение и один APK для инженерных задач:
+Существующий код не переводит capability в available автоматически. Для перехода требуется выполнение exit criterion, статическая проверка соответствующего результата и явная запись изменения в этом файле.
 
-- писать и редактировать код, документацию и архитектуру;
-- анализировать ошибки, stack trace, фото и скриншоты;
-- составлять планы и объяснять решения;
-- читать workspace и историю Git;
-- предлагать и применять безопасные patch-изменения;
-- работать с GitHub, commit, Pull Request и Actions;
-- запускать тяжёлую Android-сборку удалённо и возвращать проверенный APK/AAB.
-
-Пользователь не устанавливает второй APK, Termux или отдельную графическую оболочку. Headless DSH/Node runtime, если он будет подключён, остаётся внутренним заменяемым исполнителем.
-
-Неподвижные ограничения:
-
-- один APK — единственная пользовательская поставка;
-- Android 16+ — основная платформа тестирования, но `minSdk` не повышается автоматически до 36;
-- GitHub Actions — основной способ тяжёлой сборки;
-- локальный runtime используется для лёгких операций и быстрых проверок;
-- серверные plugins не устанавливаются и не изменяются приложением;
-- UI не зависит от внутренних endpoint runtime;
-- внешний write не выполняется только потому, что модель написала такую инструкцию.
-
-## 2. Что есть сейчас
-
-Текущий APK — рабочий вертикальный срез, но ещё не автономный coding agent.
-
-| Компонент | Текущее состояние |
-| --- | --- |
-| `AgentMobileApp` / Compose UI | Нативный Agent Console: задача, target, permission, image input, конфигурация и события |
-| `AgentBridge v1` | `submit`, `cancel`, `clearEvents`, state и ordered event stream |
-| `AgentCore` | AUTO-маршрутизация, Local Lite probe, DeepSeek streaming, Actions dispatch |
-| `LocalLiteRunner` | Health probe и граница лёгких локальных операций |
-| `WorkspaceManager` / `WorkspaceIdentity` | App-private workspace, fingerprint и checkpoint path |
-| `ToolRouter` / `PatchEngine` | Read-only tools и preview/controlled local write |
-| `DeepSeekResponsesClient` | Responses API, semantic SSE, reasoning/output/tool delta events |
-| `GitHubActionsClient` | Dispatch workflow с `repository`, `workflow`, `ref` и task input |
-| Image input | Android URI → bytes → data URL → `input_image` |
-| Разрешения | `READ_ONLY`, `LOCAL_WRITE`, `GITHUB_WRITE`, `PR_CREATE`, `MERGE_RELEASE` |
-| CI | GitHub Actions собирает debug APK; release asset используется при переполнении artifact storage |
-
-Уже реализованы P0 и local часть P1-A. Сейчас не реализованы: branch/commit/push, GitHub PR, polling Actions, job logs, artifact verification и headless runtime.
-
-## 3. Целевая архитектура
-
-```mermaid
-flowchart TD
-    UI[Compose UI] --> Bridge[AgentBridge v1]
-    Bridge --> Core[Agent Core]
-    Core --> Model[DeepSeek adapter]
-    Core --> Router[ToolRouter + PermissionPolicy]
-    Router --> Local[Workspace / Local Lite]
-    Core --> GitHub[GitHub + Actions connector]
-    Core --> Runtime[RuntimeSupervisor]
-    Core --> Journal[Session journal]
-```
-
-### 3.1 Compose UI
-
-UI отвечает только за ввод и отображение:
-
-- задача и история текущей сессии;
-- выбор `AUTO`, `LOCAL_LITE`, `REMOTE_ACTIONS`;
-- выбор permission level;
-- конфигурация DeepSeek/GitHub;
-- attachment preview;
-- diff/approval/build/artifact cards;
-- отмена, повтор и восстановление.
-
-UI не вызывает GitHub REST, shell, DSH или файловую систему напрямую. Он работает через `AgentBridge` и получает события с correlation/session ID.
-
-### 3.2 AgentBridge v1
-
-Это стабильная граница между пользовательской оболочкой и исполнителями. Базовый контракт сохраняется:
-
-- `submit(AgentRequest)`;
-- `cancel()`;
-- `clearEvents()`;
-- `StateFlow<AgentSessionState>`;
-- `StateFlow<List<AgentEvent>>`.
-
-Расширять контракт нужно обратно совместимо: новые tool/build/runtime события добавляются в поток событий, а не превращают UI в клиент внутреннего runtime.
-
-### 3.3 Agent Core
-
-Agent Core владеет жизненным циклом одной сессии:
-
-1. валидирует задачу и конфигурацию;
-2. назначает `sessionId` и выбирает target;
-3. создаёт plan event;
-4. вызывает DeepSeek;
-5. принимает output или tool call;
-6. проверяет permission и scope;
-7. передаёт tool call исполнителю;
-8. возвращает tool result модели;
-9. показывает diff/build/artifact результат;
-10. завершает или ставит сессию на паузу.
-
-Agent Core не должен считать действие выполненным до получения результата от реального исполнителя.
-
-### 3.4 Providers и исполнители
-
-| Provider | Роль | Когда используется |
-| --- | --- | --- |
-| DeepSeek | reasoning, план, ответ, tool calls, image input | каждая интеллектуальная сессия |
-| Local Lite | быстрые read-only операции и лёгкие проверки | анализ документации и небольших workspace |
-| GitHub API | репозитории, branches, commits, PR | внешние операции и синхронизация |
-| GitHub Actions | Android/NDK/CMake/долгие тесты и APK | тяжёлые сборки |
-| Headless runtime | shell/PTY/DSH после стабилизации | только после P0/P1 |
-
-Каждый provider имеет отдельный интерфейс, timeout, cancellation, redaction и нормализованный результат.
-
-## 4. Рабочий прототип с минимальным запуском
-
-Цель ближайшего MVP — запуск без Termux, ручного копирования runtime и длинной настройки.
-
-### 4.1 Первый запуск
-
-1. APK открывает одну Agent Console.
-2. По умолчанию выбраны `AUTO` и `READ_ONLY`.
-3. Базовые параметры уже заполнены: `https://api.deepseek.com` и `deepseek-flash`.
-4. Пользователь вводит DeepSeek API key только при необходимости реального ответа.
-5. Для remote build пользователь указывает GitHub token, `owner/repository`, workflow и ref.
-6. При отсутствии ключа приложение работает в offline/local probe режиме и объясняет, что именно не настроено.
-
-До появления безопасного постоянного хранилища токены находятся только в памяти сессии и никогда не попадают в event detail, crash log или artifact.
-
-### 4.2 Базовый путь задачи
+Порядок этапов:
 
 ```text
-задача → валидация → план → запрос DeepSeek → reasoning/output → результат
+P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B
 ```
 
-Для задачи «собрать APK» AUTO выбирает `REMOTE_ACTIONS`. Для анализа, документации и лёгкой проверки — `LOCAL_LITE`. Любой write переводит сессию в approval gate.
+Один этап не получает второй самостоятельный статус. Если часть широкого этапа закрывается раньше, это фиксируется в его карточке и не создаёт новый Markdown-документ или новый статусный источник.
 
-### 4.3 Что нужно добавить, чтобы прототип стал реально полезным
+## 2. Сводка этапов
 
-- `WorkspaceSource`: app-private folder и импорт ZIP/папки через Storage Access Framework;
-- `WorkspaceIdentity`: `sha256-tree`, лимиты, deterministic entry order и fail-closed symlink policy;
-- `ToolRouter`: `list_files`, `read_file`, `search_code`, `git_status`, `git_diff` и preview-only `apply_patch`;
-- `ConversationStore`: история prompt/response/tool rounds;
-- `ConfigStore`: единая проверяемая конфигурация провайдеров;
-- `ApprovalController`: отдельное подтверждение перед write, push, PR, merge и release;
-- `ActionsRunTracker`: run ID, status и ссылка на workflow;
-- единые UI-карточки `TOOL`, `BUILD`, `DIFF`, `ARTIFACT`, `APPROVAL`.
+| Этап | capabilityStatus | Назначение |
+| --- | --- | --- |
+| P0-0 | planned | очистка Deep Agent и границ репозитория |
+| P0-A | planned | workspace и read-only ToolRouter |
+| P0-B | planned | durable session journal и recovery |
+| P0-C | planned | MVP setup и понятный Agent Console |
+| P1-A | planned | diff, controlled write, Git и ручной PR |
+| P1-B | planned | Actions observability и проверенные APK/AAB |
+| P1-C | planned | Android 16 UI и regression contract |
+| P2-A | planned | RuntimeSupervisor и headless DSH |
+| P2-B | planned | PTY и интерактивные команды |
 
-Это минимальный рабочий контур. Полный headless DSH и PTY не являются условием первого полезного прототипа.
+## 3. Карточки реализации
 
-## 5. Контракты данных
+### P0-0 — Очистка Deep Agent и границ репозитория
 
-### 5.1 Request
-
-`AgentRequest` должен постепенно получить:
-
-- `sessionId`;
-- task и conversation ID;
-- target и permission;
-- workspace ID/root;
-- provider configuration reference;
-- image attachments;
-- repository/ref/workflow;
-- cancellation/deadline metadata.
-
-Секреты не помещаются в сериализуемый event journal в открытом виде.
-
-### 5.2 Tool call/result
-
-Будущий типизированный контракт:
-
-| Поле | Требование |
-| --- | --- |
-| `invocationId` | уникален в рамках session |
-| `toolName` | allowlist, не произвольная shell-команда |
-| `arguments` | JSON schema + лимиты |
-| `permission` | проверяется до запуска |
-| `workspaceScope` | нормализованный root и target paths |
-| `timeout` | обязательный deadline |
-| `result` | stdout/data/error + truncation metadata |
-
-Каждый вызов и результат становятся отдельными `TOOL` events.
-
-### 5.3 Session journal
-
-Журнал хранит versioned records:
-
-- request и выбранный target;
-- plan, reasoning/output metadata;
-- tool calls/results;
-- approval decisions;
-- diff/commit/run/artifact references;
-- final status и error.
-
-Восстановление после process death не повторяет уже завершённый вызов. Незавершённый вызов отмечается `UNKNOWN` и требует re-check, а не слепого повтора.
-
-## 6. Permission Policy
-
-| Операция | READ_ONLY | LOCAL_WRITE | GITHUB_WRITE | PR_CREATE | MERGE_RELEASE |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| plan/read/search/diff | yes | yes | yes | yes | yes |
-| apply_patch/local file write | no | approval | approval | approval | approval |
-| branch/commit/push | no | no | approval | approval | approval |
-| workflow dispatch | no | no | approval | approval | approval |
-| create PR | no | no | no | approval | approval |
-| merge/release | no | no | no | no | approval |
-
-Право проверяется в Agent Core непосредственно перед действием. Permission из текста модели не считается разрешением пользователя.
-
-## 7. Пошаговый путь реализации
-
-### P0-0 — Очистка Deep Agent (текущий шаг)
-
-Задача: оставить в репозитории только собственный Deep Agent.
-
-- [x] не включать внешний web/mobile-adapter в проект;
-- [x] убрать agent namespace `dev.harness.mobile.agent`;
-- [x] заменить Harness-specific icon/comment/network wording;
-- [x] сохранить только нативный Agent Console, providers и Android runtime основу;
-- [x] обновить README, architecture, ideas и roadmap;
-- [x] не менять server plugins;
-- [x] не запускать build/test без команды.
-
-Критерий выхода: в исходниках нет старого package namespace, web assets, профилей внешнего сервера или UI-пунктов другого приложения; остаются только явные boundary-документы.
+- **Статус:** capabilityStatus: planned
+- **Владелец:** repository boundary / Agent Core integration
+- **Входной контракт:** утверждённая архитектура, исходный repository snapshot и перечень файлов; контракты не переопределяются в этапе.
+- **Выходной контракт:** в репозитории остаются только собственный Deep Agent, один APK-контур, согласованные source-пакеты и четыре канонических Markdown-файла; Harness/mobile-adapter и серверные plugin mutations не становятся зависимостями.
+- **Permission gate:** WORKSPACE_WRITE для локальных изменений; GIT_WRITE для branch/commit/push; внешние финальные действия не входят в этап.
+- **Session ID:** обязателен для инвентаризации, каждой записи и commit correlation.
+- **Redacted audit trail:** SESSION, TOOL, DIFF, APPROVAL и OUTPUT events с путями, SHA и session ID; secrets, tokens и cookies redacted.
+- **Cancellation / timeout:** отмена до commit оставляет исходный snapshot без применения; статические операции имеют bounded timeout и не запускают build/test.
+- **Recovery rule:** после interruption повторно считать repository fingerprint; неизвестную запись не повторять без нового diff и approval.
+- **Exit criterion:** запрещённые Harness/mobile-adapter runtime-зависимости и лишние документационные файлы удалены из целевого scope; четыре Markdown-файла проходят ссылочную и структурную проверку; code/build/test gate остаётся отдельным.
 
 ### P0-A — Workspace и read-only ToolRouter
 
-Задача: агент должен уметь читать проект и анализировать ошибку, не изменяя файлы.
+- **Статус:** capabilityStatus: planned
+- **Владелец:** Workspace Manager и ToolRouter
+- **Входной контракт:** WorkspaceIdentity, canonical path boundary, allowlisted tool names и лимиты из архитектуры.
+- **Выходной контракт:** read-only list_files, read_file, search_code, git_status и git_diff с нормализованными ToolCall/ToolResult, scope, timeout, truncation и error codes.
+- **Permission gate:** READ_ONLY; tool не может изменить workspace, выбрать другой target или повысить permission.
+- **Session ID:** обязателен в каждом вызове, результате и UI event.
+- **Redacted audit trail:** invocation ID, tool name, workspace ID, input summary, output size, truncation, fingerprint и redacted error.
+- **Cancellation / timeout:** отдельный deadline для каждого tool; Git timeout и cancellation возвращают нормализованный результат; generic shell не добавляется.
+- **Recovery rule:** running без подтверждённого результата переводится в UNKNOWN; автоматический replay запрещён, выполняется re-check.
+- **Exit criterion:** все пять tools работают через единый router contract; path escape, symlink escape, sensitive files, output overflow и отсутствие git обрабатываются fail-closed; workspace не изменяется.
 
-Порядок:
+### P0-B — Durable session journal и recovery
 
-1. Ввести `WorkspaceManager` с app-private root и `WorkspaceSource`.
-2. Нормализовать пути; запретить `..`, symlink escape и выход из root.
-3. Ввести лимиты file size, result count, recursion depth и output bytes.
-4. Реализовать `list_files`, `read_file`, `search_code`.
-5. Реализовать `git_status` и `git_diff` read-only.
-6. Добавить fake filesystem/router для контрактных тестов.
-7. Подключить tool schemas к DeepSeek request и tool result round-trip.
+- **Статус:** capabilityStatus: planned
+- **Владелец:** Agent Core и Session Journal
+- **Входной контракт:** AgentBridge v1, AgentEvent, SessionRecord, session/invocation IDs и app-private storage.
+- **Выходной контракт:** versioned durable journal, восстановление состояния после rotation/background/process death и пользовательское summary без секретов.
+- **Permission gate:** READ_ONLY для journal/recovery; восстановление не даёт права на повторную write или external action.
+- **Session ID:** является первичным ключом durable записи и не меняется при восстановлении.
+- **Redacted audit trail:** journal сохраняет состояние вызовов, event sequence, decisions и provider references без tokens, cookies и Authorization headers.
+- **Cancellation / timeout:** journal write атомарен; recovery имеет bounded timeout и сообщает неполное состояние вместо зависания.
+- **Recovery rule:** завершённые side effects не повторяются; незавершённые операции получают UNKNOWN и требуют re-check.
+- **Exit criterion:** сессия восстанавливается без повторения завершённых tool/build/write операций, сохраняет correlation IDs и объясняет неизвестное состояние.
 
-Критерий выхода: модель может получить список, содержимое, поиск и diff; приложение показывает источник и лимиты; workspace не меняется.
+### P0-C — MVP setup и понятный Agent Console
 
-### P0-B — Conversation и session recovery
-
-Задача: длинная инженерная сессия переживает rotation, background и process death.
-
-- versioned `SessionRecord` и event journal;
-- ограниченный размер событий и сворачивание старых reasoning chunks;
-- сохранение `sessionId`, invocation IDs, run IDs и approval decisions;
-- восстановление только подтверждённого состояния;
-- status machine: `IDLE`, `RUNNING`, `WAITING_APPROVAL`, `PAUSED`, `FAILED`, `UNKNOWN`, `COMPLETED`, `CANCELLED`;
-- отдельное пользовательское summary вместо вывода всего технического журнала.
-
-Критерий выхода: восстановленная сессия не повторяет завершённые read/tool/build операции и объясняет неизвестное состояние.
-
-### P0-C — MVP setup и понятный результат
-
-Задача: сократить запуск до одного экрана и одной кнопки.
-
-- единая `ProviderConfig` с inline validation;
-- health-check DeepSeek и GitHub без раскрытия токенов;
-- понятные сообщения «offline», «нет ключа», «нет repository/workflow»;
-- default target `AUTO`, permission `READ_ONLY`;
-- event cards с группировкой reasoning/output/tool/build;
-- отмена, очистка и повтор сессии;
-- attachment preview без обращения к локальному пути из сообщения.
-
-Критерий выхода: новый пользователь может понять, что запустить, какие данные отсутствуют и почему операция остановилась.
+- **Статус:** capabilityStatus: planned
+- **Владелец:** Compose UI и AgentBridge integration
+- **Входной контракт:** AgentBridge state/event stream, provider configuration reference, target selection и permission model.
+- **Выходной контракт:** один понятный экран с task input, target, permission, provider state, attachment preview, events, error, cancel и recovery affordances.
+- **Permission gate:** READ_ONLY по умолчанию; PLAN разрешает только формирование плана; write controls отображают gate и не выполняют действие без отдельного approval.
+- **Session ID:** отображается через события и связывает task, provider calls, approvals и final result.
+- **Redacted audit trail:** UI events содержат event type, state transitions, provider name и correlation IDs; секретные значения маскируются.
+- **Cancellation / timeout:** cancel доступен из UI; network/provider timeout переводится в понятное состояние без скрытого retry.
+- **Recovery rule:** после rotation/background UI подписывается на AgentBridge, а не читает journal; при UNKNOWN предлагает re-check.
+- **Exit criterion:** новый пользователь из одного экрана понимает, что настроено, что отсутствует, какой permission требуется и почему операция остановилась.
 
 ### P1-A — Diff, controlled write, Git и ручной PR
 
-Задача: агент вносит изменения только через проверяемый diff и не получает
-неявное право на запись.
+- **Статус:** capabilityStatus: planned
+- **Владелец:** Patch Engine, Workspace Manager и GitHub Connector
+- **Входной контракт:** read-only workspace snapshot, ToolCall для patch, WorkspaceIdentity, base fingerprint, explicit approval и target repository/ref.
+- **Выходной контракт:** preview/diff, checkpoint и controlled local apply; branch/commit/push и ручной Pull Request с проверяемой provenance.
+- **Permission gate:** WORKSPACE_WRITE для локальной записи; GIT_WRITE для branch/commit/push/PR; REMOTE_ACTION для merge/release не входит в этап.
+- **Session ID:** обязателен в preview, approval, checkpoint, commit, PR и каждом связанном event.
+- **Redacted audit trail:** base file SHA, plan/apply fingerprints, changed paths, approval actor, checkpoint reference, commit SHA и PR number; secrets redacted.
+- **Cancellation / timeout:** preview можно отменить без записи; apply и Git operations имеют timeout, cancellation и fail-closed conflict handling.
+- **Recovery rule:** fingerprint mismatch или unknown apply останавливает операцию; checkpoint используется для re-check/rollback, автоматический повтор запрещён.
+- **Exit criterion:** каждая локальная мутация имеет preview, base SHA, актуальный fingerprint, approval, checkpoint и recovery path; каждый commit/PR связан с session ID, repository, ref и проверяемым SHA.
 
-В текущем проходе реализована local часть P1-A:
+### P1-B — Actions observability и проверенные APK/AAB
 
-1. Добавить \`WorkspaceIdentity\`, который строит детерминированный \`sha256-tree\`
-   по относительным путям, типам, размерам и SHA содержимого файлов; лимиты и
-   symlink policy работают fail-closed.
-2. \`apply_patch\` принимает unified diff или полный replacement только для
-   текстового файла внутри workspace.
-3. Preview проверяет path scope, чувствительные имена, base file SHA, conflicts и
-   размер результата; preview не имеет побочных эффектов.
-4. Agent Core связывает preview с исходным permission текущей сессии. Модель не
-   может повысить permission сама.
-5. Только пользовательская кнопка approval запускает запись при
-   \`permission >= LOCAL_WRITE\`.
-6. Перед атомарной заменой исходный файл сохраняется в app-private checkpoint.
-7. Fingerprint повторно проверяется между preview и apply; при изменении workspace
-   применение отменяется. При неопределённом результате сессия получает \`UNKNOWN\`
-   и требует нового preview/re-check.
-8. После успешного apply сессия получает отдельные approval/tool/session events.
-
-Пока сознательно не реализованы следующие отдельные подэтапы P1-A:
-
-- branch/commit/push через GitHub provider;
-- привязка commit к remote repository/ref и проверяемому SHA;
-- \`create_pull_request\` только при \`PR_CREATE\`.
-
-Автоматический PR после ответа модели запрещён; PR создаётся только явным действием
-после отдельного согласования и прохождения Git/Actions gates.
-
-Критерий выхода local части: любой patch показывает diff, запись имеет approval
-event, base file SHA и workspace fingerprint проверяются, checkpoint создаётся до
-atomic move, а конфликт или потеря состояния не приводит к слепому повтору.
-
-Критерий выхода полного P1-A: дополнительно commit/PR имеют проверяемый SHA и
-связь с session ID, repository и ref.
-
-### P1-B — GitHub Actions observability и APK
-
-Задача: пользователь видит весь путь удалённой сборки в том же APK.
-
-- dispatch возвращает или находит `runId`;
-- polling с backoff и cancellation;
-- run/job/step status, duration и failed step;
-- job logs с truncation и secret redaction;
-- failed-job retry только по permission;
-- список artifacts;
-- скачивание APK/AAB в workspace;
-- проверка content type, размер, checksum, commit SHA и expected variant;
-- отображение прямой ссылки и локального пути.
-
-Критерий выхода: путь `dispatch → run → job → log → artifact` наблюдаем без ручного открытия GitHub.
+- **Статус:** capabilityStatus: planned
+- **Владелец:** GitHub Actions Connector и Artifact Manager
+- **Входной контракт:** разрешённый workflow dispatch, repository/ref/workflow, session ID и commit provenance.
+- **Выходной контракт:** наблюдаемый путь dispatch → run → job → step/log → artifact → verified result.
+- **Permission gate:** GIT_WRITE для dispatch и retry; WORKSPACE_WRITE для сохранения скачанного artifact; merge/release остаются за REMOTE_ACTION.
+- **Session ID:** связывает dispatch, workflow run, jobs, logs, artifact и UI cards.
+- **Redacted audit trail:** run ID, job/step states, durations, redacted logs, artifact name/size/content type/checksum и source SHA.
+- **Cancellation / timeout:** polling имеет backoff, deadline и cancel; скачивание ограничено размером, типом и timeout; failed-job retry не выполняется автоматически.
+- **Recovery rule:** неизвестный run/job/artifact получает UNKNOWN; повтор dispatch запрещён до re-check исходного run и idempotency key.
+- **Exit criterion:** приложение показывает status и failed step, позволяет получить redacted logs, проверяет artifact type/size/checksum/commit SHA и сохраняет подтверждённый APK/AAB.
 
 ### P1-C — Android 16 UI и regression contract
 
-Задача: защитить нативную оболочку перед расширением runtime.
-
-- Agent Console task input;
-- target/permission dropdowns;
-- provider configuration и secret masking;
-- image picker/preview;
-- events, errors, cancel/retry;
-- rotation, background/foreground, insets и accessibility semantics;
-- стабильные test tags, не зависящие от языка;
-- screenshot regression только для согласованных критических состояний.
-
-Критерий выхода: основной пользовательский поток повторяем на Android 16 и не теряет сессию при переходах.
+- **Статус:** capabilityStatus: planned
+- **Владелец:** Compose UI и Android validation layer
+- **Входной контракт:** AgentBridge v1, UI state model, event types, permission states и согласованные Android 16 scenarios.
+- **Выходной контракт:** стабильный UI contract с test IDs, accessibility semantics, rotation/background/insets/keyboard coverage и screenshot fixtures для критических состояний.
+- **Permission gate:** WORKSPACE_WRITE только для изменения UI source; runtime actions в сценариях используют permission текущей сессии.
+- **Session ID:** используется в fixtures и event assertions, но не является частью визуального текста.
+- **Redacted audit trail:** scenario ID, screen state, event sequence, failure location и screenshot reference без provider secrets.
+- **Cancellation / timeout:** каждый UI scenario имеет bounded timeout; зависший provider не блокирует UI test lifecycle.
+- **Recovery rule:** потеря Activity не создаёт новую сессию и не повторяет side effect; тест повторно подключается к AgentBridge state.
+- **Exit criterion:** основные user flows воспроизводимы на Android 16, имеют стабильные test IDs и не теряют session state при rotation/background/insets transitions.
 
 ### P2-A — RuntimeSupervisor и headless DSH
 
-Задача: добавить внутренний runtime, не превращая его в UI API.
-
-State machine `RuntimeSupervisor`:
-
-```text
-EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY
-                         ↘ FAILED → ROLLBACK
-```
-
-Порядок:
-
-1. Выбрать ARM64 Node.js/DSH bundle и зафиксировать версию.
-2. Хранить manifest и SHA-256 рядом с bundle.
-3. Распаковывать атомарно в app-private storage.
-4. Проверять executable, ABI, version и readiness probe.
-5. Запускать процесс под supervisor с timeout/heartbeat.
-6. Использовать loopback adapter за `AgentBridge`, без прямой связи UI с endpoint DSH.
-7. Добавить controlled shutdown, crash recovery и rollback.
-8. Для долгой работы использовать foreground service и понятное уведомление.
-
-Критерий выхода: отказ runtime не повреждает workspace и не блокирует нативный Agent Core; второй APK и Termux не нужны.
+- **Статус:** capabilityStatus: planned
+- **Владелец:** RuntimeSupervisor и Local Lite Runtime integration
+- **Входной контракт:** отдельно согласованный ARM64 runtime bundle, manifest, checksum, ABI/version range и readiness probe.
+- **Выходной контракт:** внутренний lifecycle EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY с FAILED/ROLLBACK веткой, loopback adapter за AgentBridge и controlled shutdown.
+- **Permission gate:** WORKSPACE_WRITE для app-private install/update; provider runtime не получает право на GitHub или merge/release.
+- **Session ID:** связывает runtime start, health probe, invocation, crash и rollback.
+- **Redacted audit trail:** bundle version, ABI, checksum, lifecycle states, heartbeat, exit code и error class; environment secrets redacted.
+- **Cancellation / timeout:** install/start/stop/readiness/heartbeat имеют bounded timeout; cancellation удаляет только неполный temporary state.
+- **Recovery rule:** failed or incompatible bundle не становится active; supervisor выполняет rollback к последней подтверждённой версии или возвращает EMPTY.
+- **Exit criterion:** runtime запускается внутри одного APK, readiness подтверждается, отказ не повреждает workspace и UI продолжает работать через AgentBridge.
 
 ### P2-B — PTY и интерактивные команды
 
-Только после P2-A:
-
-- определить PTY backend для ARM64;
-- ограничить persistent shell workspace и environment;
-- обеспечить cancel/process tree cleanup;
-- восстановить или явно завершить потерянный процесс;
-- запретить произвольное выполнение команды только из текста модели.
-
-Критерий выхода: интерактивная команда не блокирует UI и не выходит за permission/workspace scope.
-
-## 8. Фото, OCR и генерация
-
-### Уже есть
-
-- URI читается через `ContentResolver`;
-- bytes кодируются в data URL;
-- DeepSeek получает `input_image`;
-- размер inline input ограничивается.
-
-### После стабилизации P0/P1
-
-- resize и EXIF/orientation normalization;
-- OCR текста и stack trace;
-- выделение области и сравнение двух UI screenshots;
-- генерация SVG/Compose/HTML через Agent Core;
-- отдельный `ImageGenerator` provider для raster output.
-
-Генерация растровых изображений не считается автоматически доступной возможностью текущего DeepSeek adapter.
-
-## 9. Безопасность и секреты
-
-Текущая безопасная база:
-
-- `READ_ONLY` по умолчанию;
-- токены только в памяти сессии;
-- redaction в событиях;
-- нет произвольного shell tool;
-- нет неявного write;
-- preview/apply связан с base file SHA и `sha256-tree`;
-- checkpoint создаётся до atomic move;
-- recovery не повторяет неизвестную write-операцию и требует re-check.
-
-До отдельного решения D3 нельзя:
-
-- записывать токены в plaintext preferences или journal;
-- отправлять токены модели;
-- вставлять секреты в task input или artifact detail;
-- считать успешным действие без подтверждённого результата provider.
-
-После P0 выбирается один из вариантов хранения: Android Keystore, внешний proxy или сессионная схема с повторным вводом.
-
-## 10. Что сознательно не входит в текущий MVP
-
-- второй APK;
-- обязательная установка Termux;
-- Android SDK/NDK внутри базового APK;
-- полноценный PTY;
-- автоматический PR/merge/release;
-- изменение server plugins;
-- внешняя web-оболочка как обязательная часть Deep Agent;
-- бесконтрольное выполнение shell-команд;
-- постоянное хранение токенов без отдельного решения.
-
-## 11. Структура исходников
-
-Текущая и целевая схема:
-
-```text
-app/src/main/java/dev/deepagent/mobile/
-├── MainActivity.kt
-├── AgentMobileApp.kt
-├── ui/theme/
-└── agent/
-    ├── core/AgentCore.kt
-    ├── deepseek/DeepSeekResponsesClient.kt
-    ├── github/GitHubActionsClient.kt
-    ├── model/AgentModels.kt
-    ├── protocol/AgentBridge.kt
-    ├── runtime/LocalLiteRunner.kt
-    ├── ui/AgentConsoleScreen.kt
-    ├── tools/ToolRouter.kt              # P0-A/P1-A
-    ├── patch/PatchEngine.kt             # P1-A
-    ├── workspace/WorkspaceManager.kt    # P0-A/P1-A
-    ├── workspace/WorkspaceIdentity.kt   # P1-A
-    ├── session/SessionStore.kt          # P0-B
-    ├── policy/PermissionPolicy.kt       # P0-C
-    └── runtime/RuntimeSupervisor.kt     # P2-A
-```
-
-Пока Gradle остаётся одним Android module. Новые Kotlin-пакеты вводятся раньше, чем отдельные Gradle modules; выделение modules оправдано только при появлении независимых тестируемых boundaries.
-
-## 12. Проверка результата по этапам
-
-Для каждого этапа должны существовать:
-
-- контракт входа/выхода;
-- permission gate;
-- correlation/session ID;
-- redacted event trail;
-- cancellation/timeout;
-- failure and recovery behavior;
-- критерий выхода, проверяемый отдельно.
-
-В этом проходе такие проверки не запускаются. Команда на сборку/тесты должна быть дана отдельно пользователем; до неё ограничиваемся чтением дерева, diff и статическим контролем изменений.
-
-## 13. Не менять без отдельного решения
-
-- один APK;
-- `AgentBridge v1` как UI/runtime boundary;
-- DeepSeek adapter как заменяемый provider;
-- GitHub Actions как основной heavy-build path;
-- `READ_ONLY` по умолчанию и раздельные permission levels;
-- отсутствие обязательного Termux/DSH APK;
-- отсутствие server plugin mutations;
-- правило: модель не может сама выдать себе permission.
-
-## Definition of Done
-
-- новый пользователь запускает задачу из одной Agent Console;
-- read-only анализ не меняет workspace;
-- каждый write показывает diff и требует approval;
-- GitHub операция связана с repository/ref/SHA/session ID;
-- Actions run, logs и artifacts видны и проверены;
-- runtime отказоустойчив и заменяем;
-- восстановление сессии не повторяет завершённые операции;
-- APK остаётся единственной поставкой;
-- документация обновляется вместе с реализацией;
-- серверные plugins не изменяются.
+- **Статус:** capabilityStatus: planned
+- **Владелец:** RuntimeSupervisor и interactive execution provider
+- **Входной контракт:** подтверждённый P2-A runtime, PTY backend для ABI, workspace scope и explicit user action.
+- **Выходной контракт:** cancellable PTY session, ограниченное дерево процессов, scoped environment и нормализованные output/exit events.
+- **Permission gate:** WORKSPACE_WRITE для команд, способных изменить workspace; READ_ONLY не запускает mutating process; REMOTE_ACTION не подразумевается.
+- **Session ID:** связывает PTY process group, output chunks, cancel, exit и recovery state.
+- **Redacted audit trail:** command metadata, scoped cwd, process ID, exit state, duration и redacted output; credentials не журналируются.
+- **Cancellation / timeout:** cancel завершает process tree; idle/maximum runtime timeout обязателен; UI не блокируется.
+- **Recovery rule:** потерянный процесс получает UNKNOWN, не восстанавливается автоматически и требует явного re-check или controlled termination.
+- **Exit criterion:** интерактивная команда не выходит из workspace/permission scope, не блокирует UI, корректно отменяется и оставляет понятное состояние после process death.

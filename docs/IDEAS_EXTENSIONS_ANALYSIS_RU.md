@@ -1,183 +1,80 @@
-# Идеи, расширения и направления анализа
+# Отложенные идеи, расширения и неподтверждённые направления
 
-Канонический файл для `Deep_Agent_Mobile`. Внешняя web/mobile-адаптация находится вне области Deep Agent и не входит в его runtime.
+Этот файл содержит только направления со статусом deferred, неподтверждённые идеи и проекции архитектурных out-of-scope решений. Он не является источником архитектурных контрактов, permission matrix, порядка этапов или текущего состояния кода.
 
-> Канонический порядок задач находится в [IMPLEMENTATION_ROADMAP_RU.md](./IMPLEMENTATION_ROADMAP_RU.md).
-> Этот файл фиксирует границы, решения и отложенные направления. Реализация выполняется по явной задаче и после отдельного согласования; текущий проход не запускает сборку и тесты.
+Порядок реализации находится в [IMPLEMENTATION_ROADMAP_RU.md](./IMPLEMENTATION_ROADMAP_RU.md). Архитектурные границы и контракты находятся в [ANDROID_AGENT_ARCHITECTURE_RU.md](./ANDROID_AGENT_ARCHITECTURE_RU.md).
 
-## Правила статусов
+## D1 — Изображения и визуальный анализ
 
-- **Задачи реализации** — утверждённый backlog продукта. Реализуются по приоритету `P0 → P1 → P2` после прохождения критериев выхода.
-- **Отложенный план** — направления, которые записаны для будущего этапа, но сейчас не реализуются.
-- **Отдельное решение** — архитектурная развилка, которую нельзя закрывать молча изменением кода.
+**Состояние: deferred**
 
-## Граница продукта
+Возможные расширения:
 
-- Пользователь получает одно цельное Android-приложение и один APK.
-- Внутренние Agent Core, runtime, GitHub/Actions и UI-компоненты не являются отдельными приложениями.
-- Termux Activity, отдельный DSH APK и вторая пользовательская оболочка не требуются.
-- Android 16+ используется как платформа тестирования; `minSdk` не повышается автоматически до 36.
-- GitHub Actions остаётся основным способом тяжёлой Android-сборки.
-- Серверные plugins внешнего сервера не изменяются в рамках текущего проекта.
-- Запись, push, PR, merge и release разделяются уровнями `READ_ONLY`, `LOCAL_WRITE`, `GITHUB_WRITE`, `PR_CREATE`, `MERGE_RELEASE`.
+- OCR текста, stack trace и экранных сообщений;
+- resize, crop и EXIF/orientation normalization;
+- сравнение двух UI-скриншотов с подсветкой отличий;
+- выделение областей и передача нескольких изображений;
+- генерация SVG, Compose и HTML;
+- отдельный provider для растровой генерации изображений;
+- политика TTL и удаления временного image cache;
+- явное отображение пользователю факта передачи изображения внешнему provider.
 
-## Уже реализовано в `v0.2.0-test`
+Открытый вопрос: какой image provider, лимиты размера и политика хранения дают приемлемый результат без превращения image pipeline в самостоятельный runtime.
 
-- Agent Core и стабильный внутренний контракт `AgentBridge v1`.
-- Маршруты `AUTO`, `LOCAL_LITE` и `REMOTE_ACTIONS`.
-- Local Lite Runner с health probe.
-- DeepSeek Responses API streaming, reasoning и image input через Android URI → data URL.
-- Dispatch GitHub Actions после проверки `GITHUB_WRITE`.
-- Нативная Agent Console внутри единственного APK.
-- Базовая лента событий и временное хранение API/GitHub-токенов только в памяти текущей сессии.
+## D2 — Расширенная рабочая область
 
-## Утверждённые задачи реализации
+**Состояние: deferred**
 
-Полный список, зависимости и критерии выхода — в [приоритизированной дорожной карте](./IMPLEMENTATION_ROADMAP_RU.md). Краткий порядок:
+Возможные расширения:
 
-1. **P0-A — ToolRouter foundation:** `read_file`, `list_files`, `search_code`, `git_status`, `git_diff`, типизированные tool calls/results, workspace boundary и контрактные тесты.
-2. **P0-B — История и восстановление:** versioned event journal, сериализация tool rounds, восстановление незавершённой сессии после Activity/process death.
-3. **P1-A — Запись, Git и ручной PR:** preview и `apply_patch`, branch/commit/push, явный `create_pull_request` с `PR_CREATE`.
-4. **P1-B — Actions observability:** run/job status, логи, failed-job retry и скачивание проверенных APK/AAB artifacts.
-5. **P1-C — Android 16 UI-контракт:** Agent Console, task editor, target/permission controls, configuration, image attachment, event stream, navigation, rotation и inset regression.
-6. **P2-A — RuntimeSupervisor и headless DSH:** lifecycle, readiness, heartbeat, versioned ARM64 bundle, rollback и loopback.
-7. **P2-B — PTY:** только после стабильного headless runtime; persistent shell, дочерние процессы и интерактивное восстановление.
+- выбор ранее импортированных workspace;
+- история snapshots и визуальная связь результата с session ID;
+- paging и виртуализация больших деревьев;
+- TaskTracker с целью, подзадачами, блокером и ссылками на результат;
+- проектные правила наподобие AGENT_RULES.md, которые не могут переопределять глобальную Permission Policy;
+- дополнительные workspace providers для remote snapshot и Git checkout;
+- унифицированное представление Task, Workspace, Builds, Artifacts и event stream под одним владельцем состояния.
 
-Важно: `create_pull_request` как явно разрешаемый инструмент относится к задачам реализации. Автоматическое создание PR по политике — отдельное отложенное направление.
+Эти пункты являются направлениями UX и orchestration. Они не вводят новые публичные контракты и не меняют AgentBridge v1.
 
-## Отложенный план
+## D3 — Токены, журнал изменений и автоматический PR
 
-### D1 — Изображения
+**Состояние: deferred**
 
-- OCR текста и stack trace.
-- Сравнение двух UI-скриншотов с подсветкой отличий.
-- Выделение области, resize и нормализация EXIF/orientation.
-- Генерация SVG/Compose/HTML.
-- Отдельный провайдер растровой генерации изображений.
+Возможные варианты для отдельного решения:
 
-Базовый image input уже есть. Растровая генерация не считается встроенной возможностью DeepSeek API и требует отдельного `ImageGenerator` provider.
+- Android Keystore;
+- внешний proxy;
+- повторный ввод provider token после перезапуска;
+- политика срока хранения и экспорта журнала write-операций;
+- branch-per-task и правила связывания PR с commit SHA;
+- автоматическое создание draft PR после approval;
+- автоматический PR после успешного Actions run;
+- отдельные критерии opt-in для merge/release.
 
-### D2 — Расширенная рабочая область Deep Agent
+До отдельного решения сохраняются архитектурные ограничения на секреты, approval и внешний write. Эта запись не является разрешением на внедрение любого из вариантов.
 
-- Объединить Task, Workspace, Builds, Artifacts и события под одним владельцем состояния.
-- Добавить импорт workspace, просмотр diff и связывание результата с session ID.
-- Подключать новые providers только через `AgentBridge v1`.
+## Неподтверждённые технические направления
 
-До стабилизации P0/P1 нативная Agent Console остаётся единственной пользовательской поверхностью Deep Agent.
+- ToolCapabilityRegistry с версионированием и обнаружением capability;
+- native Git/libgit2 provider, если на Android-устройстве отсутствует исполняемый git;
+- отдельный resource budget для CPU, памяти, диска, вывода и параллельных процессов;
+- расширенная provenance-модель для remote snapshot, commit и artifact;
+- экспортируемый session journal с пользовательским выбором диапазона и redaction;
+- дополнительные provider adapters при сохранении единого AgentBridge;
+- staged update и rollback для внутренних runtime bundles;
+- сравнение скриншотов как отдельная операция с подтверждением исходных изображений.
 
-### D3 — Политика токенов, записи изменений и автоматического PR
+Для каждого направления потребуется отдельное обоснование, владелец, влияние на storage/runtime и решение до включения в roadmap.
 
-- Выбрать постоянное хранение токенов: только сессия, Android Keystore или внешний proxy.
-- Зафиксировать redaction токенов в логах, событиях, crash reports и экспортируемых artifacts.
-- Определить журнал write-операций, срок хранения, экспорт и восстановление.
-- Утвердить branch-per-task, approval gate, обязательный diff и связь PR с commit SHA.
-- Отдельно решить, допускается ли автоматическое создание PR после успешного Actions run.
+## Проекции архитектурных out-of-scope решений
 
-До утверждения D3 действует текущая схема: токены не сохраняются постоянно, write требует текущего permission level, а PR создаётся только явным действием с `PR_CREATE`.
+Следующие запросы не становятся задачами реализации только из-за появления идеи:
 
-## Что сознательно не реализуется сейчас
+- добавить обязательный Termux или отдельный DSH APK;
+- вернуть вторую пользовательскую оболочку;
+- сделать серверные plugins изменяемыми из приложения;
+- связать Agent Core напрямую с WebView, DOM или внутренним endpoint runtime;
+- разрешить модели выдавать себе permission или выполнять скрытые мутации.
 
-- полный автоматический tool loop DeepSeek;
-- произвольное выполнение shell-команд из текста пользователя;
-- полноценный PTY/интерактивный терминал и полный Termux bootstrap;
-- Android SDK/NDK внутри базового APK;
-- изменение серверных plugins;
-- отдельный APK или обязательная установка Termux;
-- automatic PR policy, постоянное хранение токенов и неявная запись изменений.
-
-## Критические точки согласования
-
-- финальный способ упаковки ARM64 Node.js/DSH и SHA-256 bundle;
-- необходимость persistent shell/PTY после стабилизации Lite Runner;
-- провайдер растровой генерации;
-- политика хранения секретов и экспортируемого журнала изменений;
-- критерии opt-in для автоматического PR;
-- минимальная версия Android для публичного APK.
-
-Любая развилка, влияющая на runtime, секреты, внешний write или единую оболочку, фиксируется отдельным решением и не закрывается скрытым изменением исходников.
-
-
-## P0 implementation audit — 2026-09-16
-
-Этот раздел фиксирует результат статического аудита и текущего P0-прохода. Он не расширяет утверждённую область задач.
-
-### Что было найдено в исходном снимке
-
-- Agent Core уже имел маршрутизацию local/remote, но не имел фактического Workspace Manager.
-- Local Lite Runner выполнял только фиксированный health probe.
-- DeepSeek adapter передавал streaming output, но не выполнял host-side tool round.
-- Durable journal и восстановление после смерти Activity/process отсутствовали.
-- В коде не было apply_patch, произвольного shell, push, PR или Actions observability; это остаётся за пределами P0.
-
-### Что реализуется в текущем P0
-
-- app-private Workspace Manager с импортом ZIP или папки через Storage Access Framework;
-- атомарная фиксация импортированного snapshot;
-- лимиты импорта: количество файлов, размер одного файла и общий размер;
-- canonical path boundary и запрет выхода через ..;
-- read-only ToolRouter с фиксированным каталогом:
-  list_files, read_file, search_code, git_status, git_diff;
-- bounded output, timeout для Git и кодированные ошибки инструментов;
-- отсутствие generic shell tool;
-- redaction типовых секретных файлов (.env, ключи, keystore, credentials/secrets);
-- Responses tool round function_call → host tool → function_call_output с лимитом раундов;
-- versioned app-private session store без DeepSeek/GitHub токенов;
-- восстановление последнего журнала без автоматического повторения незавершённой операции;
-- импортированный workspace и session ID отображаются в event trail.
-
-### Ограничения, выявленные при анализе
-
-1. Android-устройство не обязано иметь исполняемый git. В этом случае git_status и git_diff возвращают нормализованный GIT_UNAVAILABLE; это не превращается в shell fallback.
-2. ZIP и SAF-провайдеры могут отдавать неполное или нестандартное дерево. Импорт выполняется во временную директорию и не становится активным до успешного завершения копирования.
-3. Read-only snapshot не является полноценным Git checkout: .git сохраняется только если был включён в импорт, но внутренности .git не выдаются обычным list traversal.
-4. DeepSeek API round-trip зависит от фактической поддержки Responses tools у выбранного endpoint/model alias. Клиент не считает вызов успешным без host result и ограничивает число последовательных tool rounds.
-5. Session journal сохраняет контекст и события, но не секреты и не полноценный replay внешних операций. Неизвестные write/build операции пока отсутствуют в P0.
-
-### Идеи и расширения, которые не реализованы без отдельного согласования
-
-- base commit SHA и remote repository provenance в WorkspaceIdentity;
-- ignore-файл уровня проекта поверх встроенных исключений;
-- виртуализация больших деревьев и paging ToolRouter;
-- отдельный ToolCapabilityRegistry с версиями схем;
-- UI выбора ранее импортированного workspace;
-- Keystore/proxy для постоянного хранения provider configuration;
-- durable operation journal для UNKNOWN write/Actions invocations;
-- native Git/libgit2 provider, если read-only Git нужен без бинарника устройства;
-- отдельная проверка tool-result размера по token budget;
-- UI для явного восстановления/экспорта session journal.
-
-Эти направления добавлены как предложения к будущему P1/P2 backlog; текущим кодом они не реализуются без отдельного согласования.
-
-
-## P1-A implementation audit — 2026-09-16
-
-Этот раздел фиксирует только реализованную local часть P1-A. Git/PR, Actions
-observability и headless runtime не внедрялись.
-
-### Реализовано
-
-- \`WorkspaceIdentity.capture\` с детерминированным \`sha256-tree\`, лимитами
-  20 000 файлов / 16 MiB на файл / 256 MiB суммарно и запретом symbolic links;
-- \`PatchEngine\` с replacement и ограниченным unified diff;
-- canonical path boundary, запрет чувствительных файлов, UTF-8 text-only и лимиты;
-- preview с base file SHA и workspace fingerprint без записи;
-- явный permission gate: \`READ_ONLY\` не применяет patch, \`LOCAL_WRITE\` и выше
-  только разрешает кнопку, но не заменяет само подтверждение;
-- app-private checkpoint и atomic replacement;
-- повторная проверка fingerprint и перевод неопределённого apply/recovery в
-  \`UNKNOWN\` без автоматического повторения.
-
-### Не реализовано и оставлено для согласования
-
-- durable pending-patch journal с восстановлением самого preview после process death;
-- отдельный экран rollback из checkpoint;
-- multi-file transaction и групповой approval;
-- base commit SHA / remote repository provenance;
-- Git branch/commit/push, PR и связанный SHA;
-- native Git/libgit2 provider;
-- UI выбора ранее импортированных workspace и paging больших деревьев.
-
-
-### Статус проверки
-
-В этом проходе выполняется только статическая проверка дерева, ссылок и контрактов. Сборка, unit-тесты и ручной запуск workflow не выполняются без отдельной команды.
+Такие предложения требуют пересмотра архитектурной границы и явного решения; до этого они остаются out-of-scope.
