@@ -282,6 +282,7 @@ class AgentCore(context: Context) : AgentBridge {
         val sessionId = request.sessionId ?: UUID.randomUUID().toString()
         val startedAt = System.currentTimeMillis()
         currentSessionId = sessionId
+        _gitState.value = GitOperationState(sessionId = sessionId)
         eventSequence = 0L
         invocationRecords.clear()
         decisionRecords.clear()
@@ -792,6 +793,7 @@ class AgentCore(context: Context) : AgentBridge {
             },
         )
         _state.value = recoveredState
+        _gitState.value = GitOperationState(sessionId = restored.sessionId)
         _events.value = restored.events.takeLast(MAX_EVENTS)
 
         if (requiresRecovery) {
