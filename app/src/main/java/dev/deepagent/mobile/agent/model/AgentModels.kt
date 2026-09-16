@@ -87,6 +87,27 @@ data class AgentSessionState(
     val recoveryRequired: Boolean = false,
 )
 
+    
+data class AgentWorkspaceSnapshot(
+    val id: String,
+    val displayName: String,
+    val sourceType: String,
+    val fileCount: Int,
+    val totalBytes: Long,
+    val importedAt: Long,
+)
+
+data class PendingPatchApproval(
+    val sessionId: String,
+    val workspaceId: String,
+    val path: String,
+    val workspaceFingerprint: String,
+    val oldSha256: String?,
+    val newSha256: String,
+    val unifiedDiff: String,
+    val canApply: Boolean,
+)
+
 
 internal object AgentRedactor {
     private val dataUrlPattern = Regex(
