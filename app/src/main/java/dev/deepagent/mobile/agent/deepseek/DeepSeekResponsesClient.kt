@@ -276,8 +276,7 @@ class DeepSeekResponsesClient {
                 val arguments = when (rawArguments) {
                     is String -> rawArguments
                     null,
-                    JSONObject.NULL,
-                    -> "{}"
+                    JSONObject.NULL -> "{}"
                     else -> rawArguments.toString()
                 }
                 add(

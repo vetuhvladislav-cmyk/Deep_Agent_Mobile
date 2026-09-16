@@ -438,7 +438,7 @@ class AgentCore(context: Context) : AgentBridge {
             sessionId = sessionId,
             request = request,
             state = _state.value,
-            events = _events.value.takeLast(SessionStore.MAX_EVENTS),
+            events = _events.value.takeLast(PersistedAgentSession.MAX_EVENTS),
             updatedAt = System.currentTimeMillis(),
         )
         journalScope.launch {
