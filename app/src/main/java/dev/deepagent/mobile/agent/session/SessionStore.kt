@@ -400,10 +400,10 @@ class SessionStore(context: Context) {
                     .removeSuffix(".json")
                     .takeIf(::isValidJournalIdentifier)
             }
-            ?.forEach(candidates::add)
+            ?.forEach { candidates.add(it) }
 
         candidates
-            .mapNotNull(::loadLocked)
+            .mapNotNull { id -> loadLocked(id) }
             .maxWithOrNull(
                 compareBy<PersistedAgentSession> { it.updatedAt }
                     .thenBy { it.sessionId },
