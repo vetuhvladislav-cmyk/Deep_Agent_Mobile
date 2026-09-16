@@ -177,7 +177,7 @@ class ToolRouter(
                     summary = if (verified) {
                         "Patch применён после явного approval"
                     } else {
-                        "Patch применён, но fingerprint после записи не проверен",
+                        "Patch применён, но fingerprint после записи не проверен"
                     },
                     content = applied.toJson()
                         .put("workspace_fingerprint_after", afterFingerprint)
