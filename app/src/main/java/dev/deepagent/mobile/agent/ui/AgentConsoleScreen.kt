@@ -98,6 +98,7 @@ fun AgentConsoleScreen(
     var localError by remember { mutableStateOf<String?>(null) }
     var workspaceError by remember { mutableStateOf<String?>(null) }
     val workspace by core.workspace.current.collectAsState()
+    val pendingPatch by core.pendingPatch.collectAsState()
 
     DisposableEffect(core) {
         onDispose { core.close() }
@@ -257,6 +258,61 @@ fun AgentConsoleScreen(
                 }
             }
 
+            pendingPatch?.let { pending ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = "Patch preview: " + pending.preview.path,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "tree SHA: " + pending.preview.workspaceFingerprint +
+                                " · base: " +
+                                (pending.preview.oldSha256 ?: "new") +
+                                " → " + pending.preview.newSha256,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        Text(
+                            text = pending.preview.unifiedDiff.take(8_000),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            lineHeight = 13.sp,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(
+                                enabled = pending.canApply,
+                                onClick = { core.approvePendingPatch() },
+                            ) {
+                                Text("Применить patch")
+                            }
+                            OutlinedButton(
+                                onClick = { core.rejectPendingPatch() },
+                            ) {
+                                Text("Отклонить")
+                            }
+                        }
+                        if (!pending.canApply) {
+                            Text(
+                                text = "Для применения нужен permission LOCAL_WRITE при запуске этой сессии.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -402,7 +458,7 @@ fun AgentConsoleScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(
-                    enabled = state.status != AgentSessionStatus.RUNNING,
+                    enabled = state.status != AgentSessionStatus.RUNNING && pendingPatch == null,
                     onClick = {
                         localError = null
                         scope.launch {
@@ -562,11 +618,13 @@ private fun statusLabel(status: AgentSessionStatus): String = when (status) {
     AgentSessionStatus.COMPLETED -> "Завершено"
     AgentSessionStatus.FAILED -> "Ошибка"
     AgentSessionStatus.CANCELLED -> "Остановлено"
+    AgentSessionStatus.UNKNOWN -> "Нужно повторно проверить"
 }
 
 @Composable
 private fun statusColor(status: AgentSessionStatus) = when (status) {
     AgentSessionStatus.FAILED -> MaterialTheme.colorScheme.error
+    AgentSessionStatus.UNKNOWN -> MaterialTheme.colorScheme.error
     AgentSessionStatus.WAITING_APPROVAL -> MaterialTheme.colorScheme.tertiary
     AgentSessionStatus.COMPLETED -> MaterialTheme.colorScheme.primary
     else -> MaterialTheme.colorScheme.onSurface

@@ -32,6 +32,7 @@ enum class AgentSessionStatus {
     COMPLETED,
     FAILED,
     CANCELLED,
+    UNKNOWN,
 }
 
 data class ImageAttachment(

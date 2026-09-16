@@ -135,18 +135,48 @@
 
 ### Идеи и расширения, которые не реализованы без отдельного согласования
 
-- repository fingerprint и base commit SHA в WorkspaceIdentity;
+- base commit SHA и remote repository provenance в WorkspaceIdentity;
 - ignore-файл уровня проекта поверх встроенных исключений;
 - виртуализация больших деревьев и paging ToolRouter;
 - отдельный ToolCapabilityRegistry с версиями схем;
 - UI выбора ранее импортированного workspace;
 - Keystore/proxy для постоянного хранения provider configuration;
-- полноценный unknown state для будущих write/Actions invocations;
+- durable operation journal для UNKNOWN write/Actions invocations;
 - native Git/libgit2 provider, если read-only Git нужен без бинарника устройства;
 - отдельная проверка tool-result размера по token budget;
 - UI для явного восстановления/экспорта session journal.
 
-Эти направления добавлены как предложения к будущему P1/P2 backlog; текущим кодом они не реализуются.
+Эти направления добавлены как предложения к будущему P1/P2 backlog; текущим кодом они не реализуются без отдельного согласования.
+
+
+## P1-A implementation audit — 2026-09-16
+
+Этот раздел фиксирует только реализованную local часть P1-A. Git/PR, Actions
+observability и headless runtime не внедрялись.
+
+### Реализовано
+
+- \`WorkspaceIdentity.capture\` с детерминированным \`sha256-tree\`, лимитами
+  20 000 файлов / 16 MiB на файл / 256 MiB суммарно и запретом symbolic links;
+- \`PatchEngine\` с replacement и ограниченным unified diff;
+- canonical path boundary, запрет чувствительных файлов, UTF-8 text-only и лимиты;
+- preview с base file SHA и workspace fingerprint без записи;
+- явный permission gate: \`READ_ONLY\` не применяет patch, \`LOCAL_WRITE\` и выше
+  только разрешает кнопку, но не заменяет само подтверждение;
+- app-private checkpoint и atomic replacement;
+- повторная проверка fingerprint и перевод неопределённого apply/recovery в
+  \`UNKNOWN\` без автоматического повторения.
+
+### Не реализовано и оставлено для согласования
+
+- durable pending-patch journal с восстановлением самого preview после process death;
+- отдельный экран rollback из checkpoint;
+- multi-file transaction и групповой approval;
+- base commit SHA / remote repository provenance;
+- Git branch/commit/push, PR и связанный SHA;
+- native Git/libgit2 provider;
+- UI выбора ранее импортированных workspace и paging больших деревьев.
+
 
 ### Статус проверки
 

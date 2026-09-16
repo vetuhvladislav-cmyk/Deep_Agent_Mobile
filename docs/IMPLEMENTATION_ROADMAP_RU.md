@@ -1,24 +1,26 @@
 # План архитектуры и реализации Deep Agent
 
-> Текущий проход: P0 реализуется в исходниках без запуска сборки и тестов. Фактический код уже включает Workspace Manager, read-only ToolRouter, DeepSeek tool rounds и session journal; ручная build/test-проверка остаётся отдельным gate.
+> Текущий проход: P1-A local controlled write реализуется в исходниках без запуска сборки и тестов. P0 уже реализован статически; ручная build/test-проверка остаётся отдельным gate.
 
-## Текущий статус P0
+## Текущий статус
 
 | Подэтап | Состояние | Граница |
 |---|---|---|
-| P0-A Workspace | Реализовано в коде | Импорт ZIP/папки в app-private snapshot, лимиты и path boundary |
-| P0-A ToolRouter | Реализовано в коде | Только пять read-only tools; generic shell и write отсутствуют |
+| P0-A Workspace | Реализовано в коде | App-private import, стабильный workspace root и path boundary |
+| P0-A ToolRouter | Реализовано в коде | Пять read-only tools; generic shell отсутствует |
 | P0-A DeepSeek loop | Реализовано в коде | Ограниченный function_call/function_call_output round |
-| P0-B Journal | Реализовано в коде | События и request summary без токенов, восстановление без replay |
-| P0-C Console setup | Частично реализовано в коде | Импорт workspace и отображение статуса; UI regression ещё не запускалась |
+| P0-B Journal | Реализовано в коде | События и request summary без токенов, recovery без replay |
+| P0-C Console setup | Частично реализовано в коде | Основной экран и импорт; UI regression ещё не запускалась |
+| P1-A WorkspaceIdentity | Реализовано в коде | Детерминированный \`sha256-tree\`, лимиты и symlink fail-closed |
+| P1-A apply_patch preview | Реализовано в коде | Unified/structured replacement, path/base hash/conflict/size checks |
+| P1-A controlled local write | Реализовано в коде | \`LOCAL_WRITE\`, explicit approval, checkpoint и atomic move |
+| P1-A Git/PR | Не реализовано | Отдельный следующий подэтап, без commit/push/PR |
 | Build/test gate | Не запускался | Требует отдельной команды пользователя |
-
-
 
 > Статус: утверждённый план реализации рабочего прототипа.
 > Последнее обновление: 2026-09-16.
-> В текущем проходе выполнены очистка структуры и обновление документации; workflow переведён на ручной запуск.
-> Сборка и тесты не запускались: они выполняются только отдельной явной командой.
+> Workflow остаётся ручным \`workflow_dispatch\`; изменения не должны автоматически запускать build/test.
+> В текущем проходе сборка, unit-тесты и ручной workflow не запускались.
 
 ## 1. Продуктовый контракт
 
@@ -53,14 +55,16 @@
 | `AgentMobileApp` / Compose UI | Нативный Agent Console: задача, target, permission, image input, конфигурация и события |
 | `AgentBridge v1` | `submit`, `cancel`, `clearEvents`, state и ordered event stream |
 | `AgentCore` | AUTO-маршрутизация, Local Lite probe, DeepSeek streaming, Actions dispatch |
-| `LocalLiteRunner` | Только health probe в app-private workspace |
+| `LocalLiteRunner` | Health probe и граница лёгких локальных операций |
+| `WorkspaceManager` / `WorkspaceIdentity` | App-private workspace, fingerprint и checkpoint path |
+| `ToolRouter` / `PatchEngine` | Read-only tools и preview/controlled local write |
 | `DeepSeekResponsesClient` | Responses API, semantic SSE, reasoning/output/tool delta events |
 | `GitHubActionsClient` | Dispatch workflow с `repository`, `workflow`, `ref` и task input |
 | Image input | Android URI → bytes → data URL → `input_image` |
 | Разрешения | `READ_ONLY`, `LOCAL_WRITE`, `GITHUB_WRITE`, `PR_CREATE`, `MERGE_RELEASE` |
 | CI | GitHub Actions собирает debug APK; release asset используется при переполнении artifact storage |
 
-Сейчас не реализованы: полноценный ToolRouter, чтение файлов, tool loop, журнал сессий, diff/apply_patch, Git/PR, polling Actions, job logs, artifact verification и headless runtime.
+Уже реализованы P0 и local часть P1-A. Сейчас не реализованы: branch/commit/push, GitHub PR, polling Actions, job logs, artifact verification и headless runtime.
 
 ## 3. Целевая архитектура
 
@@ -156,8 +160,9 @@ Agent Core не должен считать действие выполненн�
 
 ### 4.3 Что нужно добавить, чтобы прототип стал реально полезным
 
-- `WorkspaceSource`: app-private folder, импорт ZIP/папки через Storage Access Framework и read-only snapshot GitHub;
-- `ToolRouter`: `list_files`, `read_file`, `search_code`, `git_status`, `git_diff`;
+- `WorkspaceSource`: app-private folder и импорт ZIP/папки через Storage Access Framework;
+- `WorkspaceIdentity`: `sha256-tree`, лимиты, deterministic entry order и fail-closed symlink policy;
+- `ToolRouter`: `list_files`, `read_file`, `search_code`, `git_status`, `git_diff` и preview-only `apply_patch`;
 - `ConversationStore`: история prompt/response/tool rounds;
 - `ConfigStore`: единая проверяемая конфигурация провайдеров;
 - `ApprovalController`: отдельное подтверждение перед write, push, PR, merge и release;
@@ -265,7 +270,7 @@ Agent Core не должен считать действие выполненн�
 - ограниченный размер событий и сворачивание старых reasoning chunks;
 - сохранение `sessionId`, invocation IDs, run IDs и approval decisions;
 - восстановление только подтверждённого состояния;
-- status machine: `IDLE`, `RUNNING`, `WAITING_APPROVAL`, `PAUSED`, `FAILED`, `COMPLETED`, `CANCELLED`;
+- status machine: `IDLE`, `RUNNING`, `WAITING_APPROVAL`, `PAUSED`, `FAILED`, `UNKNOWN`, `COMPLETED`, `CANCELLED`;
 - отдельное пользовательское summary вместо вывода всего технического журнала.
 
 Критерий выхода: восстановленная сессия не повторяет завершённые read/tool/build операции и объясняет неизвестное состояние.
@@ -286,21 +291,43 @@ Agent Core не должен считать действие выполненн�
 
 ### P1-A — Diff, controlled write, Git и ручной PR
 
-Задача: агент вносит изменения только через проверяемый diff.
+Задача: агент вносит изменения только через проверяемый diff и не получает
+неявное право на запись.
 
-Порядок:
+В текущем проходе реализована local часть P1-A:
 
-1. Добавить `apply_patch` с unified diff/structured patch parser.
-2. Показать preview целевых файлов и итоговый diff.
-3. Проверить path scope, base content hash, conflicts и file size.
-4. Запросить `LOCAL_WRITE` approval непосредственно перед записью.
-5. Реализовать branch/commit/push через отдельный GitHub provider.
-6. Связать каждый write с session ID, repository, ref и SHA.
-7. Реализовать `create_pull_request` только при `PR_CREATE`.
+1. Добавить \`WorkspaceIdentity\`, который строит детерминированный \`sha256-tree\`
+   по относительным путям, типам, размерам и SHA содержимого файлов; лимиты и
+   symlink policy работают fail-closed.
+2. \`apply_patch\` принимает unified diff или полный replacement только для
+   текстового файла внутри workspace.
+3. Preview проверяет path scope, чувствительные имена, base file SHA, conflicts и
+   размер результата; preview не имеет побочных эффектов.
+4. Agent Core связывает preview с исходным permission текущей сессии. Модель не
+   может повысить permission сама.
+5. Только пользовательская кнопка approval запускает запись при
+   \`permission >= LOCAL_WRITE\`.
+6. Перед атомарной заменой исходный файл сохраняется в app-private checkpoint.
+7. Fingerprint повторно проверяется между preview и apply; при изменении workspace
+   применение отменяется. При неопределённом результате сессия получает \`UNKNOWN\`
+   и требует нового preview/re-check.
+8. После успешного apply сессия получает отдельные approval/tool/session events.
 
-Автоматический PR после ответа модели на этом этапе запрещён; PR создаётся явным действием.
+Пока сознательно не реализованы следующие отдельные подэтапы P1-A:
 
-Критерий выхода: любой патч обратим через diff, write имеет approval event, commit/PR имеют проверяемый SHA.
+- branch/commit/push через GitHub provider;
+- привязка commit к remote repository/ref и проверяемому SHA;
+- \`create_pull_request\` только при \`PR_CREATE\`.
+
+Автоматический PR после ответа модели запрещён; PR создаётся только явным действием
+после отдельного согласования и прохождения Git/Actions gates.
+
+Критерий выхода local части: любой patch показывает diff, запись имеет approval
+event, base file SHA и workspace fingerprint проверяются, checkpoint создаётся до
+atomic move, а конфликт или потеря состояния не приводит к слепому повтору.
+
+Критерий выхода полного P1-A: дополнительно commit/PR имеют проверяемый SHA и
+связь с session ID, repository и ref.
 
 ### P1-B — GitHub Actions observability и APK
 
@@ -396,7 +423,10 @@ EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY
 - токены только в памяти сессии;
 - redaction в событиях;
 - нет произвольного shell tool;
-- нет неявного write.
+- нет неявного write;
+- preview/apply связан с base file SHA и `sha256-tree`;
+- checkpoint создаётся до atomic move;
+- recovery не повторяет неизвестную write-операцию и требует re-check.
 
 До отдельного решения D3 нельзя:
 
@@ -436,8 +466,10 @@ app/src/main/java/dev/deepagent/mobile/
     ├── protocol/AgentBridge.kt
     ├── runtime/LocalLiteRunner.kt
     ├── ui/AgentConsoleScreen.kt
-    ├── tools/ToolRouter.kt              # P0-A
-    ├── workspace/WorkspaceManager.kt    # P0-A
+    ├── tools/ToolRouter.kt              # P0-A/P1-A
+    ├── patch/PatchEngine.kt             # P1-A
+    ├── workspace/WorkspaceManager.kt    # P0-A/P1-A
+    ├── workspace/WorkspaceIdentity.kt   # P1-A
     ├── session/SessionStore.kt          # P0-B
     ├── policy/PermissionPolicy.kt       # P0-C
     └── runtime/RuntimeSupervisor.kt     # P2-A

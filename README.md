@@ -21,30 +21,43 @@
 
 Сейчас это вертикальный прототип Agent Core внутри одного APK:
 
-- `AgentBridge v1` отделяет UI от исполнителей;
-- маршруты `AUTO`, `LOCAL_LITE` и `REMOTE_ACTIONS`;
-- Local Lite Runner выполняет health probe в app-private workspace;
-- DeepSeek Responses API поддерживает streaming reasoning/output и `input_image`;
+- \`AgentBridge v1\` отделяет UI от исполнителей;
+- маршруты \`AUTO\`, \`LOCAL_LITE\` и \`REMOTE_ACTIONS\`;
+- app-private Workspace Manager импортирует ZIP или папку и фиксирует рабочую копию;
+- read-only ToolRouter выполняет list/read/search и git status/diff с лимитами;
+- DeepSeek Responses API выполняет bounded \`function_call → tool result → function_call_output\`;
+- P1-A добавляет preview-only \`apply_patch\`, \`sha256-tree\`, проверку base hash и явное применение через UI;
+- checkpoint и atomic move защищают локальную запись; Git commit/push/PR пока не подключены;
+- Local Lite Runner выполняет health probe;
 - GitHub Actions connector отправляет workflow dispatch;
 - нативный Compose Agent Console показывает единую ленту событий;
 - токены DeepSeek и GitHub живут только в памяти текущей сессии;
 - серверные plugins не устанавливаются и не изменяются.
 
-Это уже рабочая основа маршрутизации и проверки контрактов, но ещё не полный автономный цикл исправления проекта.
+Это рабочая основа безопасного чтения и контролируемой локальной записи, но ещё не полный автономный цикл исправления проекта.
 
 
-## P0: текущий рабочий контур
+## Текущий рабочий контур
 
-В текущем проходе добавляется минимально полезный read-only цикл:
+P0 даёт минимально полезный read-only цикл:
 
 - импорт ZIP или папки в app-private Workspace;
-- выбор стабильного workspace identity для одной сессии;
-- list_files, read_file, search_code, git_status, git_diff;
+- стабильный \`WorkspaceIdentity\` для выбранной копии;
+- \`list_files\`, \`read_file\`, \`search_code\`, \`git_status\`, \`git_diff\`;
 - bounded output, timeouts, path boundary и redaction типовых секретных файлов;
 - DeepSeek function_call → tool result → function_call_output;
 - session journal и восстановление без повторного запуска незавершённой операции.
 
-P0 не добавляет apply_patch, generic shell, commit/push, PR, Actions logs/artifacts или headless DSH. Эти возможности остаются следующими согласованными этапами.
+В текущем P1-A добавлен безопасный локальный write boundary:
+
+- модель формирует только \`apply_patch\` preview;
+- preview содержит unified diff, base file SHA и \`sha256-tree\` workspace fingerprint;
+- перед записью проверяются permission \`LOCAL_WRITE\`, path scope, conflict и fingerprint;
+- пользователь отдельно подтверждает применение в Agent Console;
+- исходный файл сохраняется в app-private checkpoint, затем новый текст перемещается атомарно;
+- при изменении workspace или неопределённом результате сессия получает \`UNKNOWN\` и требует нового preview/re-check.
+
+P1-A пока не включает branch/commit/push, Pull Request, Actions logs/artifacts или headless DSH. Эти операции остаются отдельными согласованными этапами.
 
 ## Что хотим в итоге
 
@@ -81,17 +94,18 @@ DSH/headless runtime остаётся заменяемым внутренним 
 - [x] DeepSeek streaming и image input;
 - [x] dispatch GitHub Actions;
 - [x] GitHub Actions-сборка debug APK;
-- [x] документация архитектуры, roadmap и идей.
+- [x] документация архитектуры, roadmap и идей;
+- [x] P0 Workspace, read-only ToolRouter, tool loop и session journal;
+- [x] P1-A local apply_patch preview, fingerprint, approval и checkpoint.
 
 ## Задачи на будущее
 
-1. `P0`: ToolRouter с read-only инструментами, локальная история и восстановление сессий.
-2. `P1`: diff/preview, контролируемая запись, Git, commit и ручной PR.
-3. `P1`: polling Actions, job logs, retry, проверка SHA и скачивание APK/AAB.
-4. `P1`: Android 16 UI-тесты и регрессионная проверка разрешений.
-5. `P2`: RuntimeSupervisor и headless DSH/Node ARM64 bundle.
-6. `D1`: OCR, сравнение скриншотов, генерация SVG/Compose/HTML и отдельный image provider.
-7. `D2`: расширенная рабочая область Deep Agent, визуальный анализ и подключаемые providers.
+1. `P1`: branch/commit/push и ручной PR поверх уже готового local write boundary.
+2. `P1`: polling Actions, job logs, retry, проверка SHA и скачивание APK/AAB.
+3. `P1`: Android 16 UI-тесты и регрессионная проверка разрешений.
+4. `P2`: RuntimeSupervisor и headless DSH/Node ARM64 bundle.
+5. `D1`: OCR, сравнение скриншотов, генерация SVG/Compose/HTML и отдельный image provider.
+6. `D2`: расширенная рабочая область Deep Agent, визуальный анализ и подключаемые providers.
 
 Подробности:
 
@@ -120,7 +134,7 @@ APK появляется в `app/build/outputs/apk/debug/`. Для тяжёлы�
 
 ## Политика безопасности
 
-Режимы `READ_ONLY`, `LOCAL_WRITE`, `GITHUB_WRITE`, `PR_CREATE` и `MERGE_RELEASE` разделены. Текст модели сам по себе не даёт права на опасную запись. До реализации безопасного хранилища ключи не сохраняются в постоянное хранилище и не попадают в события.
+Режимы `READ_ONLY`, `LOCAL_WRITE`, `GITHUB_WRITE`, `PR_CREATE` и `MERGE_RELEASE` разделены. Текст модели сам по себе не даёт права на опасную запись. Локальный patch привязан к `sha256-tree` и base file SHA; запись выполняется только после отдельного UI approval и сохраняет checkpoint. До реализации безопасного хранилища ключи не сохраняются в постоянное хранилище и не попадают в события.
 
 ## Лицензия и статус
 

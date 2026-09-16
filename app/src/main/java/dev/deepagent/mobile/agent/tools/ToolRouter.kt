@@ -1,5 +1,7 @@
 package dev.deepagent.mobile.agent.tools
 
+import dev.deepagent.mobile.agent.patch.PatchEngine
+import dev.deepagent.mobile.agent.patch.PatchPreview
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -24,6 +26,7 @@ data class ToolExecutionResult(
     val content: String = "",
     val truncated: Boolean = false,
     val errorCode: String? = null,
+    val patchPreview: PatchPreview? = null,
 ) {
     fun toModelJson(): String = JSONObject()
         .put("tool", toolName)
@@ -32,11 +35,13 @@ data class ToolExecutionResult(
         .put("content", content)
         .put("truncated", truncated)
         .put("error_code", errorCode)
+        .put("preview", patchPreview?.toJson())
         .toString()
 }
 
 /**
- * P0 read-only tool boundary.
+ * Read-only tools remain the default boundary; apply_patch is a preview-only
+ * request routed through Agent Core approval and never writes from execute().
  *
  * There is deliberately no generic shell entry point here. Git operations use
  * fixed argument lists and are executed only against the selected private
@@ -46,6 +51,150 @@ data class ToolExecutionResult(
 class ToolRouter(
     private val workspaceManager: WorkspaceManager,
 ) {
+
+    private val patchLock = Any()
+
+    suspend fun previewPatch(
+        argumentsJson: String,
+        workspaceId: String? = null,
+    ): ToolExecutionResult = withContext(Dispatchers.IO) {
+        val arguments = runCatching { JSONObject(argumentsJson.ifBlank { "{}" }) }
+            .getOrElse {
+                return@withContext ToolExecutionResult(
+                    toolName = TOOL_APPLY_PATCH,
+                    ok = false,
+                    summary = "Некорректные аргументы apply_patch",
+                    errorCode = "INVALID_ARGUMENTS",
+                )
+            }
+        val root = workspaceManager.resolveRoot(workspaceId)
+            ?: return@withContext ToolExecutionResult(
+                toolName = TOOL_APPLY_PATCH,
+                ok = false,
+                summary = "Workspace не выбран или недоступен",
+                errorCode = "WORKSPACE_UNAVAILABLE",
+            )
+        val checkpointDirectory = workspaceManager.checkpointDirectory(workspaceId)
+            ?: return@withContext ToolExecutionResult(
+                toolName = TOOL_APPLY_PATCH,
+                ok = false,
+                summary = "Checkpoint directory недоступна",
+                errorCode = "CHECKPOINT_UNAVAILABLE",
+            )
+
+        return@withContext runCatching {
+            val identity = workspaceManager.captureIdentity(workspaceId)
+                ?: error("Workspace identity недоступна")
+            val preview = PatchEngine(checkpointDirectory).preview(
+                workspaceRoot = root,
+                arguments = arguments,
+                workspaceFingerprint = identity.treeSha256,
+            )
+            ToolExecutionResult(
+                toolName = TOOL_APPLY_PATCH,
+                ok = true,
+                summary = "Patch preview создан; запись не выполнена",
+                content = preview.unifiedDiff,
+                patchPreview = preview,
+            )
+        }.getOrElse { error ->
+            ToolExecutionResult(
+                toolName = TOOL_APPLY_PATCH,
+                ok = false,
+                summary = error.message ?: "Не удалось построить patch preview",
+                errorCode = "PATCH_PREVIEW_FAILED",
+            )
+        }
+    }
+
+    suspend fun applyPatch(
+        argumentsJson: String,
+        workspaceId: String? = null,
+        expectedWorkspaceFingerprint: String,
+    ): ToolExecutionResult = withContext(Dispatchers.IO) {
+        require(expectedWorkspaceFingerprint.isNotBlank()) {
+            "Для apply_patch нужен workspace fingerprint"
+        }
+        synchronized(patchLock) {
+            val arguments = runCatching {
+                JSONObject(argumentsJson.ifBlank { "{}" })
+            }.getOrElse {
+                return@withContext ToolExecutionResult(
+                    toolName = TOOL_APPLY_PATCH,
+                    ok = false,
+                    summary = "Некорректные аргументы apply_patch",
+                    errorCode = "INVALID_ARGUMENTS",
+                )
+            }
+            val root = workspaceManager.resolveRoot(workspaceId)
+                ?: return@withContext ToolExecutionResult(
+                    toolName = TOOL_APPLY_PATCH,
+                    ok = false,
+                    summary = "Workspace не выбран или недоступен",
+                    errorCode = "WORKSPACE_UNAVAILABLE",
+                )
+            val checkpointDirectory = workspaceManager.checkpointDirectory(workspaceId)
+                ?: return@withContext ToolExecutionResult(
+                    toolName = TOOL_APPLY_PATCH,
+                    ok = false,
+                    summary = "Checkpoint directory недоступна",
+                    errorCode = "CHECKPOINT_UNAVAILABLE",
+                )
+            val identity = runCatching {
+                workspaceManager.captureIdentity(workspaceId)
+            }.getOrNull()
+            if (identity == null) {
+                return@withContext ToolExecutionResult(
+                    toolName = TOOL_APPLY_PATCH,
+                    ok = false,
+                    summary = "Workspace identity недоступна; требуется re-check",
+                    errorCode = "WORKSPACE_RECHECK_REQUIRED",
+                )
+            }
+            if (identity.treeSha256 != expectedWorkspaceFingerprint) {
+                return@withContext ToolExecutionResult(
+                    toolName = TOOL_APPLY_PATCH,
+                    ok = false,
+                    summary = "Workspace изменился после preview; требуется новый preview",
+                    errorCode = "WORKSPACE_CHANGED_RECHECK_REQUIRED",
+                )
+            }
+
+            return@withContext runCatching {
+                val applied = PatchEngine(checkpointDirectory).apply(
+                    workspaceRoot = root,
+                    arguments = arguments,
+                    expectedWorkspaceFingerprint = expectedWorkspaceFingerprint,
+                )
+                val afterIdentity = runCatching {
+                    workspaceManager.captureIdentity(workspaceId)
+                }.getOrNull()
+                val afterFingerprint = afterIdentity?.treeSha256
+                val verified = afterFingerprint != null
+                ToolExecutionResult(
+                    toolName = TOOL_APPLY_PATCH,
+                    ok = verified,
+                    summary = if (verified) {
+                        "Patch применён после явного approval"
+                    } else {
+                        "Patch применён, но fingerprint после записи не проверен",
+                    },
+                    content = applied.toJson()
+                        .put("workspace_fingerprint_after", afterFingerprint)
+                        .toString(),
+                    errorCode = if (verified) null else "PATCH_APPLIED_RECHECK_REQUIRED",
+                    patchPreview = applied.preview,
+                )
+            }.getOrElse { error ->
+                ToolExecutionResult(
+                    toolName = TOOL_APPLY_PATCH,
+                    ok = false,
+                    summary = error.message ?: "Не удалось применить patch",
+                    errorCode = "PATCH_APPLY_FAILED",
+                )
+            }
+        }
+    }
 
     suspend fun execute(
         toolName: String,
@@ -77,6 +226,12 @@ class ToolRouter(
                 TOOL_SEARCH_CODE -> searchCode(root, arguments)
                 TOOL_GIT_STATUS -> gitStatus(root)
                 TOOL_GIT_DIFF -> gitDiff(root, arguments)
+                TOOL_APPLY_PATCH -> ToolExecutionResult(
+                    toolName = TOOL_APPLY_PATCH,
+                    ok = false,
+                    summary = "apply_patch требует preview и явного approval UI",
+                    errorCode = "WRITE_REQUIRES_APPROVAL",
+                )
                 else -> ToolExecutionResult(
                     toolName = toolName,
                     ok = false,
@@ -445,6 +600,7 @@ class ToolRouter(
         const val TOOL_SEARCH_CODE = "search_code"
         const val TOOL_GIT_STATUS = "git_status"
         const val TOOL_GIT_DIFF = "git_diff"
+        const val TOOL_APPLY_PATCH = "apply_patch"
 
         const val DEFAULT_MAX_DEPTH = 4
         const val MAX_DEPTH = 8
@@ -521,6 +677,27 @@ class ToolRouter(
                     .put(
                         "properties",
                         JSONObject().put("path", JSONObject().put("type", "string")),
+                    ),
+            ),
+            AgentToolDefinition(
+                name = TOOL_APPLY_PATCH,
+                description = "Prepare a text patch preview. The host never writes immediately; a user approval is required.",
+                parameters = JSONObject()
+                    .put("type", "object")
+                    .put(
+                        "properties",
+                        JSONObject()
+                            .put("path", JSONObject().put("type", "string"))
+                            .put("expected_sha256", JSONObject().put("type", "string"))
+                            .put("patch", JSONObject().put("type", "string"))
+                            .put("replacement", JSONObject().put("type", "string"))
+                            .put("create", JSONObject().put("type", "boolean")),
+                    )
+                    .put(
+                        "required",
+                        JSONArray()
+                            .put("path")
+                            .put("expected_sha256"),
                     ),
             ),
         )

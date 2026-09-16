@@ -41,12 +41,14 @@ minSdk до 36.
 - внутренняя граница AgentBridge v1;
 - Agent Core с маршрутизацией AUTO, LOCAL_LITE и REMOTE_ACTIONS;
 - Local Lite Runner с health probe в app-private workspace;
+- app-private Workspace Manager и read-only ToolRouter;
 - DeepSeek Responses API streaming через semantic SSE;
 - model name deepseek-flash и base URL https://api.deepseek.com;
 - input_image из Android Photo Picker через data URL;
 - GitHub Actions workflow dispatch;
 - нативный Agent Console внутри того же APK;
 - отдельная лента SESSION, PLAN, REASONING, OUTPUT, TOOL, BUILD и ERROR;
+- P1-A preview/apply boundary с WorkspaceIdentity, explicit approval и checkpoint;
 - токены DeepSeek/GitHub не сохраняются в постоянное хранилище.
 
 ## 3. Слои одного APK
@@ -58,7 +60,7 @@ minSdk до 36.
 | AgentBridge v1 | Стабильный контракт UI ↔ Agent Core |
 | Agent Core | Маршрутизация, жизненный цикл сессии, события, ошибки |
 | DeepSeek Adapter | Responses API, streaming, reasoning и image input |
-| Local Lite Runner | Минимальный локальный probe и будущие лёгкие операции |
+| Local Lite Runner | Минимальный локальный probe, read-only tools и controlled patch |
 | GitHub Connector | workflow dispatch, репозитории, PR и артефакты |
 | Workspace Manager | локальная рабочая директория, импорт/экспорт и история |
 | Permission Policy | READ_ONLY, LOCAL_WRITE, GITHUB_WRITE, PR_CREATE, MERGE_RELEASE |
@@ -107,7 +109,7 @@ LOCAL_LITE предназначен для:
 - небольшого анализа;
 - чтения и поиска файлов;
 - документации;
-- лёгких патчей;
+- preview и controlled apply_patch после явного approval;
 - локальных проверок;
 - health probe runtime.
 
@@ -136,9 +138,9 @@ DeepSeek API stateless, поэтому Agent Core должен хранить л
 состояние tool rounds. При использовании tools в thinking mode необходимо
 сохранять reasoning_content и передавать его дальше.
 
-Сейчас реализован поток запроса и отображение reasoning/output. Полный цикл
-function tool → локальное выполнение → tool result → следующий sub-turn ещё
-не включён.
+Сейчас реализованы streaming reasoning/output и bounded host-side read-only tool
+rounds. `apply_patch` сначала создаёт preview; запись запускается отдельным UI
+approval и не является прямым результатом model tool call.
 
 ## 7. GitHub Actions
 
@@ -206,6 +208,24 @@ ImageGenerator provider.
 
 Опасные write-действия не выполняются только на основании текста модели.
 Agent Core обязан проверить режим текущей сессии.
+
+### 10.1 Controlled local write boundary
+
+Local P1-A write проходит через последовательность:
+
+```text
+model apply_patch → preview → sha256-tree/base SHA check
+→ user approval + LOCAL_WRITE → checkpoint → atomic move
+```
+
+`WorkspaceIdentity` считает детерминированный `sha256-tree` app-private workspace.
+Если fingerprint изменился после preview, запись отменяется. Если результат
+операции нельзя подтвердить или сессия была восстановлена после незавершённой
+операции, состояние становится `UNKNOWN`; автоматического повтора нет, нужен новый
+preview/re-check.
+
+Git commit/push/PR не являются частью этого local boundary и подключаются отдельным
+GitHub provider после согласования.
 
 ## 11. CI и компиляция APK
 

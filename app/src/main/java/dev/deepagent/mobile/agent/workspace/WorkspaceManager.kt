@@ -99,6 +99,21 @@ class WorkspaceManager(context: Context) {
         resolveRoot(entry)
     }
 
+    fun captureIdentity(id: String? = current.value?.id): WorkspaceIdentity? {
+        val entry = synchronized(this) {
+            entries.firstOrNull { it.id == id }
+        } ?: return null
+        val root = resolveRoot(entry) ?: return null
+        return WorkspaceIdentity.capture(entry.id, root)
+    }
+
+    fun checkpointDirectory(id: String? = current.value?.id): File? = synchronized(this) {
+        val entry = entries.firstOrNull { it.id == id } ?: return@synchronized null
+        if (!entry.id.matches(WORKSPACE_ID_PATTERN)) return@synchronized null
+        if (resolveRoot(entry) == null) return@synchronized null
+        File(appContext.filesDir, "agent-checkpoints/" + entry.id)
+    }
+
     suspend fun importUri(
         resolver: ContentResolver,
         uri: Uri,
@@ -446,5 +461,6 @@ class WorkspaceManager(context: Context) {
         const val MAX_FILES = 20_000
         const val MAX_FILE_BYTES = 16L * 1024L * 1024L
         const val MAX_TOTAL_BYTES = 256L * 1024L * 1024L
+        val WORKSPACE_ID_PATTERN = Regex("[A-Za-z0-9-]{8,80}")
     }
 }

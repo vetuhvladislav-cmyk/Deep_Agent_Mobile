@@ -1,7 +1,6 @@
 package dev.deepagent.mobile.agent.core
 
 import android.content.Context
-import dev.deepagent.mobile.agent.deepseek.DeepSeekFunctionCall
 import dev.deepagent.mobile.agent.deepseek.DeepSeekImage
 import dev.deepagent.mobile.agent.deepseek.DeepSeekRequest
 import dev.deepagent.mobile.agent.deepseek.DeepSeekResponsesClient
@@ -17,6 +16,7 @@ import dev.deepagent.mobile.agent.model.AgentSessionState
 import dev.deepagent.mobile.agent.model.AgentSessionStatus
 import dev.deepagent.mobile.agent.model.ExecutionTarget
 import dev.deepagent.mobile.agent.model.PermissionMode
+import dev.deepagent.mobile.agent.patch.PatchPreview
 import dev.deepagent.mobile.agent.protocol.AgentBridge
 import dev.deepagent.mobile.agent.runtime.LocalLiteRunner
 import dev.deepagent.mobile.agent.session.PersistedAgentSession
@@ -41,13 +41,21 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.util.UUID
 
+data class PendingPatch(
+    val sessionId: String,
+    val workspaceId: String,
+    val argumentsJson: String,
+    val preview: PatchPreview,
+    val canApply: Boolean,
+)
+
 /**
  * Internal orchestrator for the single APK.
  *
- * P0 adds a bounded read-only agent loop:
+ * P0 provides the bounded read-only agent loop:
  * workspace -> function_call -> allowlisted tool -> function_call_output.
- * No write tool, arbitrary shell, GitHub mutation, or PR operation is part
- * of this loop.
+ * P1-A adds preview-only apply_patch plus a host-side approval gate; the model
+ * never writes directly and GitHub mutation/PR operations remain separate.
  */
 class AgentCore(context: Context) : AgentBridge {
 
@@ -68,7 +76,11 @@ class AgentCore(context: Context) : AgentBridge {
     private val _events = MutableStateFlow<List<AgentEvent>>(emptyList())
     override val events: StateFlow<List<AgentEvent>> = _events.asStateFlow()
 
+    private val _pendingPatch = MutableStateFlow<PendingPatch?>(null)
+    val pendingPatch: StateFlow<PendingPatch?> = _pendingPatch.asStateFlow()
+
     private var activeJob: Job? = null
+    private var patchApplyJob: Job? = null
     private var currentSessionId: String? = null
     private var currentRequestSummary: SessionRequestSummary? = null
     @Volatile
@@ -83,6 +95,8 @@ class AgentCore(context: Context) : AgentBridge {
 
     override suspend fun submit(request: AgentRequest) {
         activeJob?.cancel()
+        patchApplyJob?.cancel()
+        patchApplyJob = null
 
         val job = coreScope.launch {
             execute(request)
@@ -98,6 +112,9 @@ class AgentCore(context: Context) : AgentBridge {
 
     override fun cancel() {
         activeJob?.cancel()
+        patchApplyJob?.cancel()
+        patchApplyJob = null
+        _pendingPatch.value = null
         _state.value = _state.value.copy(
             status = AgentSessionStatus.CANCELLED,
             finishedAt = System.currentTimeMillis(),
@@ -112,6 +129,8 @@ class AgentCore(context: Context) : AgentBridge {
 
     fun close() {
         activeJob?.cancel()
+        patchApplyJob?.cancel()
+        patchApplyJob = null
         coreScope.cancel()
         persistAsync()
     }
@@ -128,6 +147,7 @@ class AgentCore(context: Context) : AgentBridge {
         val sessionId = request.sessionId ?: UUID.randomUUID().toString()
         val startedAt = System.currentTimeMillis()
         currentSessionId = sessionId
+        _pendingPatch.value = null
         currentRequestSummary = SessionRequestSummary(
             task = task,
             target = target,
@@ -357,12 +377,52 @@ class AgentCore(context: Context) : AgentBridge {
             }
 
             val nextInput = responseOutputItems(result.response).toMutableList()
-            result.functionCalls.forEach { call ->
+            for (call in result.functionCalls) {
                 append(
                     AgentEventKind.TOOL,
-                    "Вызов read-only tool: " + call.name,
+                    "Вызов tool: " + call.name,
                     "round=" + round + "; call_id=" + call.callId,
                 )
+
+                if (call.name == ToolRouter.TOOL_APPLY_PATCH) {
+                    val previewResult = toolRouter.previewPatch(
+                        argumentsJson = call.arguments,
+                        workspaceId = request.workspaceId,
+                    )
+                    appendToolResult(previewResult)
+                    val preview = previewResult.patchPreview
+                    if (previewResult.ok && preview != null) {
+                        val permission = currentRequestSummary?.permission
+                            ?: PermissionMode.READ_ONLY
+                        _pendingPatch.value = PendingPatch(
+                            sessionId = currentSessionId.orEmpty(),
+                            workspaceId = request.workspaceId.orEmpty(),
+                            argumentsJson = call.arguments,
+                            preview = preview,
+                            canApply = permission >= PermissionMode.LOCAL_WRITE,
+                        )
+                        _state.value = _state.value.copy(
+                            status = AgentSessionStatus.WAITING_APPROVAL,
+                            lastError = null,
+                        )
+                        append(
+                            AgentEventKind.INFO,
+                            "Patch preview готов; запись приостановлена до approval",
+                            "path=" + preview.path +
+                                "; workspace_fingerprint=" +
+                                preview.workspaceFingerprint +
+                                "; can_apply=" +
+                                (permission >= PermissionMode.LOCAL_WRITE),
+                        )
+                        return
+                    }
+                    nextInput += JSONObject()
+                        .put("type", "function_call_output")
+                        .put("call_id", call.callId)
+                        .put("output", previewResult.toModelJson())
+                    continue
+                }
+
                 val toolResult = toolRouter.execute(
                     toolName = call.name,
                     argumentsJson = call.arguments,
@@ -399,6 +459,75 @@ class AgentCore(context: Context) : AgentBridge {
         }
     }
 
+    fun approvePendingPatch() {
+        if (_state.value.status != AgentSessionStatus.WAITING_APPROVAL) return
+        val pending = _pendingPatch.value ?: return
+        if (!pending.canApply) {
+            append(
+                AgentEventKind.ERROR,
+                "Patch отклонён: для этой сессии не подтверждён permission LOCAL_WRITE",
+            )
+            return
+        }
+
+        _state.value = _state.value.copy(
+            status = AgentSessionStatus.RUNNING,
+            lastError = null,
+        )
+        append(
+            AgentEventKind.INFO,
+            "Пользователь подтвердил применение patch",
+            "path=" + pending.preview.path +
+                "; workspace_fingerprint=" + pending.preview.workspaceFingerprint,
+        )
+
+        patchApplyJob?.cancel()
+        val job = coreScope.launch {
+            val result = toolRouter.applyPatch(
+                argumentsJson = pending.argumentsJson,
+                workspaceId = pending.workspaceId,
+                expectedWorkspaceFingerprint = pending.preview.workspaceFingerprint,
+            )
+            if (!result.ok) {
+                _pendingPatch.value = null
+                markUnknown(
+                    result.summary + "; выполните новый preview перед продолжением",
+                )
+                return@launch
+            }
+
+            _pendingPatch.value = null
+            _state.value = _state.value.copy(
+                status = AgentSessionStatus.COMPLETED,
+                finishedAt = System.currentTimeMillis(),
+                lastError = null,
+            )
+            append(
+                AgentEventKind.TOOL,
+                "apply_patch применён после явного approval",
+                result.toModelJson(),
+            )
+            append(AgentEventKind.SESSION, "Сессия завершена после применения patch")
+        }
+        patchApplyJob = job
+        job.invokeOnCompletion {
+            if (patchApplyJob === job) patchApplyJob = null
+        }
+    }
+
+    fun rejectPendingPatch() {
+        if (_state.value.status != AgentSessionStatus.WAITING_APPROVAL) return
+        if (_pendingPatch.value == null) return
+        patchApplyJob?.cancel()
+        patchApplyJob = null
+        _pendingPatch.value = null
+        _state.value = _state.value.copy(
+            status = AgentSessionStatus.CANCELLED,
+            finishedAt = System.currentTimeMillis(),
+        )
+        append(AgentEventKind.INFO, "Patch отклонён пользователем")
+    }
+
     private fun restoreLatestSession() {
         val restored = sessionStore.loadLatest() ?: return
         currentSessionId = restored.sessionId
@@ -409,8 +538,8 @@ class AgentCore(context: Context) : AgentBridge {
             previousState.status == AgentSessionStatus.WAITING_APPROVAL
         ) {
             previousState.copy(
-                status = AgentSessionStatus.FAILED,
-                lastError = "Сессия восстановлена после незавершённой операции",
+                status = AgentSessionStatus.UNKNOWN,
+                lastError = "Сессия восстановлена после незавершённой операции; требуется re-check",
                 finishedAt = System.currentTimeMillis(),
             )
         } else {
@@ -420,8 +549,8 @@ class AgentCore(context: Context) : AgentBridge {
         _events.value = restored.events + AgentEvent(
             kind = AgentEventKind.INFO,
             message = "Восстановлена последняя сессия " + restored.sessionId.take(8),
-            detail = if (recoveredState.status == AgentSessionStatus.FAILED) {
-                "Незавершённая операция не запущена повторно."
+            detail = if (recoveredState.status == AgentSessionStatus.UNKNOWN) {
+                "Незавершённая операция не запущена повторно; требуется новый preview/re-check."
             } else {
                 null
             },
@@ -462,6 +591,15 @@ class AgentCore(context: Context) : AgentBridge {
     private fun fail(message: String) {
         _state.value = _state.value.copy(
             status = AgentSessionStatus.FAILED,
+            lastError = message,
+            finishedAt = System.currentTimeMillis(),
+        )
+        append(AgentEventKind.ERROR, message)
+    }
+
+    private fun markUnknown(message: String) {
+        _state.value = _state.value.copy(
+            status = AgentSessionStatus.UNKNOWN,
             lastError = message,
             finishedAt = System.currentTimeMillis(),
         )
