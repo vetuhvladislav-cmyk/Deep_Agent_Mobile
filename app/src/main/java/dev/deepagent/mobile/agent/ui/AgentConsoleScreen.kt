@@ -64,7 +64,7 @@ private const val DEFAULT_DEEPSEEK_MODEL = "deepseek-flash"
 /**
  * Нативная Agent Console внутри единственного APK.
  *
- * Экран intentionally не зависит от WebView: он проверяет собственный
+ * Экран intentionally не зависит от внешней web-оболочки: он проверяет собственный
  * AgentBridge v1 и даёт первый рабочий путь local/remote + DeepSeek.
  */
 @OptIn(ExperimentalMaterial3Api::class)

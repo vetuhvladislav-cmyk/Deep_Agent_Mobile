@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 /**
  * Стабильная внутренняя граница между Android UI и Agent Core.
  *
- * DSH/WebView, локальный runtime и удалённые Actions не должны становиться
+ * Headless DSH, локальный runtime и удалённые Actions не должны становиться
  * контрактом UI. В дальнейшем любой исполнитель подключается за этой границей.
  */
 interface AgentBridge {

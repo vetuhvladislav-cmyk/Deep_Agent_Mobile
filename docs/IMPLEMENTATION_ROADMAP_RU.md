@@ -216,7 +216,7 @@ Agent Core не должен считать действие выполненн�
 
 Задача: оставить в репозитории только собственный Deep Agent.
 
-- [x] убрать WebView/mobile-adapter код из проекта;
+- [x] не включать внешний web/mobile-adapter в проект;
 - [x] убрать agent namespace `dev.harness.mobile.agent`;
 - [x] заменить Harness-specific icon/comment/network wording;
 - [x] сохранить только нативный Agent Console, providers и Android runtime основу;
@@ -224,7 +224,7 @@ Agent Core не должен считать действие выполненн�
 - [x] не менять server plugins;
 - [x] не запускать build/test без команды.
 
-Критерий выхода: в исходниках нет старого package namespace, WebView assets, профилей Harness или UI-пунктов старого приложения; остаются только явные boundary-документы.
+Критерий выхода: в исходниках нет старого package namespace, web assets, профилей внешнего сервера или UI-пунктов другого приложения; остаются только явные boundary-документы.
 
 ### P0-A — Workspace и read-only ToolRouter
 
@@ -400,7 +400,7 @@ EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY
 - полноценный PTY;
 - автоматический PR/merge/release;
 - изменение server plugins;
-- WebView как обязательная часть Deep Agent;
+- внешняя web-оболочка как обязательная часть Deep Agent;
 - бесконтрольное выполнение shell-команд;
 - постоянное хранение токенов без отдельного решения.
 
