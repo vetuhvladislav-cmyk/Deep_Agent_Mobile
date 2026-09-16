@@ -759,7 +759,7 @@ class AgentCore(context: Context) : AgentBridge {
         persistAsync()
     }
 
-    private fun resolveTarget    private fun resolveTarget(request: AgentRequest): ExecutionTarget {
+    private fun resolveTarget(request: AgentRequest): ExecutionTarget {
         if (request.target != ExecutionTarget.AUTO) return request.target
 
         val remoteHint = Regex(
