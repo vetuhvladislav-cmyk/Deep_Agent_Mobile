@@ -1,6 +1,7 @@
 package dev.deepagent.mobile.agent.core
 
 import android.content.Context
+import android.net.Uri
 import dev.deepagent.mobile.agent.deepseek.DeepSeekImage
 import dev.deepagent.mobile.agent.deepseek.DeepSeekRequest
 import dev.deepagent.mobile.agent.deepseek.DeepSeekResponsesClient
@@ -13,6 +14,8 @@ import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentRedactor
+import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
+import dev.deepagent.mobile.agent.model.PendingPatchApproval
 import dev.deepagent.mobile.agent.model.AgentSessionState
 import dev.deepagent.mobile.agent.model.AgentSessionStatus
 import dev.deepagent.mobile.agent.model.ExecutionTarget
@@ -29,6 +32,7 @@ import dev.deepagent.mobile.agent.tools.AgentToolDefinition
 import dev.deepagent.mobile.agent.tools.ToolExecutionResult
 import dev.deepagent.mobile.agent.tools.ToolRouter
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
+import dev.deepagent.mobile.agent.workspace.WorkspaceSummary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +48,7 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.util.UUID
 
-data class PendingPatch(
+private data class PendingPatch(
     val sessionId: String,
     val workspaceId: String,
     val argumentsJson: String,
@@ -80,8 +84,15 @@ class AgentCore(context: Context) : AgentBridge {
     private val _events = MutableStateFlow<List<AgentEvent>>(emptyList())
     override val events: StateFlow<List<AgentEvent>> = _events.asStateFlow()
 
+    private val _workspace = MutableStateFlow(
+        workspaceManager.current.value?.toAgentSnapshot(),
+    )
+    override val workspace: StateFlow<AgentWorkspaceSnapshot?> = _workspace.asStateFlow()
+
     private val _pendingPatch = MutableStateFlow<PendingPatch?>(null)
-    val pendingPatch: StateFlow<PendingPatch?> = _pendingPatch.asStateFlow()
+    private val _pendingApproval = MutableStateFlow<PendingPatchApproval?>(null)
+    override val pendingApproval: StateFlow<PendingPatchApproval?> =
+        _pendingApproval.asStateFlow()
 
     private var activeJob: Job? = null
     private var patchApplyJob: Job? = null
@@ -95,9 +106,6 @@ class AgentCore(context: Context) : AgentBridge {
     private var persistGeneration: Long = 0L
     @Volatile
     private var closed = false
-
-    val workspace: WorkspaceManager
-        get() = workspaceManager
 
     init {
         restoreLatestSession()
@@ -129,7 +137,7 @@ class AgentCore(context: Context) : AgentBridge {
             state = "CANCELLED",
             summary = "Сессия отменена пользователем",
         )
-        _pendingPatch.value = null
+        clearPendingPatch()
         _state.value = _state.value.copy(
             status = AgentSessionStatus.CANCELLED,
             finishedAt = System.currentTimeMillis(),
@@ -144,7 +152,22 @@ class AgentCore(context: Context) : AgentBridge {
         persistAsync()
     }
 
-    fun close() {
+    override suspend fun importWorkspace(
+        uri: String,
+        displayName: String?,
+    ): AgentWorkspaceSnapshot {
+        check(!closed) { "AgentCore уже закрыт" }
+        val normalizedUri = uri.trim()
+        require(normalizedUri.isNotBlank()) { "URI workspace не задан" }
+        val summary = workspaceManager.importUri(
+            resolver = appContext.contentResolver,
+            uri = Uri.parse(normalizedUri),
+            displayName = displayName,
+        )
+        return summary.toAgentSnapshot().also { _workspace.value = it }
+    }
+
+    override fun close() {
         if (closed) return
         activeJob?.cancel()
         patchApplyJob?.cancel()
@@ -171,7 +194,7 @@ class AgentCore(context: Context) : AgentBridge {
         decisionRecords.clear()
         recoveryReason = null
         _events.value = emptyList()
-        _pendingPatch.value = null
+        clearPendingPatch()
         currentRequestSummary = SessionRequestSummary(
             task = task,
             target = target,
@@ -439,7 +462,7 @@ class AgentCore(context: Context) : AgentBridge {
                     if (previewResult.ok && preview != null) {
                         val permission = currentRequestSummary?.permission
                             ?: PermissionMode.READ_ONLY
-                        _pendingPatch.value = PendingPatch(
+                        val pendingPatch = PendingPatch(
                             sessionId = currentSessionId.orEmpty(),
                             workspaceId = request.workspaceId.orEmpty(),
                             argumentsJson = call.arguments,
@@ -447,6 +470,8 @@ class AgentCore(context: Context) : AgentBridge {
                             canApply = permission >= PermissionMode.LOCAL_WRITE,
                             invocationId = invocationId,
                         )
+                        _pendingPatch.value = pendingPatch
+                        _pendingApproval.value = pendingPatch.toApproval()
                         _state.value = _state.value.copy(
                             status = AgentSessionStatus.WAITING_APPROVAL,
                             lastError = null,
@@ -520,7 +545,7 @@ class AgentCore(context: Context) : AgentBridge {
         }
     }
 
-    fun approvePendingPatch() {
+    override fun approvePendingPatch() {
         if (_state.value.status != AgentSessionStatus.WAITING_APPROVAL) return
         val pending = _pendingPatch.value ?: return
         if (!pending.canApply) {
@@ -556,7 +581,7 @@ class AgentCore(context: Context) : AgentBridge {
                 expectedWorkspaceFingerprint = pending.preview.workspaceFingerprint,
             )
             if (!result.ok) {
-                _pendingPatch.value = null
+                clearPendingPatch()
                 completeInvocation(
                     invocationId = pending.invocationId,
                     state = "UNKNOWN",
@@ -574,7 +599,7 @@ class AgentCore(context: Context) : AgentBridge {
                 summary = "Patch применён",
             )
             recoveryReason = null
-            _pendingPatch.value = null
+            clearPendingPatch()
             _state.value = _state.value.copy(
                 status = AgentSessionStatus.COMPLETED,
                 finishedAt = System.currentTimeMillis(),
@@ -593,7 +618,7 @@ class AgentCore(context: Context) : AgentBridge {
         }
     }
 
-    fun rejectPendingPatch() {
+    override fun rejectPendingPatch() {
         if (_state.value.status != AgentSessionStatus.WAITING_APPROVAL) return
         val pending = _pendingPatch.value ?: return
         patchApplyJob?.cancel()
@@ -608,7 +633,7 @@ class AgentCore(context: Context) : AgentBridge {
             state = "REJECTED",
             detail = "Отклонено: " + pending.preview.path,
         )
-        _pendingPatch.value = null
+        clearPendingPatch()
         _state.value = _state.value.copy(
             status = AgentSessionStatus.CANCELLED,
             finishedAt = System.currentTimeMillis(),
@@ -628,7 +653,7 @@ class AgentCore(context: Context) : AgentBridge {
             restored.eventCursor,
             restored.events.maxOfOrNull { it.sequence } ?: 0L,
         )
-        _pendingPatch.value = null
+        clearPendingPatch()
 
         val previousState = restored.state
         val requiresRecovery = previousState.status == AgentSessionStatus.RUNNING ||
@@ -736,6 +761,38 @@ class AgentCore(context: Context) : AgentBridge {
                 journalScope.cancel()
             }
         }
+    }
+
+    private fun clearPendingPatch() {
+        _pendingPatch.value = null
+        _pendingApproval.value = null
+    }
+
+    private fun PendingPatch.toApproval(): PendingPatchApproval {
+        return PendingPatchApproval(
+            sessionId = sessionId,
+            workspaceId = workspaceId,
+            path = preview.path,
+            workspaceFingerprint = preview.workspaceFingerprint,
+            oldSha256 = preview.oldSha256,
+            newSha256 = preview.newSha256,
+            unifiedDiff = AgentRedactor.text(
+                preview.unifiedDiff,
+                MAX_EVENT_DETAIL_CHARS,
+            ).orEmpty(),
+            canApply = canApply,
+        )
+    }
+
+    private fun WorkspaceSummary.toAgentSnapshot(): AgentWorkspaceSnapshot {
+        return AgentWorkspaceSnapshot(
+            id = id,
+            displayName = displayName,
+            sourceType = sourceType,
+            fileCount = fileCount,
+            totalBytes = totalBytes,
+            importedAt = importedAt,
+        )
     }
 
     private fun completeOpenInvocations(
