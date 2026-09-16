@@ -376,7 +376,7 @@ fun AgentConsoleScreen(
                 }
             }
 
-            pendingPatch?.let { pending ->
+            pendingApproval?.let { pending ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -583,7 +583,7 @@ fun AgentConsoleScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(
-                    enabled = state.status != AgentSessionStatus.RUNNING && pendingPatch == null,
+                    enabled = state.status != AgentSessionStatus.RUNNING && pendingApproval == null,
                     onClick = submitCurrentTask,
                 ) {
                     Text("Запустить")
