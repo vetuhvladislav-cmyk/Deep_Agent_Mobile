@@ -1,12 +1,16 @@
-name: Android
-
-# Основной путь сборки Deep Agent APK — GitHub Actions.
 on:
-  push:
-    branches: [main, master]
-    tags: ['v*']
-  pull_request:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Опубликовать APK в GitHub Release"
+        required: true
+        default: false
+        type: boolean
+      release_tag:
+        description: "Тег релиза (используется при публикации)"
+        required: true
+        default: "v0.1.0"
+        type: string
 
 permissions:
   contents: read
@@ -52,7 +56,7 @@ jobs:
       contents: write
     name: Публикация Deep Agent APK
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Опубликовать APK v0.1.0')
+    if: inputs.publish_release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,14 +81,14 @@ jobs:
       - name: Переименовать APK
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/*.apk "dist/deep-agent-mobile-v0.1.0-test.apk"
+          cp app/build/outputs/apk/debug/*.apk "dist/deep-agent-mobile-${{ inputs.release_tag }}-test.apk"
 
       - name: Публикация релиза
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.0
+          tag_name: ${{ inputs.release_tag }}
           files: dist/*.apk
           generate_release_notes: true
           body: |
-            Установочный APK Deep Agent Mobile v0.1.0-test.
+            Установочный APK Deep Agent Mobile ${{ inputs.release_tag }}-test.
             Сборка отладочная и предназначена для тестирования на Android.

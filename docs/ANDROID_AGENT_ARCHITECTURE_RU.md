@@ -3,8 +3,8 @@
 Утверждённая архитектура `Deep_Agent_Mobile`: одно цельное Android-приложение,
 один APK, внутренние модули Agent Core и локальные/удалённые исполнители.
 
-Этот репозиторий содержит только Deep Agent. WebView-оболочка и мобильный адаптер
-не являются его зависимостью и ведутся отдельно.
+Этот репозиторий содержит Deep Agent. Harness WebView и мобильный адаптер вынесены
+в отдельный репозиторий `harness-mobile`.
 
 ## 1. Граница продукта
 
@@ -68,7 +68,7 @@ minSdk до 36.
 
 ## 4. AgentBridge v1
 
-UI не зависит от внутренних endpoint runtime или серверных plugins. Контракт содержит:
+UI не зависит от внутренних endpoint DSH, WebView protocol или серверных plugins. Контракт содержит:
 
 - submit(request);
 - cancel();
@@ -214,7 +214,7 @@ Android SDK и build artifacts. Локальная сборка на телеф�
 минимальным дополнительным режимом.
 
 Для крупных проектов MSDK 2.5/2.6, Autel, NDK/CMake и приватных зависимостей
-основным остаётся удалённый runner. Workflow этого репозитория продолжает
+основным остаётся удалённый runner. Текущий workflow репозитория продолжает
 собирать debug APK и загружать его как artifact.
 
 ## 12. Критерии следующего этапа
@@ -233,6 +233,7 @@ Android SDK и build artifacts. Локальная сборка на телеф�
 
 - [DeepSeek Responses API](https://api-docs.deepseek.com/guides/responses_api/)
 - [DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
 - [GitHub Actions workflow](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/blob/main/.github/workflows/android.yml)
 - [Android foreground services](https://developer.android.com/develop/background-work/services/fgs)
 - [Android app-specific storage](https://developer.android.com/training/data-storage/app-specific)

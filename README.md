@@ -56,7 +56,7 @@ Heavy build остаётся удалённым: GitHub Actions, JDK, Gradle, An
 | GitHub connector | Actions, репозитории, Git, PR и artifacts |
 | RuntimeSupervisor | будущий headless DSH/Node runtime за AgentBridge |
 
-DSH/headless runtime остаётся заменяемым внутренним исполнителем и не становится публичным контрактом UI. Termux и второй APK не обязательны. Серверные plugins находятся вне области этого репозитория; мобильный WebView-adapter также не является зависимостью Deep Agent.
+DSH/headless runtime остаётся заменяемым внутренним исполнителем и не становится публичным контрактом UI. Termux и второй APK не обязательны. Серверные plugins находятся вне области этого репозитория.
 
 ## Сделано
 
@@ -77,7 +77,7 @@ DSH/headless runtime остаётся заменяемым внутренним 
 4. `P1`: Android 16 UI-тесты и регрессионная проверка разрешений.
 5. `P2`: RuntimeSupervisor и headless DSH/Node ARM64 bundle.
 6. `D1`: OCR, сравнение скриншотов, генерация SVG/Compose/HTML и отдельный image provider.
-7. `D2`: расширенная рабочая область Deep Agent, визуальный анализ и подключаемые providers.
+7. `D2`: опциональная общая рабочая область с Harness WebView через заменяемую surface.
 
 Подробности:
 
@@ -88,7 +88,7 @@ DSH/headless runtime остаётся заменяемым внутренним 
 
 ## Сборка
 
-Основной путь — GitHub Actions. Workflow запускается на push/PR или вручную:
+Основной путь — GitHub Actions. Workflow запускается вручную через `workflow_dispatch`; автоматические build/test triggers отключены:
 
 ```bash
 ./gradlew testDebugUnitTest
@@ -113,4 +113,4 @@ APK появляется в `app/build/outputs/apk/debug/`. Для тяжёлы�
 Репозиторий находится на стадии прототипа. Формат `AgentBridge v1` и правило «один APK» считаются зафиксированными архитектурными решениями.
 ## Последняя проверка
 
-Коммит разделения прошёл GitHub Actions: `testDebugUnitTest` и `assembleDebug` успешно завершены. Публикация установочного APK выполняется через workflow release, потому что временное artifact storage аккаунта переполнено.
+После изменений структуры сборка и тесты выполняются только отдельным ручным запуском workflow. В текущем проходе они не запускались вручную.
