@@ -228,7 +228,9 @@ data class PersistedAgentSession(
         const val MAX_INVOCATIONS = 500
         const val MAX_DECISIONS = 200
         const val MAX_ERROR_CHARS = 4_000
+        const val MAX_EVENT_ID_CHARS = 160
         const val MAX_EVENT_MESSAGE_CHARS = 1_000
+        val SUPPORTED_VERSIONS = setOf(1, 2)
         const val MAX_EVENT_DETAIL_CHARS = 4_000
 
         fun fromJson(value: JSONObject): PersistedAgentSession? {
@@ -488,8 +490,6 @@ class SessionStore(context: Context) {
     private companion object {
         const val MAX_JOURNAL_BYTES = 4L * 1024L * 1024L
         const val MAX_POINTER_BYTES = 256L
-        const val MAX_EVENT_ID_CHARS = 160
-        val SUPPORTED_VERSIONS = setOf(1, 2)
     }
 }
 
