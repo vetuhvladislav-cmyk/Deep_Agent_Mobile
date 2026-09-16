@@ -490,9 +490,10 @@ class SessionStore(context: Context) {
         const val MAX_POINTER_BYTES = 256L
         const val MAX_EVENT_ID_CHARS = 160
         val SUPPORTED_VERSIONS = setOf(1, 2)
-        val IDENTIFIER_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
     }
 }
+
+private val JOURNAL_IDENTIFIER_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
 
 private fun AgentEvent.toJournalJson(): JSONObject = JSONObject()
     .put("event_id", eventId)
@@ -511,7 +512,7 @@ private fun JSONObject.optLongOrNull(key: String): Long? {
 }
 
 private fun isValidJournalIdentifier(value: String): Boolean {
-    return value.length <= 160 && IDENTIFIER_PATTERN.matches(value)
+    return value.length <= 160 && JOURNAL_IDENTIFIER_PATTERN.matches(value)
 }
 
 private inline fun <reified T : Enum<T>> enumOrDefault(
