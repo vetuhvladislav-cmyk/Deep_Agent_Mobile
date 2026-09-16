@@ -1,5 +1,7 @@
 package dev.deepagent.mobile.agent.model
 
+import java.util.UUID
+
 enum class ExecutionTarget {
     AUTO,
     LOCAL_LITE,
@@ -21,6 +23,8 @@ enum class AgentEventKind {
     OUTPUT,
     TOOL,
     BUILD,
+    APPROVAL,
+    ARTIFACT,
     ERROR,
     INFO,
 }
@@ -64,6 +68,10 @@ data class AgentEvent(
     val detail: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val sessionId: String? = null,
+    val eventId: String = UUID.randomUUID().toString(),
+    val sequence: Long = 0L,
+    val workspaceId: String? = null,
+    val invocationId: String? = null,
 )
 
 data class AgentSessionState(
@@ -75,4 +83,46 @@ data class AgentSessionState(
     val lastError: String? = null,
     val sessionId: String? = null,
     val workspaceId: String? = null,
+    val eventCursor: Long = 0L,
+    val recoveryRequired: Boolean = false,
 )
+
+
+internal object AgentRedactor {
+    private val dataUrlPattern = Regex(
+        """data:[^;\s]+;base64,[A-Za-z0-9+/=]+""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val secretFieldPattern = Regex(
+        """(?i)("?(?:authorization|cookie|token|api[_-]?key|password|secret)"?\s*:\s*)("[^"]*"|'[^']*'|[^,\s}]+)""",
+    )
+    private val secretAssignmentPattern = Regex(
+        """(?i)(\b(?:authorization|cookie|token|api[_-]?key|password|secret)\s*[=:]\s*)([^\s,;]+)""",
+    )
+    private val bearerPattern = Regex(
+        """(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*""",
+    )
+    private val knownTokenPattern = Regex(
+        """\b(?:ghp_|github_pat_|sk-)[A-Za-z0-9_-]{8,}\b""",
+    )
+
+    fun text(value: String?, maxChars: Int): String? {
+        if (value == null) return null
+        val limit = maxChars.coerceAtLeast(1)
+        var result = value
+        result = result.replace(dataUrlPattern, "<redacted-data-url>")
+        result = result.replace(bearerPattern, "Bearer <redacted>")
+        result = result.replace(knownTokenPattern, "<redacted-token>")
+        result = result.replace(secretFieldPattern) { match ->
+            match.groupValues[1] + "\"<redacted>\""
+        }
+        result = result.replace(secretAssignmentPattern) { match ->
+            match.groupValues[1] + "<redacted>"
+        }
+        return if (result.length <= limit) {
+            result
+        } else {
+            result.take(limit) + "\n[truncated]"
+        }
+    }
+}
