@@ -3,6 +3,8 @@ package dev.deepagent.mobile.agent.protocol
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentSessionState
+import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
+import dev.deepagent.mobile.agent.model.PendingPatchApproval
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -14,12 +16,25 @@ import kotlinx.coroutines.flow.StateFlow
 interface AgentBridge {
     val state: StateFlow<AgentSessionState>
     val events: StateFlow<List<AgentEvent>>
+    val workspace: StateFlow<AgentWorkspaceSnapshot?>
+    val pendingApproval: StateFlow<PendingPatchApproval?>
 
     suspend fun submit(request: AgentRequest)
+
+    suspend fun importWorkspace(
+        uri: String,
+        displayName: String? = null,
+    ): AgentWorkspaceSnapshot
+
+    fun approvePendingPatch()
+
+    fun rejectPendingPatch()
 
     fun cancel()
 
     fun clearEvents()
+
+    fun close()
 }
 
 /**
@@ -35,6 +50,8 @@ object AgentBridgeProtocol {
     const val OUTPUT = "output"
     const val TOOL = "tool"
     const val BUILD = "build"
+    const val APPROVAL = "approval"
+    const val ARTIFACT = "artifact"
     const val ERROR = "error"
     const val INFO = "info"
 }
