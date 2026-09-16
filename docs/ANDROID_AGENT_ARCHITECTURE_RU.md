@@ -279,7 +279,7 @@ Out-of-scope не может быть добавлен в roadmap без отд�
 | Факт | Единственный источник |
 | --- | --- |
 | граница продукта, слои, контракты, permission matrix, out-of-scope и инварианты | этот документ |
-| порядок этапов, capabilityStatus, карточки реализации и exit criteria | IMPLEMENTATION_ROADMAP_RU.md |
+| порядок этапов, состояние этапов, карточки реализации и exit criteria | IMPLEMENTATION_ROADMAP_RU.md |
 | deferred, неподтверждённые идеи и проекции out-of-scope | IDEAS_EXTENSIONS_ANALYSIS_RU.md |
 | навигация и краткая сводка | README.md |
 
