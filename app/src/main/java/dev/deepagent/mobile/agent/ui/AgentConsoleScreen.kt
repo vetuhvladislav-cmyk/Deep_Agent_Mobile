@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -33,11 +34,13 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -46,7 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.deepagent.mobile.agent.core.AgentCore
+import dev.deepagent.mobile.agent.protocol.AgentBridge
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
@@ -54,6 +57,7 @@ import dev.deepagent.mobile.agent.model.AgentSessionStatus
 import dev.deepagent.mobile.agent.model.ExecutionTarget
 import dev.deepagent.mobile.agent.model.ImageAttachment
 import dev.deepagent.mobile.agent.model.PermissionMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -70,38 +74,59 @@ private const val DEFAULT_DEEPSEEK_MODEL = "deepseek-flash"
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AgentConsoleScreen(
+    agent: AgentBridge,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val core = remember { AgentCore(context) }
-    val state by core.state.collectAsState()
-    val events by core.events.collectAsState()
+    val state by agent.state.collectAsState()
+    val events by agent.events.collectAsState()
 
-    var task by remember {
+    var task by rememberSaveable {
         mutableStateOf(
-            "Проверь готовность Agent Core и составь краткий план работы с проектом.",
+            state.task
+                ?: "Проверь готовность Agent Core и составь краткий план работы с проектом.",
         )
     }
-    var target by remember { mutableStateOf(ExecutionTarget.AUTO) }
-    var permission by remember { mutableStateOf(PermissionMode.READ_ONLY) }
+    var target by rememberSaveable {
+        mutableStateOf(state.target ?: ExecutionTarget.AUTO)
+    }
+    var permission by rememberSaveable { mutableStateOf(PermissionMode.READ_ONLY) }
+    // Tokens intentionally stay out of saved instance state and remain memory-only.
     var deepSeekKey by remember { mutableStateOf("") }
-    var deepSeekBaseUrl by remember { mutableStateOf(DEFAULT_DEEPSEEK_BASE_URL) }
-    var model by remember { mutableStateOf(DEFAULT_DEEPSEEK_MODEL) }
+    var deepSeekBaseUrl by rememberSaveable {
+        mutableStateOf(DEFAULT_DEEPSEEK_BASE_URL)
+    }
+    var model by rememberSaveable { mutableStateOf(DEFAULT_DEEPSEEK_MODEL) }
     var githubToken by remember { mutableStateOf("") }
-    var repository by remember { mutableStateOf("") }
-    var workflow by remember { mutableStateOf("android.yml") }
-    var ref by remember { mutableStateOf("main") }
-    var showConfig by remember { mutableStateOf(false) }
+    var repository by rememberSaveable { mutableStateOf("") }
+    var workflow by rememberSaveable { mutableStateOf("android.yml") }
+    var ref by rememberSaveable { mutableStateOf("main") }
+    var showConfig by rememberSaveable { mutableStateOf(false) }
     var permissionMenuOpen by remember { mutableStateOf(false) }
+    var imageUri by rememberSaveable { mutableStateOf<String?>(null) }
     var image by remember { mutableStateOf<ImageAttachment?>(null) }
     var localError by remember { mutableStateOf<String?>(null) }
     var workspaceError by remember { mutableStateOf<String?>(null) }
-    val workspace by core.workspace.current.collectAsState()
-    val pendingPatch by core.pendingPatch.collectAsState()
+    val workspace by agent.workspace.collectAsState()
+    val pendingApproval by agent.pendingApproval.collectAsState()
 
-    DisposableEffect(core) {
-        onDispose { core.close() }
+    LaunchedEffect(imageUri) {
+        val persistedUri = imageUri ?: return@LaunchedEffect
+        runCatching {
+            readImageAttachment(context, Uri.parse(persistedUri))
+        }.onSuccess {
+            image = it
+            localError = null
+        }.onFailure {
+            image = null
+            imageUri = null
+            localError = it.message ?: "Не удалось восстановить изображение"
+        }
+    }
+
+    DisposableEffect(agent) {
+        onDispose { agent.close() }
     }
 
     val imagePicker = rememberLauncherForActivityResult(
@@ -111,6 +136,7 @@ fun AgentConsoleScreen(
         scope.launch {
             runCatching { readImageAttachment(context, uri) }
                 .onSuccess {
+                    imageUri = uri.toString()
                     image = it
                     localError = null
                 }
@@ -126,10 +152,7 @@ fun AgentConsoleScreen(
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             runCatching {
-                core.workspace.importUri(
-                    resolver = context.contentResolver,
-                    uri = uri,
-                )
+                agent.importWorkspace(uri.toString())
             }.onSuccess {
                 workspaceError = null
             }.onFailure {
@@ -144,14 +167,40 @@ fun AgentConsoleScreen(
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             runCatching {
-                core.workspace.importUri(
-                    resolver = context.contentResolver,
-                    uri = uri,
-                )
+                agent.importWorkspace(uri.toString())
             }.onSuccess {
                 workspaceError = null
             }.onFailure {
                 workspaceError = it.message ?: "Не удалось импортировать папку"
+            }
+        }
+    }
+
+    val submitCurrentTask = {
+        localError = null
+        scope.launch {
+            runCatching {
+                require(task.isNotBlank()) { "Задача не может быть пустой" }
+                agent.submit(
+                    AgentRequest(
+                        task = task,
+                        target = target,
+                        permission = permission,
+                        image = image,
+                        deepSeekApiKey = deepSeekKey,
+                        deepSeekBaseUrl = deepSeekBaseUrl,
+                        model = model,
+                        githubToken = githubToken,
+                        repository = repository,
+                        workflow = workflow,
+                        ref = ref,
+                        workspaceId = workspace?.id,
+                    ),
+                )
+            }.onFailure { error ->
+                if (error !is CancellationException) {
+                    localError = error.message ?: "Не удалось запустить Agent Core"
+                }
             }
         }
     }
@@ -178,6 +227,7 @@ fun AgentConsoleScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
                 .padding(padding)
                 .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -195,6 +245,66 @@ fun AgentConsoleScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = statusColor(state.status),
                 )
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        text = "Сессия: " + (state.sessionId ?: "новая") +
+                            " · событие #" + state.eventCursor,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Target: " + (state.target?.shortLabel() ?: target.shortLabel()) +
+                            " · permission: " + permission.shortLabel(),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Text(
+                        text = "DeepSeek: " + if (deepSeekKey.isBlank()) {
+                            "ключ не задан · offline prototype"
+                        } else {
+                            "ключ задан · " + model
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Text(
+                        text = "GitHub Actions: " + if (
+                            githubToken.isNotBlank() &&
+                            repository.isNotBlank() &&
+                            workflow.isNotBlank()
+                        ) {
+                            "конфигурация заполнена"
+                        } else {
+                            "не настроен"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    if (state.recoveryRequired) {
+                        Text(
+                            text = "Recovery требуется: side effect не повторяется автоматически.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+
+            if (state.recoveryRequired || state.status == AgentSessionStatus.UNKNOWN) {
+                OutlinedButton(
+                    enabled = pendingApproval == null,
+                    onClick = submitCurrentTask,
+                ) {
+                    Text("Новая проверка")
+                }
             }
 
             OutlinedTextField(
@@ -278,18 +388,18 @@ fun AgentConsoleScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = "Patch preview: " + pending.preview.path,
+                            text = "Patch preview: " + pending.path,
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            text = "tree SHA: " + pending.preview.workspaceFingerprint +
+                            text = "tree SHA: " + pending.workspaceFingerprint +
                                 " · base: " +
-                                (pending.preview.oldSha256 ?: "new") +
-                                " → " + pending.preview.newSha256,
+                                (pending.oldSha256 ?: "new") +
+                                " → " + pending.newSha256,
                             style = MaterialTheme.typography.labelSmall,
                         )
                         Text(
-                            text = pending.preview.unifiedDiff.take(8_000),
+                            text = pending.unifiedDiff.take(8_000),
                             fontFamily = FontFamily.Monospace,
                             fontSize = 10.sp,
                             lineHeight = 13.sp,
@@ -300,12 +410,12 @@ fun AgentConsoleScreen(
                         ) {
                             Button(
                                 enabled = pending.canApply,
-                                onClick = { core.approvePendingPatch() },
+                                onClick = { agent.approvePendingPatch() },
                             ) {
                                 Text("Применить patch")
                             }
                             OutlinedButton(
-                                onClick = { core.rejectPendingPatch() },
+                                onClick = { agent.rejectPendingPatch() },
                             ) {
                                 Text("Отклонить")
                             }
@@ -361,7 +471,14 @@ fun AgentConsoleScreen(
                     Text(if (image == null) "Добавить изображение" else "Изображение выбрано")
                 }
                 if (image != null) {
-                    TextButton(onClick = { image = null }) { Text("Убрать") }
+                    TextButton(
+                        onClick = {
+                            imageUri = null
+                            image = null
+                        },
+                    ) {
+                        Text("Убрать")
+                    }
                 }
             }
 
@@ -467,37 +584,17 @@ fun AgentConsoleScreen(
             ) {
                 Button(
                     enabled = state.status != AgentSessionStatus.RUNNING && pendingPatch == null,
-                    onClick = {
-                        localError = null
-                        scope.launch {
-                            core.submit(
-                                AgentRequest(
-                                    task = task,
-                                    target = target,
-                                    permission = permission,
-                                    image = image,
-                                    deepSeekApiKey = deepSeekKey,
-                                    deepSeekBaseUrl = deepSeekBaseUrl,
-                                    model = model,
-                                    githubToken = githubToken,
-                                    repository = repository,
-                                    workflow = workflow,
-                                    ref = ref,
-                                    workspaceId = workspace?.id,
-                                ),
-                            )
-                        }
-                    },
+                    onClick = submitCurrentTask,
                 ) {
                     Text("Запустить")
                 }
                 OutlinedButton(
                     enabled = state.status == AgentSessionStatus.RUNNING,
-                    onClick = { core.cancel() },
+                    onClick = { agent.cancel() },
                 ) {
                     Text("Остановить")
                 }
-                TextButton(onClick = { core.clearEvents() }) {
+                TextButton(onClick = { agent.clearEvents() }) {
                     Text("Очистить")
                 }
                 if (state.status == AgentSessionStatus.RUNNING) {
