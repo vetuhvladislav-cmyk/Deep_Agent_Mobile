@@ -22,7 +22,7 @@ Deep Agent использует одну нативную оболочку, Agen
 
 | Этап | capabilityStatus |
 | --- | --- |
-| P0-0 | planned |
+| P0-0 | available |
 | P0-A | planned |
 | P0-B | planned |
 | P0-C | planned |
@@ -31,6 +31,15 @@ Deep Agent использует одну нативную оболочку, Agen
 | P1-C | planned |
 | P2-A | planned |
 | P2-B | planned |
+
+## Последняя проверка
+
+Проверка выполнена на `main`, commit [35bfd00](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/35bfd006342930ee7e58015578aa6e312c1f6f2a).
+
+- [GitHub Actions run #6](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35158511466): `testDebugUnitTest` и `assembleDebug` — успешно.
+- [APK v0.1.1](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/download/v0.1.1/deep-agent-mobile-v0.1.1-test.apk) — 9 670 540 байт.
+- SHA-256: `049fbad5f3e030d478260e60dabd0aa9fb7fc72e8c59134da86c5da0451ad215`.
+- Обычный Actions artifact не сохранён из-за квоты GitHub; APK доступен через Release.
 
 ## Принцип репозитория
 
