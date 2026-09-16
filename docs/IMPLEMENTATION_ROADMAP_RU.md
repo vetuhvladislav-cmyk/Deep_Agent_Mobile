@@ -1,187 +1,469 @@
-# План реализации Agent Core и Android runtime
+# План архитектуры и реализации Deep Agent
 
-Репозиторий Deep Agent: `Deep_Agent_Mobile`. WebView и мобильная адаптация находятся в `harness-mobile` и не входят в APK этого репозитория.
-
-> Статус: утверждённый приоритизированный backlog.
+> Статус: утверждённый план реализации рабочего прототипа.
 > Последнее обновление: 2026-09-16.
-> Текущий проход: только документирование; исходный код, workflow, сборка и APK не изменяются.
+> В текущем проходе выполнены очистка структуры и обновление документации; workflow переведён на ручной запуск.
+> Сборка и тесты не запускались: они выполняются только отдельной явной командой.
 
-## Назначение
+## 1. Продуктовый контракт
 
-Этот документ является канонической дорожной картой для развития `Deep_Agent_Mobile`. Он отделяет задачи, которые должны быть реализованы в продукте, от расширений, которые пока только фиксируются для будущего решения.
+`Deep_Agent_Mobile` — одно цельное Android-приложение и один APK для инженерных задач:
 
-Целевая поставка сохраняется неизменной: одно цельное Android-приложение и один APK. Внутри APK находятся Compose UI, Agent Core, AgentBridge v1, локальные исполнители и коннекторы GitHub/Actions. Пользователь не устанавливает отдельный DSH APK, Termux или вторую оболочку.
+- писать и редактировать код, документацию и архитектуру;
+- анализировать ошибки, stack trace, фото и скриншоты;
+- составлять планы и объяснять решения;
+- читать workspace и историю Git;
+- предлагать и применять безопасные patch-изменения;
+- работать с GitHub, commit, Pull Request и Actions;
+- запускать тяжёлую Android-сборку удалённо и возвращать проверенный APK/AAB.
 
-## Зафиксированные границы
+Пользователь не устанавливает второй APK, Termux или отдельную графическую оболочку. Headless DSH/Node runtime, если он будет подключён, остаётся внутренним заменяемым исполнителем.
 
-- Android 16+ — целевая платформа тестирования; `minSdk` не повышается автоматически до 36.
-- GitHub Actions — основной путь тяжёлой Android-сборки; локальная сборка на телефоне остаётся минимальным дополнительным режимом.
-- Один APK остаётся единственной пользовательской поставкой.
-- `AgentBridge v1` — стабильная граница между UI и исполнителями; DSH не становится публичным UI-контрактом.
-- Серверные plugins Harness не изменяются в рамках этого backlog.
-- Запись, push, PR, merge и release проходят через уровни разрешений и не выполняются только по тексту модели.
-- Текущая политика прототипа сохраняется: API/GitHub-токены не записываются в постоянное хранилище.
+Неподвижные ограничения:
 
-## Исходная точка
+- один APK — единственная пользовательская поставка;
+- Android 16+ — основная платформа тестирования, но `minSdk` не повышается автоматически до 36;
+- GitHub Actions — основной способ тяжёлой сборки;
+- локальный runtime используется для лёгких операций и быстрых проверок;
+- серверные plugins не устанавливаются и не изменяются приложением;
+- UI не зависит от внутренних endpoint runtime;
+- внешний write не выполняется только потому, что модель написала такую инструкцию.
 
-В версии `v0.2.0-test` уже есть:
+## 2. Что есть сейчас
 
-- единый APK с Agent Core и нативной Agent Console;
-- `AgentBridge v1`, модели задач/сессий/событий и маршруты `AUTO`, `LOCAL_LITE`, `REMOTE_ACTIONS`;
-- Local Lite Runner с health probe;
-- DeepSeek Responses API streaming, reasoning и image input через Android URI → data URL;
-- dispatch GitHub Actions после проверки `GITHUB_WRITE`;
-- базовая лента событий и минимальная политика разрешений;
-- CI-сборка debug APK и публикация test release.
+Текущий APK — рабочий вертикальный срез, но ещё не автономный coding agent.
 
-Полный tool loop, полноценный ToolRouter, восстановление сессий, наблюдение за job-логами, headless DSH и Android 16 UI-тесты ещё не считаются реализованными.
+| Компонент | Текущее состояние |
+| --- | --- |
+| `AgentMobileApp` / Compose UI | Нативный Agent Console: задача, target, permission, image input, конфигурация и события |
+| `AgentBridge v1` | `submit`, `cancel`, `clearEvents`, state и ordered event stream |
+| `AgentCore` | AUTO-маршрутизация, Local Lite probe, DeepSeek streaming, Actions dispatch |
+| `LocalLiteRunner` | Только health probe в app-private workspace |
+| `DeepSeekResponsesClient` | Responses API, semantic SSE, reasoning/output/tool delta events |
+| `GitHubActionsClient` | Dispatch workflow с `repository`, `workflow`, `ref` и task input |
+| Image input | Android URI → bytes → data URL → `input_image` |
+| Разрешения | `READ_ONLY`, `LOCAL_WRITE`, `GITHUB_WRITE`, `PR_CREATE`, `MERGE_RELEASE` |
+| CI | GitHub Actions собирает debug APK; release asset используется при переполнении artifact storage |
 
-## Задачи реализации по приоритету
+Сейчас не реализованы: полноценный ToolRouter, чтение файлов, tool loop, журнал сессий, diff/apply_patch, Git/PR, polling Actions, job logs, artifact verification и headless runtime.
 
-Приоритет показывает порядок внедрения. Следующий блок начинается после прохождения критериев предыдущего блока; изменение порядка требует отдельного архитектурного решения.
+## 3. Целевая архитектура
 
-### P0-A — ToolRouter: контракт и read-only инструменты
+```mermaid
+flowchart TD
+    UI[Compose UI] --> Bridge[AgentBridge v1]
+    Bridge --> Core[Agent Core]
+    Core --> Model[DeepSeek adapter]
+    Core --> Router[ToolRouter + PermissionPolicy]
+    Router --> Local[Workspace / Local Lite]
+    Core --> GitHub[GitHub + Actions connector]
+    Core --> Runtime[RuntimeSupervisor]
+    Core --> Journal[Session journal]
+```
 
-Цель — дать Agent Core типизированный и проверяемый маршрут от tool call модели к локальному workspace.
+### 3.1 Compose UI
 
-- [ ] Создать единый `ToolRouter` с типами `ToolRequest`, `ToolResult`, `ToolError`, `InvocationId`, timeout и cancel.
-- [ ] Зафиксировать ограничения корня workspace и запрет выхода через `..`, симлинки и неразрешённые URI.
-- [ ] Реализовать `read_file` и `list_files` с лимитами размера, глубины и количества результатов.
-- [ ] Реализовать `search_code` с фильтрами по корню, исключениями и ограничением вывода.
-- [ ] Реализовать `git_status` и `git_diff` в режиме `READ_ONLY`.
-- [ ] Преобразовывать каждый вызов и результат в события `TOOL` AgentBridge.
-- [ ] Добавить fake router и контрактные тесты без зависимости от Android UI.
+UI отвечает только за ввод и отображение:
 
-Критерий выхода: модель может запросить чтение, список, поиск, статус и diff; приложение показывает результат и не меняет workspace.
+- задача и история текущей сессии;
+- выбор `AUTO`, `LOCAL_LITE`, `REMOTE_ACTIONS`;
+- выбор permission level;
+- конфигурация DeepSeek/GitHub;
+- attachment preview;
+- diff/approval/build/artifact cards;
+- отмена, повтор и восстановление.
 
-### P0-B — История и восстановление сессий
+UI не вызывает GitHub REST, shell, DSH или файловую систему напрямую. Он работает через `AgentBridge` и получает события с correlation/session ID.
 
-История нужна до запуска длинных локальных и удалённых операций: после уничтожения Activity или перезапуска процесса состояние не должно теряться.
+### 3.2 AgentBridge v1
 
-- [ ] Сериализовать request, session state, plan, reasoning/output metadata, tool calls/results, approvals и build references.
-- [ ] Добавить versioned event journal для `AgentBridge v1`.
-- [ ] Реализовать восстановление незавершённой сессии и явное состояние `RUNNING`, `PAUSED`, `FAILED`, `COMPLETED`, `CANCELLED`.
-- [ ] Отделить технические события от пользовательского резюме.
-- [ ] Ограничить размер истории и предусмотреть безопасное сворачивание старых событий.
-- [ ] Добавить тесты восстановления после rotation, background/foreground и process death.
+Это стабильная граница между пользовательской оболочкой и исполнителями. Базовый контракт сохраняется:
 
-Критерий выхода: незавершённая задача восстанавливается без повторного выполнения уже подтверждённых tool calls.
+- `submit(AgentRequest)`;
+- `cancel()`;
+- `clearEvents()`;
+- `StateFlow<AgentSessionState>`;
+- `StateFlow<List<AgentEvent>>`.
 
-### P1-A — Контролируемая запись, Git и ручной PR
+Расширять контракт нужно обратно совместимо: новые tool/build/runtime события добавляются в поток событий, а не превращают UI в клиент внутреннего runtime.
 
-После read-only слоя добавляется запись с явным preview и уровнем доступа.
+### 3.3 Agent Core
 
-- [ ] Реализовать preview и применение `apply_patch` только в `LOCAL_WRITE`.
-- [ ] Перед применением проверять формат патча, целевые файлы, конфликт и итоговый diff.
-- [ ] Добавить `git branch`, `git checkout`/переключение рабочей ветки, `git commit` и `git push` с проверками разрешений.
-- [ ] Добавить `create_pull_request` как отдельный явно вызываемый инструмент с уровнем `PR_CREATE`.
-- [ ] Показывать diff и целевой ref до каждого внешнего write-действия.
-- [ ] Сохранять commit SHA, branch, head SHA и связь с session ID.
+Agent Core владеет жизненным циклом одной сессии:
 
-Границы этого этапа: ручной PR по явному действию разрешён; автоматическая политика создания PR сюда не входит и остаётся в отложенном плане.
+1. валидирует задачу и конфигурацию;
+2. назначает `sessionId` и выбирает target;
+3. создаёт plan event;
+4. вызывает DeepSeek;
+5. принимает output или tool call;
+6. проверяет permission и scope;
+7. передаёт tool call исполнителю;
+8. возвращает tool result модели;
+9. показывает diff/build/artifact результат;
+10. завершает или ставит сессию на паузу.
 
-Критерий выхода: локальный патч, commit, push и PR имеют проверяемую цепочку событий и не пересекают разрешённый scope workspace/repository.
+Agent Core не должен считать действие выполненным до получения результата от реального исполнителя.
 
-### P1-B — GitHub Actions: статусы, логи и артефакты
+### 3.4 Providers и исполнители
 
-Сделать удалённую компиляцию наблюдаемой из того же APK.
+| Provider | Роль | Когда используется |
+| --- | --- | --- |
+| DeepSeek | reasoning, план, ответ, tool calls, image input | каждая интеллектуальная сессия |
+| Local Lite | быстрые read-only операции и лёгкие проверки | анализ документации и небольших workspace |
+| GitHub API | репозитории, branches, commits, PR | внешние операции и синхронизация |
+| GitHub Actions | Android/NDK/CMake/долгие тесты и APK | тяжёлые сборки |
+| Headless runtime | shell/PTY/DSH после стабилизации | только после P0/P1 |
 
-- [ ] Связать dispatch с `run_id`, repository, ref и session ID.
-- [ ] Получать состояние workflow и отдельных jobs через polling с backoff.
-- [ ] Показывать итог, длительность, failed step и ссылку на run.
-- [ ] Загружать job logs с ограничением размера и фильтрацией секретов.
-- [ ] Показывать список artifacts и скачивать debug/release APK/AAB в workspace.
-- [ ] Реализовать повтор только failed jobs после отдельного разрешения.
-- [ ] Проверять checksum/имя/тип скачанного артефакта и связывать его с commit SHA.
+Каждый provider имеет отдельный интерфейс, timeout, cancellation, redaction и нормализованный результат.
 
-Критерий выхода: пользователь из одного APK видит путь `dispatch → run → job → log → artifact` и может получить APK, не открывая GitHub вручную.
+## 4. Рабочий прототип с минимальным запуском
 
-### P1-C — Android 16 UI-тесты текущего интерфейса
+Цель ближайшего MVP — запуск без Termux, ручного копирования runtime и длинной настройки.
 
-Защитить ключевые поверхности до расширения runtime и объединения оболочек.
+### 4.1 Первый запуск
 
-- [ ] Подготовить Android 16 emulator/device profile для CI или отдельного тестового запуска.
-- [ ] Добавить UI-контракты для экранов/поверхностей `Models`, `Shield`, `Gear` и `+ Add workspace`.
-- [ ] Проверить открытие, закрытие, back navigation, rotation и восстановление состояния.
-- [ ] Проверить семантику, touch-targets, scroll и отсутствие перекрытия системными inset.
-- [ ] Добавить screenshot/regression snapshots для критичных состояний.
-- [ ] Отделить стабильные тестовые идентификаторы от текстовой локализации.
+1. APK открывает одну Agent Console.
+2. По умолчанию выбраны `AUTO` и `READ_ONLY`.
+3. Базовые параметры уже заполнены: `https://api.deepseek.com` и `deepseek-flash`.
+4. Пользователь вводит DeepSeek API key только при необходимости реального ответа.
+5. Для remote build пользователь указывает GitHub token, `owner/repository`, workflow и ref.
+6. При отсутствии ключа приложение работает в offline/local probe режиме и объясняет, что именно не настроено.
 
-Критерий выхода: Agent Console проходит повторяемый тест на Android 16, а ошибки runtime фиксируются отдельным диагностическим событием.
+До появления безопасного постоянного хранилища токены находятся только в памяти сессии и никогда не попадают в event detail, crash log или artifact.
+
+### 4.2 Базовый путь задачи
+
+```text
+задача → валидация → план → запрос DeepSeek → reasoning/output → результат
+```
+
+Для задачи «собрать APK» AUTO выбирает `REMOTE_ACTIONS`. Для анализа, документации и лёгкой проверки — `LOCAL_LITE`. Любой write переводит сессию в approval gate.
+
+### 4.3 Что нужно добавить, чтобы прототип стал реально полезным
+
+- `WorkspaceSource`: app-private folder, импорт ZIP/папки через Storage Access Framework и read-only snapshot GitHub;
+- `ToolRouter`: `list_files`, `read_file`, `search_code`, `git_status`, `git_diff`;
+- `ConversationStore`: история prompt/response/tool rounds;
+- `ConfigStore`: единая проверяемая конфигурация провайдеров;
+- `ApprovalController`: отдельное подтверждение перед write, push, PR, merge и release;
+- `ActionsRunTracker`: run ID, status и ссылка на workflow;
+- единые UI-карточки `TOOL`, `BUILD`, `DIFF`, `ARTIFACT`, `APPROVAL`.
+
+Это минимальный рабочий контур. Полный headless DSH и PTY не являются условием первого полезного прототипа.
+
+## 5. Контракты данных
+
+### 5.1 Request
+
+`AgentRequest` должен постепенно получить:
+
+- `sessionId`;
+- task и conversation ID;
+- target и permission;
+- workspace ID/root;
+- provider configuration reference;
+- image attachments;
+- repository/ref/workflow;
+- cancellation/deadline metadata.
+
+Секреты не помещаются в сериализуемый event journal в открытом виде.
+
+### 5.2 Tool call/result
+
+Будущий типизированный контракт:
+
+| Поле | Требование |
+| --- | --- |
+| `invocationId` | уникален в рамках session |
+| `toolName` | allowlist, не произвольная shell-команда |
+| `arguments` | JSON schema + лимиты |
+| `permission` | проверяется до запуска |
+| `workspaceScope` | нормализованный root и target paths |
+| `timeout` | обязательный deadline |
+| `result` | stdout/data/error + truncation metadata |
+
+Каждый вызов и результат становятся отдельными `TOOL` events.
+
+### 5.3 Session journal
+
+Журнал хранит versioned records:
+
+- request и выбранный target;
+- plan, reasoning/output metadata;
+- tool calls/results;
+- approval decisions;
+- diff/commit/run/artifact references;
+- final status и error.
+
+Восстановление после process death не повторяет уже завершённый вызов. Незавершённый вызов отмечается `UNKNOWN` и требует re-check, а не слепого повтора.
+
+## 6. Permission Policy
+
+| Операция | READ_ONLY | LOCAL_WRITE | GITHUB_WRITE | PR_CREATE | MERGE_RELEASE |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| plan/read/search/diff | yes | yes | yes | yes | yes |
+| apply_patch/local file write | no | approval | approval | approval | approval |
+| branch/commit/push | no | no | approval | approval | approval |
+| workflow dispatch | no | no | approval | approval | approval |
+| create PR | no | no | no | approval | approval |
+| merge/release | no | no | no | no | approval |
+
+Право проверяется в Agent Core непосредственно перед действием. Permission из текста модели не считается разрешением пользователя.
+
+## 7. Пошаговый путь реализации
+
+### P0-0 — Очистка Deep Agent (текущий шаг)
+
+Задача: оставить в репозитории только собственный Deep Agent.
+
+- [x] убрать WebView/mobile-adapter код из проекта;
+- [x] убрать agent namespace `dev.harness.mobile.agent`;
+- [x] заменить Harness-specific icon/comment/network wording;
+- [x] сохранить только нативный Agent Console, providers и Android runtime основу;
+- [x] обновить README, architecture, ideas и roadmap;
+- [x] не менять server plugins;
+- [x] не запускать build/test без команды.
+
+Критерий выхода: в исходниках нет старого package namespace, WebView assets, профилей Harness или UI-пунктов старого приложения; остаются только явные boundary-документы.
+
+### P0-A — Workspace и read-only ToolRouter
+
+Задача: агент должен уметь читать проект и анализировать ошибку, не изменяя файлы.
+
+Порядок:
+
+1. Ввести `WorkspaceManager` с app-private root и `WorkspaceSource`.
+2. Нормализовать пути; запретить `..`, symlink escape и выход из root.
+3. Ввести лимиты file size, result count, recursion depth и output bytes.
+4. Реализовать `list_files`, `read_file`, `search_code`.
+5. Реализовать `git_status` и `git_diff` read-only.
+6. Добавить fake filesystem/router для контрактных тестов.
+7. Подключить tool schemas к DeepSeek request и tool result round-trip.
+
+Критерий выхода: модель может получить список, содержимое, поиск и diff; приложение показывает источник и лимиты; workspace не меняется.
+
+### P0-B — Conversation и session recovery
+
+Задача: длинная инженерная сессия переживает rotation, background и process death.
+
+- versioned `SessionRecord` и event journal;
+- ограниченный размер событий и сворачивание старых reasoning chunks;
+- сохранение `sessionId`, invocation IDs, run IDs и approval decisions;
+- восстановление только подтверждённого состояния;
+- status machine: `IDLE`, `RUNNING`, `WAITING_APPROVAL`, `PAUSED`, `FAILED`, `COMPLETED`, `CANCELLED`;
+- отдельное пользовательское summary вместо вывода всего технического журнала.
+
+Критерий выхода: восстановленная сессия не повторяет завершённые read/tool/build операции и объясняет неизвестное состояние.
+
+### P0-C — MVP setup и понятный результат
+
+Задача: сократить запуск до одного экрана и одной кнопки.
+
+- единая `ProviderConfig` с inline validation;
+- health-check DeepSeek и GitHub без раскрытия токенов;
+- понятные сообщения «offline», «нет ключа», «нет repository/workflow»;
+- default target `AUTO`, permission `READ_ONLY`;
+- event cards с группировкой reasoning/output/tool/build;
+- отмена, очистка и повтор сессии;
+- attachment preview без обращения к локальному пути из сообщения.
+
+Критерий выхода: новый пользователь может понять, что запустить, какие данные отсутствуют и почему операция остановилась.
+
+### P1-A — Diff, controlled write, Git и ручной PR
+
+Задача: агент вносит изменения только через проверяемый diff.
+
+Порядок:
+
+1. Добавить `apply_patch` с unified diff/structured patch parser.
+2. Показать preview целевых файлов и итоговый diff.
+3. Проверить path scope, base content hash, conflicts и file size.
+4. Запросить `LOCAL_WRITE` approval непосредственно перед записью.
+5. Реализовать branch/commit/push через отдельный GitHub provider.
+6. Связать каждый write с session ID, repository, ref и SHA.
+7. Реализовать `create_pull_request` только при `PR_CREATE`.
+
+Автоматический PR после ответа модели на этом этапе запрещён; PR создаётся явным действием.
+
+Критерий выхода: любой патч обратим через diff, write имеет approval event, commit/PR имеют проверяемый SHA.
+
+### P1-B — GitHub Actions observability и APK
+
+Задача: пользователь видит весь путь удалённой сборки в том же APK.
+
+- dispatch возвращает или находит `runId`;
+- polling с backoff и cancellation;
+- run/job/step status, duration и failed step;
+- job logs с truncation и secret redaction;
+- failed-job retry только по permission;
+- список artifacts;
+- скачивание APK/AAB в workspace;
+- проверка content type, размер, checksum, commit SHA и expected variant;
+- отображение прямой ссылки и локального пути.
+
+Критерий выхода: путь `dispatch → run → job → log → artifact` наблюдаем без ручного открытия GitHub.
+
+### P1-C — Android 16 UI и regression contract
+
+Задача: защитить нативную оболочку перед расширением runtime.
+
+- Agent Console task input;
+- target/permission dropdowns;
+- provider configuration и secret masking;
+- image picker/preview;
+- events, errors, cancel/retry;
+- rotation, background/foreground, insets и accessibility semantics;
+- стабильные test tags, не зависящие от языка;
+- screenshot regression только для согласованных критических состояний.
+
+Критерий выхода: основной пользовательский поток повторяем на Android 16 и не теряет сессию при переходах.
 
 ### P2-A — RuntimeSupervisor и headless DSH
 
-Подключать runtime после стабилизации AgentBridge, истории и ToolRouter.
+Задача: добавить внутренний runtime, не превращая его в UI API.
 
-- [ ] Реализовать `RuntimeSupervisor`: lifecycle, process ownership, readiness, heartbeat, timeout и controlled shutdown.
-- [ ] Зафиксировать версию ARM64 Node.js/DSH, manifest и SHA-256 bundle.
-- [ ] Выполнять атомарную распаковку runtime с rollback на предыдущую рабочую версию.
-- [ ] Запускать headless DSH через loopback и адаптер AgentBridge, не связывая UI с внутренними endpoint DSH.
-- [ ] Добавить foreground service, уведомление о работающем runtime и восстановление после сворачивания приложения.
-- [ ] Проверить cookie/token exchange и app-private storage.
+State machine `RuntimeSupervisor`:
 
-Критерий выхода: DSH запускается и корректно завершается внутри единственного APK, а отказ runtime не повреждает workspace и не ломает нативный Agent Core.
+```text
+EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY
+                         ↘ FAILED → ROLLBACK
+```
 
-### P2-B — PTY и интерактивный runtime
+Порядок:
 
-PTY не является первым этапом. Его реализация начинается только после стабильного headless runtime.
+1. Выбрать ARM64 Node.js/DSH bundle и зафиксировать версию.
+2. Хранить manifest и SHA-256 рядом с bundle.
+3. Распаковывать атомарно в app-private storage.
+4. Проверять executable, ABI, version и readiness probe.
+5. Запускать процесс под supervisor с timeout/heartbeat.
+6. Использовать loopback adapter за `AgentBridge`, без прямой связи UI с endpoint DSH.
+7. Добавить controlled shutdown, crash recovery и rollback.
+8. Для долгой работы использовать foreground service и понятное уведомление.
 
-- [ ] Исследовать совместимость PTY с Android ARM64.
-- [ ] Определить границу persistent shell, отмены и дочерних процессов.
-- [ ] Проверить необходимость PRoot/Termux bootstrap как внутреннего расширения, не требующего отдельного APK.
-- [ ] Добавить ограничения для интерактивных команд и корректное восстановление после разрыва.
+Критерий выхода: отказ runtime не повреждает workspace и не блокирует нативный Agent Core; второй APK и Termux не нужны.
 
-Критерий выхода: интерактивный процесс не блокирует UI, не теряется без supervisor и не получает доступ вне разрешённого workspace.
+### P2-B — PTY и интерактивные команды
 
-## Отложенный план реализации
+Только после P2-A:
 
-Следующие направления фиксируются сейчас, но в текущем проходе не реализуются. Они подключаются после стабилизации P0/P1 и отдельной проверки интерфейсов/провайдеров.
+- определить PTY backend для ARM64;
+- ограничить persistent shell workspace и environment;
+- обеспечить cancel/process tree cleanup;
+- восстановить или явно завершить потерянный процесс;
+- запретить произвольное выполнение команды только из текста модели.
 
-### D1 — OCR, сравнение скриншотов и генерация изображений
+Критерий выхода: интерактивная команда не блокирует UI и не выходит за permission/workspace scope.
 
-- [ ] OCR текста и stack trace на изображениях.
-- [ ] Выделение области на скриншоте и нормализация ориентации/размера.
-- [ ] Сравнение двух UI-скриншотов с подсветкой отличий.
-- [ ] Генерация SVG/Compose/HTML через Agent Core.
-- [ ] Подключаемый `ImageGenerator` provider для растровых изображений.
+## 8. Фото, OCR и генерация
 
-Image input уже существует как базовый pipeline. Растровая генерация не считается возможностью DeepSeek API по умолчанию и должна иметь отдельный провайдер.
+### Уже есть
 
-### D2 — Объединение Agent Console и Harness WebView
+- URI читается через `ContentResolver`;
+- bytes кодируются в data URL;
+- DeepSeek получает `input_image`;
+- размер inline input ограничивается.
 
-- [ ] Спроектировать единую рабочую область без двух конкурирующих navigation/state owners.
-- [ ] Объединить Tasks, Workspace, Builds, Artifacts и текущий web surface.
-- [ ] Согласовать единый composer, события, back navigation и восстановление.
-- [ ] Оставить WebView заменяемым surface за AgentBridge.
+### После стабилизации P0/P1
 
-До отдельного решения Harness WebView остаётся в репозитории `harness-mobile`; Deep Agent не дублирует mobile adapter.
+- resize и EXIF/orientation normalization;
+- OCR текста и stack trace;
+- выделение области и сравнение двух UI screenshots;
+- генерация SVG/Compose/HTML через Agent Core;
+- отдельный `ImageGenerator` provider для raster output.
 
-### D3 — Политики токенов, записи изменений и автоматического PR
+Генерация растровых изображений не считается автоматически доступной возможностью текущего DeepSeek adapter.
 
-- [ ] Выбрать политику хранения токенов: только сессия, Android Keystore или внешний proxy.
-- [ ] Зафиксировать redaction токенов в событиях, логах, crash reports и экспортируемых артефактах.
-- [ ] Определить журнал write-операций, срок хранения, экспорт и восстановление.
-- [ ] Определить правила автоматического создания PR: opt-in, branch-per-task, обязательный diff, commit SHA и approval gate.
-- [ ] Отдельно определить, допускается ли автоматический PR после успешного Actions run.
+## 9. Безопасность и секреты
 
-До утверждения D3 токены остаются только в памяти текущей сессии, запись изменений требует текущего уровня разрешений, а PR создаётся только явным действием пользователя/агента с `PR_CREATE`.
+Текущая безопасная база:
 
-## Не менять в ходе этой дорожной карты без отдельного решения
+- `READ_ONLY` по умолчанию;
+- токены только в памяти сессии;
+- redaction в событиях;
+- нет произвольного shell tool;
+- нет неявного write.
 
-- единую поставку одним APK;
-- `AgentBridge v1` как стабильную границу UI и runtime;
-- отсутствие обязательного отдельного Termux/DSH APK;
-- отсутствие изменений серверных plugins;
-- основной путь тяжёлой сборки через GitHub Actions;
-- явное разделение `READ_ONLY`, `LOCAL_WRITE`, `GITHUB_WRITE`, `PR_CREATE` и `MERGE_RELEASE`.
+До отдельного решения D3 нельзя:
 
-## Definition of Done для реализации
+- записывать токены в plaintext preferences или journal;
+- отправлять токены модели;
+- вставлять секреты в task input или artifact detail;
+- считать успешным действие без подтверждённого результата provider.
 
-- каждая задача имеет контракт, permission gate, журнал событий и тестируемый критерий выхода;
-- локальный write всегда предваряется diff/preview;
-- GitHub write связывается с repository, ref, SHA и session ID;
-- Actions и скачанный artifact проверяются и видны в APK;
-- восстановление сессии не повторяет уже выполненные операции;
-- один APK остаётся единственной пользовательской поставкой;
-- изменения серверных plugins отсутствуют;
-- документация и статус roadmap обновляются вместе с реализацией.
+После P0 выбирается один из вариантов хранения: Android Keystore, внешний proxy или сессионная схема с повторным вводом.
+
+## 10. Что сознательно не входит в текущий MVP
+
+- второй APK;
+- обязательная установка Termux;
+- Android SDK/NDK внутри базового APK;
+- полноценный PTY;
+- автоматический PR/merge/release;
+- изменение server plugins;
+- WebView как обязательная часть Deep Agent;
+- бесконтрольное выполнение shell-команд;
+- постоянное хранение токенов без отдельного решения.
+
+## 11. Структура исходников
+
+Текущая и целевая схема:
+
+```text
+app/src/main/java/dev/deepagent/mobile/
+├── MainActivity.kt
+├── AgentMobileApp.kt
+├── ui/theme/
+└── agent/
+    ├── core/AgentCore.kt
+    ├── deepseek/DeepSeekResponsesClient.kt
+    ├── github/GitHubActionsClient.kt
+    ├── model/AgentModels.kt
+    ├── protocol/AgentBridge.kt
+    ├── runtime/LocalLiteRunner.kt
+    ├── ui/AgentConsoleScreen.kt
+    ├── tools/ToolRouter.kt              # P0-A
+    ├── workspace/WorkspaceManager.kt    # P0-A
+    ├── session/SessionStore.kt          # P0-B
+    ├── policy/PermissionPolicy.kt       # P0-C
+    └── runtime/RuntimeSupervisor.kt     # P2-A
+```
+
+Пока Gradle остаётся одним Android module. Новые Kotlin-пакеты вводятся раньше, чем отдельные Gradle modules; выделение modules оправдано только при появлении независимых тестируемых boundaries.
+
+## 12. Проверка результата по этапам
+
+Для каждого этапа должны существовать:
+
+- контракт входа/выхода;
+- permission gate;
+- correlation/session ID;
+- redacted event trail;
+- cancellation/timeout;
+- failure and recovery behavior;
+- критерий выхода, проверяемый отдельно.
+
+В этом проходе такие проверки не запускаются. Команда на сборку/тесты должна быть дана отдельно пользователем; до неё ограничиваемся чтением дерева, diff и статическим контролем изменений.
+
+## 13. Не менять без отдельного решения
+
+- один APK;
+- `AgentBridge v1` как UI/runtime boundary;
+- DeepSeek adapter как заменяемый provider;
+- GitHub Actions как основной heavy-build path;
+- `READ_ONLY` по умолчанию и раздельные permission levels;
+- отсутствие обязательного Termux/DSH APK;
+- отсутствие server plugin mutations;
+- правило: модель не может сама выдать себе permission.
+
+## Definition of Done
+
+- новый пользователь запускает задачу из одной Agent Console;
+- read-only анализ не меняет workspace;
+- каждый write показывает diff и требует approval;
+- GitHub операция связана с repository/ref/SHA/session ID;
+- Actions run, logs и artifacts видны и проверены;
+- runtime отказоустойчив и заменяем;
+- восстановление сессии не повторяет завершённые операции;
+- APK остаётся единственной поставкой;
+- документация обновляется вместе с реализацией;
+- серверные plugins не изменяются.
