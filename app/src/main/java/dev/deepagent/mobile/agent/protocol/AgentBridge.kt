@@ -4,6 +4,12 @@ import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentSessionState
 import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
+import dev.deepagent.mobile.agent.git.GitBranchRequest
+import dev.deepagent.mobile.agent.git.GitCommitRequest
+import dev.deepagent.mobile.agent.git.GitOperationResult
+import dev.deepagent.mobile.agent.git.GitOperationState
+import dev.deepagent.mobile.agent.git.GitPullRequestRequest
+import dev.deepagent.mobile.agent.git.GitPushRequest
 import dev.deepagent.mobile.agent.model.PendingPatchApproval
 import kotlinx.coroutines.flow.StateFlow
 
@@ -18,6 +24,7 @@ interface AgentBridge {
     val events: StateFlow<List<AgentEvent>>
     val workspace: StateFlow<AgentWorkspaceSnapshot?>
     val pendingApproval: StateFlow<PendingPatchApproval?>
+    val git: StateFlow<GitOperationState>
 
     suspend fun submit(request: AgentRequest)
 
@@ -29,6 +36,19 @@ interface AgentBridge {
     fun approvePendingPatch()
 
     fun rejectPendingPatch()
+
+    suspend fun inspectGit(): GitOperationResult
+
+    suspend fun createGitBranch(request: GitBranchRequest): GitOperationResult
+
+    suspend fun commitGit(request: GitCommitRequest): GitOperationResult
+
+    suspend fun pushGit(request: GitPushRequest): GitOperationResult
+
+    suspend fun createPullRequest(
+        request: GitPullRequestRequest,
+        githubToken: String,
+    ): GitOperationResult
 
     fun cancel()
 

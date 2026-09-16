@@ -2,6 +2,11 @@ package dev.deepagent.mobile.agent.tools
 
 import dev.deepagent.mobile.agent.patch.PatchEngine
 import dev.deepagent.mobile.agent.patch.PatchPreview
+import dev.deepagent.mobile.agent.git.GitBranchRequest
+import dev.deepagent.mobile.agent.git.GitCommitRequest
+import dev.deepagent.mobile.agent.git.GitOperationResult
+import dev.deepagent.mobile.agent.git.GitPushRequest
+import dev.deepagent.mobile.agent.git.GitRepositoryClient
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -53,6 +58,7 @@ class ToolRouter(
 ) {
 
     private val patchLock = Any()
+    private val gitRepository = GitRepositoryClient(workspaceManager)
 
     suspend fun previewPatch(
         argumentsJson: String,
@@ -195,6 +201,24 @@ class ToolRouter(
             }
         }
     }
+
+    suspend fun inspectGit(workspaceId: String? = null): GitOperationResult =
+        gitRepository.status(workspaceId)
+
+    suspend fun createGitBranch(
+        workspaceId: String?,
+        request: GitBranchRequest,
+    ): GitOperationResult = gitRepository.createBranch(workspaceId, request)
+
+    suspend fun commitGit(
+        workspaceId: String?,
+        request: GitCommitRequest,
+    ): GitOperationResult = gitRepository.commit(workspaceId, request)
+
+    suspend fun pushGit(
+        workspaceId: String?,
+        request: GitPushRequest,
+    ): GitOperationResult = gitRepository.push(workspaceId, request)
 
     suspend fun execute(
         toolName: String,

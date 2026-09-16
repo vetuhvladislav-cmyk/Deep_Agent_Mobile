@@ -49,6 +49,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.deepagent.mobile.agent.git.GitBranchRequest
+import dev.deepagent.mobile.agent.git.GitCommitRequest
+import dev.deepagent.mobile.agent.git.GitPullRequestRequest
+import dev.deepagent.mobile.agent.git.GitPushRequest
 import dev.deepagent.mobile.agent.protocol.AgentBridge
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentEventKind
@@ -108,8 +112,21 @@ fun AgentConsoleScreen(
     var image by remember { mutableStateOf<ImageAttachment?>(null) }
     var localError by remember { mutableStateOf<String?>(null) }
     var workspaceError by remember { mutableStateOf<String?>(null) }
+    var gitError by remember { mutableStateOf<String?>(null) }
+    var gitBranch by rememberSaveable { mutableStateOf("agent/task") }
+    var gitStartPoint by rememberSaveable { mutableStateOf("HEAD") }
+    var commitPaths by rememberSaveable { mutableStateOf("") }
+    var commitMessage by rememberSaveable { mutableStateOf("") }
+    var gitRemote by rememberSaveable { mutableStateOf("origin") }
+    var pushBranch by rememberSaveable { mutableStateOf("agent/task") }
+    var pullRequestHead by rememberSaveable { mutableStateOf("agent/task") }
+    var pullRequestBase by rememberSaveable { mutableStateOf("main") }
+    var pullRequestTitle by rememberSaveable { mutableStateOf("") }
+    var pullRequestBody by rememberSaveable { mutableStateOf("") }
+    var pullRequestDraft by rememberSaveable { mutableStateOf(true) }
     val workspace by agent.workspace.collectAsState()
     val pendingApproval by agent.pendingApproval.collectAsState()
+    val gitState by agent.git.collectAsState()
 
     LaunchedEffect(imageUri) {
         val persistedUri = imageUri ?: return@LaunchedEffect
@@ -437,6 +454,276 @@ fun AgentConsoleScreen(
                 }
             }
 
+
+            if (workspace != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "P1-A Git / ручной PR",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Состояние: " + gitState.status.name +
+                                " · " + (gitState.operation ?: "нет операции"),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        gitState.summary?.takeIf { it.isNotBlank() }?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (gitState.status.name == "FAILED" ||
+                                    gitState.status.name == "UNKNOWN"
+                                ) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                },
+                            )
+                        }
+                        gitState.headSha?.let {
+                            Text(
+                                text = "HEAD: " + it +
+                                    " · branch: " + (gitState.branch ?: "DETACHED"),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        gitState.pullRequestUrl?.let {
+                            Text(
+                                text = "PR: " + it,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                gitError = null
+                                scope.launch {
+                                    runCatching { agent.inspectGit() }
+                                        .onFailure { error ->
+                                            gitError = error.message
+                                                ?: "Не удалось получить Git status"
+                                        }
+                                }
+                            },
+                        ) {
+                            Text("Проверить Git")
+                        }
+                        OutlinedTextField(
+                            value = gitBranch,
+                            onValueChange = {
+                                gitBranch = it
+                                if (pullRequestHead == "agent/task") {
+                                    pullRequestHead = it
+                                }
+                                if (pushBranch == "agent/task") {
+                                    pushBranch = it
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Новая branch") },
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = gitStartPoint,
+                            onValueChange = { gitStartPoint = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Start point") },
+                            singleLine = true,
+                        )
+                        Button(
+                            onClick = {
+                                gitError = null
+                                scope.launch {
+                                    runCatching {
+                                        agent.createGitBranch(
+                                            GitBranchRequest(
+                                                name = gitBranch,
+                                                startPoint = gitStartPoint
+                                                    .trim()
+                                                    .ifBlank { null },
+                                            ),
+                                        )
+                                    }.onFailure { error ->
+                                        gitError = error.message
+                                            ?: "Не удалось создать branch"
+                                    }
+                                }
+                            },
+                        ) {
+                            Text("Создать branch")
+                        }
+                        OutlinedTextField(
+                            value = commitPaths,
+                            onValueChange = { commitPaths = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Paths для commit через запятую или новую строку") },
+                            minLines = 2,
+                            maxLines = 4,
+                        )
+                        OutlinedTextField(
+                            value = commitMessage,
+                            onValueChange = { commitMessage = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Commit message") },
+                            singleLine = true,
+                        )
+                        Button(
+                            onClick = {
+                                gitError = null
+                                scope.launch {
+                                    runCatching {
+                                        agent.commitGit(
+                                            GitCommitRequest(
+                                                paths = parseCommitPaths(commitPaths),
+                                                message = commitMessage,
+                                            ),
+                                        )
+                                    }.onFailure { error ->
+                                        gitError = error.message
+                                            ?: "Не удалось создать commit"
+                                    }
+                                }
+                            },
+                        ) {
+                            Text("Commit выбранных paths")
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedTextField(
+                                value = gitRemote,
+                                onValueChange = { gitRemote = it },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("Remote") },
+                                singleLine = true,
+                            )
+                            OutlinedTextField(
+                                value = pushBranch,
+                                onValueChange = { pushBranch = it },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("Push branch") },
+                                singleLine = true,
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                gitError = null
+                                scope.launch {
+                                    runCatching {
+                                        agent.pushGit(
+                                            GitPushRequest(
+                                                remote = gitRemote,
+                                                branch = pushBranch,
+                                            ),
+                                        )
+                                    }.onFailure { error ->
+                                        gitError = error.message
+                                            ?: "Не удалось выполнить push"
+                                    }
+                                }
+                            },
+                        ) {
+                            Text("Push")
+                        }
+                        OutlinedTextField(
+                            value = repository,
+                            onValueChange = { repository = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("PR repository owner/name") },
+                            singleLine = true,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedTextField(
+                                value = pullRequestHead,
+                                onValueChange = { pullRequestHead = it },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("PR head") },
+                                singleLine = true,
+                            )
+                            OutlinedTextField(
+                                value = pullRequestBase,
+                                onValueChange = { pullRequestBase = it },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("PR base") },
+                                singleLine = true,
+                            )
+                        }
+                        OutlinedTextField(
+                            value = pullRequestTitle,
+                            onValueChange = { pullRequestTitle = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("PR title") },
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = pullRequestBody,
+                            onValueChange = { pullRequestBody = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("PR body") },
+                            minLines = 2,
+                            maxLines = 5,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(
+                                onClick = {
+                                    gitError = null
+                                    scope.launch {
+                                        runCatching {
+                                            agent.createPullRequest(
+                                                request = GitPullRequestRequest(
+                                                    repository = repository,
+                                                    head = pullRequestHead,
+                                                    base = pullRequestBase,
+                                                    title = pullRequestTitle,
+                                                    body = pullRequestBody,
+                                                    draft = pullRequestDraft,
+                                                ),
+                                                githubToken = githubToken,
+                                            )
+                                        }.onFailure { error ->
+                                            gitError = error.message
+                                                ?: "Не удалось создать PR"
+                                        }
+                                    }
+                                },
+                            ) {
+                                Text("Создать PR")
+                            }
+                            TextButton(onClick = { pullRequestDraft = !pullRequestDraft }) {
+                                Text(if (pullRequestDraft) "Draft: да" else "Draft: нет")
+                            }
+                        }
+                        gitError?.let {
+                            Text(
+                                text = it,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Text(
+                            text = "Branch/commit/push требуют GITHUB_WRITE; PR требует PR_CREATE. " +
+                                "Нажатие кнопки является явным approval.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -698,6 +985,11 @@ private suspend fun readImageAttachment(
         displayName = uri.lastPathSegment,
     )
 }
+
+private fun parseCommitPaths(value: String): List<String> = value
+    .split(',', '\n', ';')
+    .map { it.trim() }
+    .filter { it.isNotBlank() }
 
 private fun formatWorkspaceBytes(bytes: Long): String {
     if (bytes < 1024L) return bytes.toString() + " B"
