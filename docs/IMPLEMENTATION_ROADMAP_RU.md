@@ -27,7 +27,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B
 
 | Этап | capabilityStatus | Назначение |
 | --- | --- | --- |
-| P0-0 | planned | очистка Deep Agent и границ репозитория |
+| P0-0 | available | очистка Deep Agent и границ репозитория |
 | P0-A | planned | workspace и read-only ToolRouter |
 | P0-B | planned | durable session journal и recovery |
 | P0-C | planned | MVP setup и понятный Agent Console |
@@ -41,7 +41,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B
 
 ### P0-0 — Очистка Deep Agent и границ репозитория
 
-- **Статус:** capabilityStatus: planned
+- **Статус:** capabilityStatus: available
 - **Владелец:** repository boundary / Agent Core integration
 - **Входной контракт:** утверждённая архитектура, исходный repository snapshot и перечень файлов; контракты не переопределяются в этапе.
 - **Выходной контракт:** в репозитории остаются только собственный Deep Agent, один APK-контур, согласованные source-пакеты и четыре канонических Markdown-файла; Harness/mobile-adapter и серверные plugin mutations не становятся зависимостями.
@@ -51,6 +51,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B
 - **Cancellation / timeout:** отмена до commit оставляет исходный snapshot без применения; статические операции имеют bounded timeout и не запускают build/test.
 - **Recovery rule:** после interruption повторно считать repository fingerprint; неизвестную запись не повторять без нового diff и approval.
 - **Exit criterion:** запрещённые Harness/mobile-adapter runtime-зависимости и лишние документационные файлы удалены из целевого scope; четыре Markdown-файла проходят ссылочную и структурную проверку; code/build/test gate остаётся отдельным.
+- **Результат приёмки:** на commit `35bfd006` в целевом scope остались ровно четыре канонических Markdown-файла; проверены 9 относительных ссылок, отсутствующих целей нет; запрещённые `harness`/`mobile-adapter` runtime-пути отсутствуют. `testDebugUnitTest` и `assembleDebug` прошли в GitHub Actions run #6; APK опубликован в Release `v0.1.1`.
 
 ### P0-A — Workspace и read-only ToolRouter
 
@@ -63,6 +64,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B
 - **Redacted audit trail:** invocation ID, tool name, workspace ID, input summary, output size, truncation, fingerprint и redacted error.
 - **Cancellation / timeout:** отдельный deadline для каждого tool; Git timeout и cancellation возвращают нормализованный результат; generic shell не добавляется.
 - **Recovery rule:** running без подтверждённого результата переводится в UNKNOWN; автоматический replay запрещён, выполняется re-check.
+- **Результат текущей реализации:** пять allowlisted read-only entry points и fail-closed guards присутствуют в едином ToolRouter; статическая проверка контрактов и границ выполнена. GitHub Actions run #6 подтвердил компиляцию тестового варианта и `assembleDebug`.
+- **Acceptance gate:** capabilityStatus остаётся `planned` до runtime-проверки пяти tools на импортированном workspace, включая path/symlink escape, sensitive files, overflow, no-git и неизменность workspace; в репозитории пока нет `src/test` и `src/androidTest`, поэтому поведенческое покрытие не подтверждено.
 - **Exit criterion:** все пять tools работают через единый router contract; path escape, symlink escape, sensitive files, output overflow и отсутствие git обрабатываются fail-closed; workspace не изменяется.
 
 ### P0-B — Durable session journal и recovery
@@ -77,7 +80,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B
 - **Cancellation / timeout:** journal write атомарен; recovery имеет bounded timeout и сообщает неполное состояние вместо зависания.
 - **Recovery rule:** завершённые side effects не повторяются; незавершённые операции получают UNKNOWN и требуют re-check.
 - **Результат текущей реализации:** кодовая часть P0-B внесена: versioned journal v2 с чтением v1, атомарная запись session/latest, сохранение events/invocations/decisions, redaction и recovery без автоматического replay; статическая согласованность изменённых файлов проверена.
-- **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки exit criterion; build, tests и APK в этой итерации не запускались.
+- **Validation:** GitHub Actions run #6 на commit `35bfd006` успешно выполнил `testDebugUnitTest` и `assembleDebug`; APK `v0.1.1` опубликован, SHA-256 зафиксирован в README.
+- **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки восстановления после background/process death/rotation и подтверждения отсутствия replay; в репозитории пока нет `src/test` и `src/androidTest`, поэтому поведенческое покрытие не подтверждено.
 - **Exit criterion:** сессия восстанавливается без повторения завершённых tool/build/write операций, сохраняет correlation IDs и объясняет неизвестное состояние.
 
 ### P0-C — MVP setup и понятный Agent Console
@@ -92,7 +96,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B
 - **Cancellation / timeout:** cancel доступен из UI; network/provider timeout переводится в понятное состояние без скрытого retry.
 - **Recovery rule:** после rotation/background UI подписывается на AgentBridge, а не читает journal; при UNKNOWN предлагает re-check.
 - **Результат текущей реализации:** Agent Console подключён только к AgentBridge, workspace import и patch approval выведены из внутренних типов, добавлены provider/session/recovery summary, сохранение несекретной формы, восстановление image URI и единый scrollable mobile layout; статическая проверка пройдена.
-- **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки exit criterion; build, tests и APK в этой итерации не запускались.
+- **Validation:** GitHub Actions run #6 на commit `35bfd006` успешно выполнил `testDebugUnitTest` и `assembleDebug`; APK `v0.1.1` опубликован, ссылка и checksum зафиксированы в README.
+- **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки читаемости состояния, recovery affordances, rotation/background и keyboard/insets; в репозитории пока нет `src/test` и `src/androidTest`, поэтому поведенческое покрытие не подтверждено.
 - **Exit criterion:** новый пользователь из одного экрана понимает, что настроено, что отсутствует, какой permission требуется и почему операция остановилась.
 
 ### P1-A — Diff, controlled write, Git и ручной PR
