@@ -224,7 +224,7 @@ fun AgentConsoleScreen(
             )
         },
     ) { padding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .imePadding()
@@ -232,6 +232,11 @@ fun AgentConsoleScreen(
                 .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
             Text(
                 text = statusLabel(state.status),
                 style = MaterialTheme.typography.labelLarge,
@@ -606,23 +611,22 @@ fun AgentConsoleScreen(
             }
 
             HorizontalDivider()
-
-            Text(
-                text = "События Agent Core",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                items(
-                    items = events,
-                    key = { event -> event.eventId },
-                ) { event ->
-                    AgentEventCard(event)
                 }
+            }
+
+            item {
+                Text(
+                    text = "События Agent Core",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+
+            items(
+                items = events,
+                key = { event -> event.eventId },
+            ) { event ->
+                AgentEventCard(event)
             }
         }
     }
