@@ -175,6 +175,7 @@ interface AgentBridge {
 - внутренние классы DeepSeek, GitHub, Actions и runtime не становятся UI-контрактом;
 - новые capability добавляют типизированные события и provider interfaces за Bridge;
 - sessionId сохраняется в каждом результате, событии и durable record.
+- В MVP AgentBridge также отдаёт redacted workspace snapshot и pending approval; импорт workspace, approval и lifecycle вызываются через Bridge, а сырые tool arguments не выходят в UI.
 
 ## 4. Permission model
 
