@@ -12,6 +12,7 @@ import dev.deepagent.mobile.agent.github.GitHubActionsResult
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
+import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.model.AgentSessionState
 import dev.deepagent.mobile.agent.model.AgentSessionStatus
 import dev.deepagent.mobile.agent.model.ExecutionTarget
@@ -20,6 +21,8 @@ import dev.deepagent.mobile.agent.patch.PatchPreview
 import dev.deepagent.mobile.agent.protocol.AgentBridge
 import dev.deepagent.mobile.agent.runtime.LocalLiteRunner
 import dev.deepagent.mobile.agent.session.PersistedAgentSession
+import dev.deepagent.mobile.agent.session.SessionDecisionRecord
+import dev.deepagent.mobile.agent.session.SessionInvocationRecord
 import dev.deepagent.mobile.agent.session.SessionRequestSummary
 import dev.deepagent.mobile.agent.session.SessionStore
 import dev.deepagent.mobile.agent.tools.AgentToolDefinition
@@ -47,6 +50,7 @@ data class PendingPatch(
     val argumentsJson: String,
     val preview: PatchPreview,
     val canApply: Boolean,
+    val invocationId: String? = null,
 )
 
 /**
@@ -83,8 +87,14 @@ class AgentCore(context: Context) : AgentBridge {
     private var patchApplyJob: Job? = null
     private var currentSessionId: String? = null
     private var currentRequestSummary: SessionRequestSummary? = null
+    private val invocationRecords = mutableListOf<SessionInvocationRecord>()
+    private val decisionRecords = mutableListOf<SessionDecisionRecord>()
+    private var eventSequence: Long = 0L
+    private var recoveryReason: String? = null
     @Volatile
     private var persistGeneration: Long = 0L
+    @Volatile
+    private var closed = false
 
     val workspace: WorkspaceManager
         get() = workspaceManager
@@ -94,6 +104,7 @@ class AgentCore(context: Context) : AgentBridge {
     }
 
     override suspend fun submit(request: AgentRequest) {
+        check(!closed) { "AgentCore уже закрыт" }
         activeJob?.cancel()
         patchApplyJob?.cancel()
         patchApplyJob = null
@@ -118,7 +129,9 @@ class AgentCore(context: Context) : AgentBridge {
         _state.value = _state.value.copy(
             status = AgentSessionStatus.CANCELLED,
             finishedAt = System.currentTimeMillis(),
+            recoveryRequired = false,
         )
+        recordDecision("SESSION", "CANCELLED", "Пользователь остановил сессию")
         append(AgentEventKind.INFO, "Сессия остановлена пользователем")
     }
 
@@ -128,11 +141,13 @@ class AgentCore(context: Context) : AgentBridge {
     }
 
     fun close() {
+        if (closed) return
         activeJob?.cancel()
         patchApplyJob?.cancel()
         patchApplyJob = null
         coreScope.cancel()
-        persistAsync()
+        closed = true
+        persistOnClose()
     }
 
     private suspend fun execute(request: AgentRequest) {
@@ -147,6 +162,11 @@ class AgentCore(context: Context) : AgentBridge {
         val sessionId = request.sessionId ?: UUID.randomUUID().toString()
         val startedAt = System.currentTimeMillis()
         currentSessionId = sessionId
+        eventSequence = 0L
+        invocationRecords.clear()
+        decisionRecords.clear()
+        recoveryReason = null
+        _events.value = emptyList()
         _pendingPatch.value = null
         currentRequestSummary = SessionRequestSummary(
             task = task,
@@ -233,6 +253,11 @@ class AgentCore(context: Context) : AgentBridge {
         if (request.permission < PermissionMode.GITHUB_WRITE) {
             _state.value = _state.value.copy(
                 status = AgentSessionStatus.WAITING_APPROVAL,
+            )
+            recordDecision(
+                kind = "REMOTE_ACTION",
+                state = "WAITING_APPROVAL",
+                detail = "Требуется permission GITHUB_WRITE",
             )
             append(
                 AgentEventKind.INFO,
@@ -378,10 +403,12 @@ class AgentCore(context: Context) : AgentBridge {
 
             val nextInput = responseOutputItems(result.response).toMutableList()
             for (call in result.functionCalls) {
+                val invocationId = beginInvocation(call.name, call.callId)
                 append(
                     AgentEventKind.TOOL,
                     "Вызов tool: " + call.name,
                     "round=" + round + "; call_id=" + call.callId,
+                    invocationId = invocationId,
                 )
 
                 if (call.name == ToolRouter.TOOL_APPLY_PATCH) {
@@ -389,7 +416,16 @@ class AgentCore(context: Context) : AgentBridge {
                         argumentsJson = call.arguments,
                         workspaceId = request.workspaceId,
                     )
-                    appendToolResult(previewResult)
+                    completeInvocation(
+                        invocationId = invocationId,
+                        state = if (previewResult.ok) {
+                            "WAITING_APPROVAL"
+                        } else {
+                            "FAILED"
+                        },
+                        summary = previewResult.summary,
+                    )
+                    appendToolResult(previewResult, invocationId)
                     val preview = previewResult.patchPreview
                     if (previewResult.ok && preview != null) {
                         val permission = currentRequestSummary?.permission
@@ -400,10 +436,17 @@ class AgentCore(context: Context) : AgentBridge {
                             argumentsJson = call.arguments,
                             preview = preview,
                             canApply = permission >= PermissionMode.LOCAL_WRITE,
+                            invocationId = invocationId,
                         )
                         _state.value = _state.value.copy(
                             status = AgentSessionStatus.WAITING_APPROVAL,
                             lastError = null,
+                            recoveryRequired = false,
+                        )
+                        recordDecision(
+                            kind = "PATCH",
+                            state = "WAITING_APPROVAL",
+                            detail = "Ожидается approval для " + preview.path,
                         )
                         append(
                             AgentEventKind.INFO,
@@ -428,7 +471,12 @@ class AgentCore(context: Context) : AgentBridge {
                     argumentsJson = call.arguments,
                     workspaceId = request.workspaceId,
                 )
-                appendToolResult(toolResult)
+                completeInvocation(
+                    invocationId = invocationId,
+                    state = if (toolResult.ok) "SUCCEEDED" else "FAILED",
+                    summary = toolResult.summary,
+                )
+                appendToolResult(toolResult, invocationId)
                 nextInput += JSONObject()
                     .put("type", "function_call_output")
                     .put("call_id", call.callId)
@@ -438,7 +486,10 @@ class AgentCore(context: Context) : AgentBridge {
         }
     }
 
-    private fun appendToolResult(result: ToolExecutionResult) {
+    private fun appendToolResult(
+        result: ToolExecutionResult,
+        invocationId: String? = null,
+    ) {
         append(
             AgentEventKind.TOOL,
             if (result.ok) {
@@ -447,6 +498,7 @@ class AgentCore(context: Context) : AgentBridge {
                 result.toolName + " отклонён: " + result.summary
             },
             result.toModelJson().take(MAX_EVENT_DETAIL_CHARS),
+            invocationId = invocationId,
         )
     }
 
@@ -473,6 +525,12 @@ class AgentCore(context: Context) : AgentBridge {
         _state.value = _state.value.copy(
             status = AgentSessionStatus.RUNNING,
             lastError = null,
+            recoveryRequired = false,
+        )
+        recordDecision(
+            kind = "PATCH",
+            state = "APPROVED",
+            detail = "Применение " + pending.preview.path,
         )
         append(
             AgentEventKind.INFO,
@@ -490,12 +548,23 @@ class AgentCore(context: Context) : AgentBridge {
             )
             if (!result.ok) {
                 _pendingPatch.value = null
+                completeInvocation(
+                    invocationId = pending.invocationId,
+                    state = "UNKNOWN",
+                    summary = result.summary,
+                )
                 markUnknown(
                     result.summary + "; выполните новый preview перед продолжением",
                 )
                 return@launch
             }
 
+            completeInvocation(
+                invocationId = pending.invocationId,
+                state = "SUCCEEDED",
+                summary = "Patch применён",
+            )
+            recoveryReason = null
             _pendingPatch.value = null
             _state.value = _state.value.copy(
                 status = AgentSessionStatus.COMPLETED,
@@ -517,9 +586,19 @@ class AgentCore(context: Context) : AgentBridge {
 
     fun rejectPendingPatch() {
         if (_state.value.status != AgentSessionStatus.WAITING_APPROVAL) return
-        if (_pendingPatch.value == null) return
+        val pending = _pendingPatch.value ?: return
         patchApplyJob?.cancel()
         patchApplyJob = null
+        completeInvocation(
+            invocationId = pending.invocationId,
+            state = "CANCELLED",
+            summary = "Patch отклонён пользователем",
+        )
+        recordDecision(
+            kind = "PATCH",
+            state = "REJECTED",
+            detail = "Отклонено: " + pending.preview.path,
+        )
         _pendingPatch.value = null
         _state.value = _state.value.copy(
             status = AgentSessionStatus.CANCELLED,
@@ -532,53 +611,155 @@ class AgentCore(context: Context) : AgentBridge {
         val restored = sessionStore.loadLatest() ?: return
         currentSessionId = restored.sessionId
         currentRequestSummary = restored.request
+        invocationRecords.clear()
+        invocationRecords += restored.invocations
+        decisionRecords.clear()
+        decisionRecords += restored.decisions
+        eventSequence = maxOf(
+            restored.eventCursor,
+            restored.events.maxOfOrNull { it.sequence } ?: 0L,
+        )
+        _pendingPatch.value = null
+
         val previousState = restored.state
-        val recoveredState = if (
-            previousState.status == AgentSessionStatus.RUNNING ||
+        val requiresRecovery = previousState.status == AgentSessionStatus.RUNNING ||
             previousState.status == AgentSessionStatus.WAITING_APPROVAL
-        ) {
-            previousState.copy(
-                status = AgentSessionStatus.UNKNOWN,
-                lastError = "Сессия восстановлена после незавершённой операции; требуется re-check",
-                finishedAt = System.currentTimeMillis(),
-            )
-        } else {
-            previousState
-        }
-        _state.value = recoveredState
-        _events.value = restored.events + AgentEvent(
-            kind = AgentEventKind.INFO,
-            message = "Восстановлена последняя сессия " + restored.sessionId.take(8),
-            detail = if (recoveredState.status == AgentSessionStatus.UNKNOWN) {
-                "Незавершённая операция не запущена повторно; требуется новый preview/re-check."
+        val recoveryMessage =
+            "Сессия восстановлена после незавершённой операции; требуется re-check"
+        recoveryReason = restored.recoveryReason
+            ?: if (requiresRecovery) recoveryMessage else null
+        val recoveredState = previousState.copy(
+            status = if (requiresRecovery) {
+                AgentSessionStatus.UNKNOWN
             } else {
-                null
+                previousState.status
             },
-            sessionId = restored.sessionId,
+            sessionId = previousState.sessionId ?: restored.sessionId,
+            eventCursor = eventSequence,
+            recoveryRequired = previousState.recoveryRequired || requiresRecovery,
+            lastError = if (requiresRecovery) {
+                recoveryMessage
+            } else {
+                previousState.lastError
+            },
+            finishedAt = if (requiresRecovery) {
+                System.currentTimeMillis()
+            } else {
+                previousState.finishedAt
+            },
+        )
+        _state.value = recoveredState
+        _events.value = restored.events.takeLast(MAX_EVENTS)
+
+        if (requiresRecovery) {
+            recordDecision(
+                kind = "RECOVERY",
+                state = "REQUIRED",
+                detail = recoveryMessage,
+            )
+            append(
+                AgentEventKind.INFO,
+                "Восстановлена последняя сессия " + restored.sessionId.take(8),
+                recoveryMessage,
+            )
+        }
+    }
+
+    private fun buildPersistedSnapshot(): PersistedAgentSession? {
+        val sessionId = currentSessionId ?: return null
+        val request = currentRequestSummary ?: return null
+        return PersistedAgentSession(
+            sessionId = sessionId,
+            request = request,
+            state = _state.value.copy(eventCursor = eventSequence),
+            events = _events.value.toList(),
+            updatedAt = System.currentTimeMillis(),
+            eventCursor = eventSequence,
+            invocations = invocationRecords.toList(),
+            decisions = decisionRecords.toList(),
+            recoveryReason = recoveryReason,
         )
     }
 
     private fun persistAsync() {
-        val sessionId = currentSessionId ?: return
-        val request = currentRequestSummary ?: return
+        if (closed) return
+        val snapshot = buildPersistedSnapshot() ?: return
         val generation = persistGeneration + 1
         persistGeneration = generation
-        val snapshot = PersistedAgentSession(
-            sessionId = sessionId,
-            request = request,
-            state = _state.value,
-            events = _events.value.takeLast(PersistedAgentSession.MAX_EVENTS),
-            updatedAt = System.currentTimeMillis(),
-        )
         journalScope.launch {
-            if (generation != persistGeneration) return@launch
+            if (closed || generation != persistGeneration) return@launch
             journalMutex.withLock {
-                if (generation == persistGeneration) sessionStore.save(snapshot)
+                if (!closed && generation == persistGeneration) {
+                    sessionStore.save(snapshot)
+                }
             }
         }
     }
 
-    private fun resolveTarget(request: AgentRequest): ExecutionTarget {
+    private fun persistOnClose() {
+        val snapshot = buildPersistedSnapshot()
+        if (snapshot == null) {
+            journalScope.cancel()
+            return
+        }
+        journalScope.launch {
+            try {
+                journalMutex.withLock {
+                    sessionStore.save(snapshot)
+                }
+            } finally {
+                journalScope.cancel()
+            }
+        }
+    }
+
+    private fun beginInvocation(toolName: String, callId: String?): String {
+        val invocationId = UUID.randomUUID().toString()
+        invocationRecords += SessionInvocationRecord(
+            invocationId = invocationId,
+            toolName = toolName,
+            callId = callId,
+            state = "RUNNING",
+        )
+        return invocationId
+    }
+
+    private fun completeInvocation(
+        invocationId: String?,
+        state: String,
+        summary: String?,
+    ) {
+        if (invocationId == null) return
+        val index = invocationRecords.indexOfFirst {
+            it.invocationId == invocationId
+        }
+        if (index < 0) return
+        val current = invocationRecords[index]
+        invocationRecords[index] = current.copy(
+            state = state.take(64),
+            completedAt = System.currentTimeMillis(),
+            summary = AgentRedactor.text(
+                summary,
+                SessionInvocationRecord.MAX_SUMMARY_CHARS,
+            ),
+        )
+    }
+
+    private fun recordDecision(
+        kind: String,
+        state: String,
+        detail: String?,
+    ) {
+        decisionRecords += SessionDecisionRecord(
+            decisionId = UUID.randomUUID().toString(),
+            kind = kind,
+            state = state,
+            detail = detail,
+        )
+        persistAsync()
+    }
+
+    private fun resolveTarget    private fun resolveTarget(request: AgentRequest): ExecutionTarget {
         if (request.target != ExecutionTarget.AUTO) return request.target
 
         val remoteHint = Regex(
@@ -589,31 +770,47 @@ class AgentCore(context: Context) : AgentBridge {
     }
 
     private fun fail(message: String) {
+        recoveryReason = null
         _state.value = _state.value.copy(
             status = AgentSessionStatus.FAILED,
-            lastError = message,
+            lastError = AgentRedactor.text(message, MAX_ERROR_CHARS),
             finishedAt = System.currentTimeMillis(),
+            recoveryRequired = false,
         )
         append(AgentEventKind.ERROR, message)
     }
 
     private fun markUnknown(message: String) {
+        recoveryReason = AgentRedactor.text(message, MAX_ERROR_CHARS)
         _state.value = _state.value.copy(
             status = AgentSessionStatus.UNKNOWN,
-            lastError = message,
+            lastError = recoveryReason,
             finishedAt = System.currentTimeMillis(),
+            recoveryRequired = true,
         )
         append(AgentEventKind.ERROR, message)
     }
 
-    private fun append(kind: AgentEventKind, message: String, detail: String? = null) {
+    private fun append(
+        kind: AgentEventKind,
+        message: String,
+        detail: String? = null,
+        invocationId: String? = null,
+    ) {
+        eventSequence += 1
         val next = _events.value + AgentEvent(
             kind = kind,
-            message = message,
-            detail = detail?.take(MAX_EVENT_DETAIL_CHARS),
+            message = AgentRedactor.text(message, MAX_EVENT_MESSAGE_CHARS).orEmpty(),
+            detail = AgentRedactor.text(detail, MAX_EVENT_DETAIL_CHARS),
+            createdAt = System.currentTimeMillis(),
             sessionId = currentSessionId,
+            eventId = UUID.randomUUID().toString(),
+            sequence = eventSequence,
+            workspaceId = _state.value.workspaceId,
+            invocationId = invocationId,
         )
         _events.value = next.takeLast(MAX_EVENTS)
+        _state.value = _state.value.copy(eventCursor = eventSequence)
         persistAsync()
     }
 
@@ -634,6 +831,8 @@ class AgentCore(context: Context) : AgentBridge {
     private companion object {
         const val MAX_EVENTS = 500
         const val MAX_TOOL_ROUNDS = 4
+        const val MAX_EVENT_MESSAGE_CHARS = 8_000
         const val MAX_EVENT_DETAIL_CHARS = 12_000
+        const val MAX_ERROR_CHARS = 4_000
     }
 }
