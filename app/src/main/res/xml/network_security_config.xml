@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Сервер Harness по умолчанию работает по обычному http в локальной сети,
+  поэтому cleartext разрешён. Пользовательские корневые сертификаты включены,
+  чтобы работать с самоподписанными сертификатами и отладочными прокси.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
