@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Сервер Harness по умолчанию работает по обычному http в локальной сети,
-  поэтому cleartext разрешён. Пользовательские корневые сертификаты включены,
-  чтобы работать с самоподписанными сертификатами и отладочными прокси.
+  HTTPS нужен для DeepSeek/GitHub. Cleartext оставлен только для будущего
+  app-private loopback runtime и локальной отладки; пользовательские CA
+  поддерживают самоподписанные сертификаты в инженерной среде.
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">

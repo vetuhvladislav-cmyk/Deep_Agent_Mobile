@@ -1,7 +1,7 @@
 package dev.deepagent.mobile
 
 import androidx.compose.runtime.Composable
-import dev.harness.mobile.agent.ui.AgentConsoleScreen
+import dev.deepagent.mobile.agent.ui.AgentConsoleScreen
 
 @Composable
 fun AgentMobileApp() {

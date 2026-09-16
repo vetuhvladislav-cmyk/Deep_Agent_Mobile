@@ -1,4 +1,4 @@
-package dev.harness.mobile.agent.deepseek
+package dev.deepagent.mobile.agent.deepseek
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

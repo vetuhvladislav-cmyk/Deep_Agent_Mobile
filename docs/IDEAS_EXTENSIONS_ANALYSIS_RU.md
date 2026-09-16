@@ -1,9 +1,9 @@
 # Идеи, расширения и направления анализа
 
-Канонический файл для `Deep_Agent_Mobile`. Harness WebView и его mobile adapter ведутся отдельно в `harness-mobile`.
+Канонический файл для `Deep_Agent_Mobile`. WebView и mobile adapter находятся вне области Deep Agent и не входят в его runtime.
 
 > Канонический порядок задач находится в [IMPLEMENTATION_ROADMAP_RU.md](./IMPLEMENTATION_ROADMAP_RU.md).
-> Этот файл фиксирует границы, решения и отложенные направления. В текущем проходе изменяется только документация.
+> Этот файл фиксирует границы, решения и отложенные направления. Реализация выполняется по явной задаче и после отдельного согласования; текущий проход не запускает сборку и тесты.
 
 ## Правила статусов
 
@@ -39,7 +39,7 @@
 2. **P0-B — История и восстановление:** versioned event journal, сериализация tool rounds, восстановление незавершённой сессии после Activity/process death.
 3. **P1-A — Запись, Git и ручной PR:** preview и `apply_patch`, branch/commit/push, явный `create_pull_request` с `PR_CREATE`.
 4. **P1-B — Actions observability:** run/job status, логи, failed-job retry и скачивание проверенных APK/AAB artifacts.
-5. **P1-C — Android 16 UI-тесты:** `Models`, `Shield`, `Gear`, `+ Add workspace`, popup, navigation, rotation, inset и screenshot regression.
+5. **P1-C — Android 16 UI-контракт:** Agent Console, task editor, target/permission controls, configuration, image attachment, event stream, navigation, rotation и inset regression.
 6. **P2-A — RuntimeSupervisor и headless DSH:** lifecycle, readiness, heartbeat, versioned ARM64 bundle, rollback и loopback.
 7. **P2-B — PTY:** только после стабильного headless runtime; persistent shell, дочерние процессы и интерактивное восстановление.
 
@@ -57,13 +57,13 @@
 
 Базовый image input уже есть. Растровая генерация не считается встроенной возможностью DeepSeek API и требует отдельного `ImageGenerator` provider.
 
-### D2 — Единая рабочая область
+### D2 — Расширенная рабочая область Deep Agent
 
-- При необходимости объединить Agent Console и Harness WebView через заменяемую surface и один владелец navigation/state; mobile adapter остаётся в `harness-mobile`.
-- Согласовать единый composer, Tasks/Workspace/Builds/Artifacts, события и back navigation.
-- Сохранить WebView заменяемой surface за `AgentBridge`.
+- Объединить Task, Workspace, Builds, Artifacts и события под одним владельцем состояния.
+- Добавить импорт workspace, просмотр diff и связывание результата с session ID.
+- Подключать новые providers только через `AgentBridge v1`.
 
-До этого этапа обе поверхности остаются раздельными, но находятся внутри одного APK.
+До стабилизации P0/P1 нативная Agent Console остаётся единственной пользовательской поверхностью Deep Agent.
 
 ### D3 — Политика токенов, записи изменений и автоматического PR
 

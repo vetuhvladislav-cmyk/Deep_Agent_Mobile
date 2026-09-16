@@ -1,4 +1,4 @@
-package dev.harness.mobile.agent.ui
+package dev.deepagent.mobile.agent.ui
 
 import android.content.Context
 import android.net.Uri
@@ -46,14 +46,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.harness.mobile.agent.core.AgentCore
-import dev.harness.mobile.agent.model.AgentEvent
-import dev.harness.mobile.agent.model.AgentEventKind
-import dev.harness.mobile.agent.model.AgentRequest
-import dev.harness.mobile.agent.model.AgentSessionStatus
-import dev.harness.mobile.agent.model.ExecutionTarget
-import dev.harness.mobile.agent.model.ImageAttachment
-import dev.harness.mobile.agent.model.PermissionMode
+import dev.deepagent.mobile.agent.core.AgentCore
+import dev.deepagent.mobile.agent.model.AgentEvent
+import dev.deepagent.mobile.agent.model.AgentEventKind
+import dev.deepagent.mobile.agent.model.AgentRequest
+import dev.deepagent.mobile.agent.model.AgentSessionStatus
+import dev.deepagent.mobile.agent.model.ExecutionTarget
+import dev.deepagent.mobile.agent.model.ImageAttachment
+import dev.deepagent.mobile.agent.model.PermissionMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext

@@ -1,4 +1,4 @@
-package dev.harness.mobile.agent.model
+package dev.deepagent.mobile.agent.model
 
 enum class ExecutionTarget {
     AUTO,

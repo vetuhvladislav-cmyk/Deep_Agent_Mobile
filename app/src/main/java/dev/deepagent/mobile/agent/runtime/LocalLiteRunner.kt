@@ -1,4 +1,4 @@
-package dev.harness.mobile.agent.runtime
+package dev.deepagent.mobile.agent.runtime
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers

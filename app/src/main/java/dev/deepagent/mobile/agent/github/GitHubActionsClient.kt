@@ -1,4 +1,4 @@
-package dev.harness.mobile.agent.github
+package dev.deepagent.mobile.agent.github
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

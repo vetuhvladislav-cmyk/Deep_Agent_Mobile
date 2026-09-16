@@ -1,8 +1,8 @@
-package dev.harness.mobile.agent.protocol
+package dev.deepagent.mobile.agent.protocol
 
-import dev.harness.mobile.agent.model.AgentEvent
-import dev.harness.mobile.agent.model.AgentRequest
-import dev.harness.mobile.agent.model.AgentSessionState
+import dev.deepagent.mobile.agent.model.AgentEvent
+import dev.deepagent.mobile.agent.model.AgentRequest
+import dev.deepagent.mobile.agent.model.AgentSessionState
 import kotlinx.coroutines.flow.StateFlow
 
 /**
