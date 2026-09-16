@@ -53,6 +53,8 @@ data class AgentRequest(
     val repository: String? = null,
     val workflow: String? = null,
     val ref: String = "main",
+    val sessionId: String? = null,
+    val workspaceId: String? = null,
 )
 
 data class AgentEvent(
@@ -60,6 +62,7 @@ data class AgentEvent(
     val message: String,
     val detail: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
+    val sessionId: String? = null,
 )
 
 data class AgentSessionState(
@@ -69,4 +72,6 @@ data class AgentSessionState(
     val startedAt: Long? = null,
     val finishedAt: Long? = null,
     val lastError: String? = null,
+    val sessionId: String? = null,
+    val workspaceId: String? = null,
 )

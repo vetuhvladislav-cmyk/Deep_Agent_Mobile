@@ -32,6 +32,20 @@
 
 Это уже рабочая основа маршрутизации и проверки контрактов, но ещё не полный автономный цикл исправления проекта.
 
+
+## P0: текущий рабочий контур
+
+В текущем проходе добавляется минимально полезный read-only цикл:
+
+- импорт ZIP или папки в app-private Workspace;
+- выбор стабильного workspace identity для одной сессии;
+- list_files, read_file, search_code, git_status, git_diff;
+- bounded output, timeouts, path boundary и redaction типовых секретных файлов;
+- DeepSeek function_call → tool result → function_call_output;
+- session journal и восстановление без повторного запуска незавершённой операции.
+
+P0 не добавляет apply_patch, generic shell, commit/push, PR, Actions logs/artifacts или headless DSH. Эти возможности остаются следующими согласованными этапами.
+
 ## Что хотим в итоге
 
 Deep Agent должен принимать задачу, сам составлять план, безопасно читать проект, анализировать ошибку, предлагать diff, после подтверждения применять изменения, работать с GitHub и доводить задачу до проверенного результата.

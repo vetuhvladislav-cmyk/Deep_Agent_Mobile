@@ -1,5 +1,6 @@
 package dev.deepagent.mobile.agent.deepseek
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -13,6 +14,25 @@ data class DeepSeekImage(
     val detail: String = "auto",
 )
 
+data class DeepSeekToolDefinition(
+    val name: String,
+    val description: String,
+    val parameters: JSONObject,
+)
+
+data class DeepSeekFunctionCall(
+    val id: String,
+    val callId: String,
+    val name: String,
+    val arguments: String,
+)
+
+data class DeepSeekRoundResult(
+    val response: JSONObject?,
+    val functionCalls: List<DeepSeekFunctionCall>,
+    val failure: String? = null,
+)
+
 data class DeepSeekRequest(
     val apiKey: String,
     val baseUrl: String,
@@ -21,6 +41,8 @@ data class DeepSeekRequest(
     val image: DeepSeekImage? = null,
     val reasoningEffort: String = "high",
     val maxOutputTokens: Int = 4096,
+    val inputItems: List<JSONObject> = emptyList(),
+    val tools: List<DeepSeekToolDefinition> = emptyList(),
 )
 
 sealed interface DeepSeekStreamEvent {
@@ -32,18 +54,24 @@ sealed interface DeepSeekStreamEvent {
 }
 
 /**
- * Минимальный Responses API клиент без дополнительной сетевой зависимости.
+ * Minimal Responses API client with semantic SSE events and read-only tool rounds.
  *
- * Поддерживает semantic SSE события Responses API. История и последующие
- * tool rounds остаются ответственностью Agent Core, поскольку DeepSeek API
- * stateless.
+ * Agent Core owns history and decides which host-side tool can be executed. The
+ * model never receives a permission token and cannot expand the tool catalogue.
  */
 class DeepSeekResponsesClient {
 
     suspend fun stream(
         request: DeepSeekRequest,
         onEvent: (DeepSeekStreamEvent) -> Unit,
-    ) = withContext(Dispatchers.IO) {
+    ): DeepSeekRoundResult {
+        return streamRound(request, onEvent)
+    }
+
+    suspend fun streamRound(
+        request: DeepSeekRequest,
+        onEvent: (DeepSeekStreamEvent) -> Unit,
+    ): DeepSeekRoundResult = withContext(Dispatchers.IO) {
         require(request.apiKey.isNotBlank()) { "DeepSeek API key is empty" }
         require(request.model.isNotBlank()) { "DeepSeek model is empty" }
 
@@ -54,10 +82,13 @@ class DeepSeekResponsesClient {
             connectTimeout = 20_000
             readTimeout = 0
             useCaches = false
-            setRequestProperty("Authorization", "Bearer ${request.apiKey}")
+            setRequestProperty("Authorization", "Bearer " + request.apiKey)
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "text/event-stream")
         }
+
+        var completedResponse: JSONObject? = null
+        var failure: String? = null
 
         try {
             val body = buildRequestBody(request).toString()
@@ -73,7 +104,8 @@ class DeepSeekResponsesClient {
                     ?.take(2_000)
                     .orEmpty()
                 throw IOException(
-                    "DeepSeek HTTP $status${if (errorBody.isBlank()) "" else ": $errorBody"}",
+                    "DeepSeek HTTP " + status +
+                        if (errorBody.isBlank()) "" else ": " + errorBody,
                 )
             }
 
@@ -113,19 +145,19 @@ class DeepSeekResponsesClient {
 
                         "response.completed",
                         "response.incomplete",
-                        -> onEvent(DeepSeekStreamEvent.Completed(json?.optJSONObject("response")))
+                        -> {
+                            completedResponse = json?.optJSONObject("response") ?: json
+                            onEvent(DeepSeekStreamEvent.Completed(completedResponse))
+                        }
 
                         "response.failed" -> {
                             val responseError = json
                                 ?.optJSONObject("response")
                                 ?.optJSONObject("error")
                                 ?.optString("message")
-                            onEvent(
-                                DeepSeekStreamEvent.Failed(
-                                    responseError?.takeIf { it.isNotBlank() }
-                                        ?: "DeepSeek response failed",
-                                ),
-                            )
+                            failure = responseError?.takeIf { it.isNotBlank() }
+                                ?: "DeepSeek response failed"
+                            onEvent(DeepSeekStreamEvent.Failed(failure.orEmpty()))
                         }
                     }
                 }
@@ -148,49 +180,115 @@ class DeepSeekResponsesClient {
 
                 dispatchEvent()
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            failure = error.message ?: "DeepSeek request failed"
+            onEvent(DeepSeekStreamEvent.Failed(failure.orEmpty()))
         } finally {
             connection.disconnect()
         }
+
+        DeepSeekRoundResult(
+            response = completedResponse,
+            functionCalls = parseFunctionCalls(completedResponse),
+            failure = failure,
+        )
     }
 
     private fun buildRequestBody(request: DeepSeekRequest): JSONObject {
-        val content = JSONArray().apply {
-            put(
+        val input = if (request.inputItems.isEmpty()) {
+            JSONArray().put(
                 JSONObject()
-                    .put("type", "input_text")
-                    .put("text", request.task),
+                    .put("role", "user")
+                    .put(
+                        "content",
+                        JSONArray().apply {
+                            put(
+                                JSONObject()
+                                    .put("type", "input_text")
+                                    .put("text", request.task),
+                            )
+                            request.image?.let {
+                                put(
+                                    JSONObject()
+                                        .put("type", "input_image")
+                                        .put("image_url", it.dataUrl)
+                                        .put("detail", it.detail),
+                                )
+                            }
+                        },
+                    ),
             )
-            request.image?.let {
-                put(
-                    JSONObject()
-                        .put("type", "input_image")
-                        .put("image_url", it.dataUrl)
-                        .put("detail", it.detail),
-                )
+        } else {
+            JSONArray().apply {
+                request.inputItems.forEach { put(it) }
             }
         }
 
-        return JSONObject()
+        val body = JSONObject()
             .put("model", request.model)
             .put(
                 "instructions",
                 "You are the Agent Core inside a single Android APK. " +
-                    "Return an actionable engineering plan and concise result. " +
-                    "Do not claim that a tool was executed unless the host reports its result.",
+                    "Use the supplied read-only tools when a workspace is available. " +
+                    "Never claim that a tool was executed unless its host result is present. " +
+                    "Do not request write, shell, network, or permission-escalation tools.",
             )
-            .put(
-                "input",
-                JSONArray().put(
-                    JSONObject()
-                        .put("role", "user")
-                        .put("content", content),
-                ),
-            )
+            .put("input", input)
             .put("stream", true)
             .put("max_output_tokens", request.maxOutputTokens)
             .put(
                 "reasoning",
                 JSONObject().put("effort", request.reasoningEffort),
             )
+
+        if (request.tools.isNotEmpty()) {
+            body.put(
+                "tools",
+                JSONArray().apply {
+                    request.tools.forEach { tool ->
+                        put(
+                            JSONObject()
+                                .put("type", "function")
+                                .put("name", tool.name)
+                                .put("description", tool.description)
+                                .put("parameters", tool.parameters),
+                        )
+                    }
+                },
+            )
+        }
+        return body
+    }
+
+    private fun parseFunctionCalls(response: JSONObject?): List<DeepSeekFunctionCall> {
+        val output = response?.optJSONArray("output") ?: return emptyList()
+        return buildList {
+            for (index in 0 until output.length()) {
+                val item = output.optJSONObject(index) ?: continue
+                if (item.optString("type") != "function_call") continue
+                val name = item.optString("name").trim()
+                if (name.isBlank()) continue
+                val id = item.optString("id").ifBlank { "call-" + index }
+                val callId = item.optString("call_id").ifBlank { id }
+                val rawArguments = item.opt("arguments")
+                val arguments = when (rawArguments) {
+                    is String -> rawArguments
+                    null,
+                    JSONObject.NULL,
+                    -> "{}"
+                    else -> rawArguments.toString()
+                }
+                add(
+                    DeepSeekFunctionCall(
+                        id = id,
+                        callId = callId,
+                        name = name,
+                        arguments = arguments,
+                    ),
+                )
+            }
+        }
     }
 }

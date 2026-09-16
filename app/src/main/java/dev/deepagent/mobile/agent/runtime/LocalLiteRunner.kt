@@ -1,21 +1,28 @@
 package dev.deepagent.mobile.agent.runtime
 
 import android.content.Context
+import dev.deepagent.mobile.agent.workspace.WorkspaceManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * Минимальный локальный исполнитель для одного APK.
+ * Minimal local probe.
  *
- * Первый прототип намеренно запускает только диагностический probe. Полный
- * shell/PTY и тяжёлые Android toolchains подключаются отдельными слоями после
- * стабилизации AgentBridge.
+ * It executes a fixed diagnostic command only; user or model text is never
+ * interpolated into a shell command. If a workspace is selected, the probe
+ * runs from that read-only imported snapshot.
  */
-class LocalLiteRunner(context: Context) {
+class LocalLiteRunner(
+    context: Context,
+    private val workspaceManager: WorkspaceManager,
+) {
 
-    private val workspace: File = File(context.filesDir, "agent-workspace")
+    private val fallbackWorkspace: File = File(
+        context.applicationContext.filesDir,
+        "agent-workspace",
+    )
 
     data class ProbeResult(
         val exitCode: Int,
@@ -26,13 +33,16 @@ class LocalLiteRunner(context: Context) {
     )
 
     suspend fun probe(): ProbeResult = withContext(Dispatchers.IO) {
+        val workspace = workspaceManager.resolveRoot() ?: fallbackWorkspace
         workspace.mkdirs()
         val startedAt = System.nanoTime()
 
         val process = ProcessBuilder(
             "/system/bin/sh",
             "-c",
-            "printf 'local-lite-ready\\n'; pwd; printf 'workspace=%s\\n' \"$workspace\"",
+            "printf 'local-lite-ready\\n'; pwd; printf 'workspace=%s\\n' \"" +
+                workspace.path.replace("\"", "") +
+                "\"",
         )
             .directory(workspace)
             .redirectErrorStream(false)

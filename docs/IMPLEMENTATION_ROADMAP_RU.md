@@ -1,5 +1,20 @@
 # План архитектуры и реализации Deep Agent
 
+> Текущий проход: P0 реализуется в исходниках без запуска сборки и тестов. Фактический код уже включает Workspace Manager, read-only ToolRouter, DeepSeek tool rounds и session journal; ручная build/test-проверка остаётся отдельным gate.
+
+## Текущий статус P0
+
+| Подэтап | Состояние | Граница |
+|---|---|---|
+| P0-A Workspace | Реализовано в коде | Импорт ZIP/папки в app-private snapshot, лимиты и path boundary |
+| P0-A ToolRouter | Реализовано в коде | Только пять read-only tools; generic shell и write отсутствуют |
+| P0-A DeepSeek loop | Реализовано в коде | Ограниченный function_call/function_call_output round |
+| P0-B Journal | Реализовано в коде | События и request summary без токенов, восстановление без replay |
+| P0-C Console setup | Частично реализовано в коде | Импорт workspace и отображение статуса; UI regression ещё не запускалась |
+| Build/test gate | Не запускался | Требует отдельной команды пользователя |
+
+
+
 > Статус: утверждённый план реализации рабочего прототипа.
 > Последнее обновление: 2026-09-16.
 > В текущем проходе выполнены очистка структуры и обновление документации; workflow переведён на ручной запуск.

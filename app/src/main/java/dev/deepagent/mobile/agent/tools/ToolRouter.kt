@@ -1,0 +1,528 @@
+package dev.deepagent.mobile.agent.tools
+
+import dev.deepagent.mobile.agent.workspace.WorkspaceManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.IOException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+data class AgentToolDefinition(
+    val name: String,
+    val description: String,
+    val parameters: JSONObject,
+)
+
+data class ToolExecutionResult(
+    val toolName: String,
+    val ok: Boolean,
+    val summary: String,
+    val content: String = "",
+    val truncated: Boolean = false,
+    val errorCode: String? = null,
+) {
+    fun toModelJson(): String = JSONObject()
+        .put("tool", toolName)
+        .put("ok", ok)
+        .put("summary", summary)
+        .put("content", content)
+        .put("truncated", truncated)
+        .put("error_code", errorCode)
+        .toString()
+}
+
+/**
+ * P0 read-only tool boundary.
+ *
+ * There is deliberately no generic shell entry point here. Git operations use
+ * fixed argument lists and are executed only against the selected private
+ * workspace. Every filesystem path is canonicalized and checked against that
+ * workspace root before it is used.
+ */
+class ToolRouter(
+    private val workspaceManager: WorkspaceManager,
+) {
+
+    suspend fun execute(
+        toolName: String,
+        argumentsJson: String,
+        workspaceId: String? = null,
+    ): ToolExecutionResult = withContext(Dispatchers.IO) {
+        val arguments = runCatching { JSONObject(argumentsJson.ifBlank { "{}" }) }
+            .getOrElse {
+                return@withContext ToolExecutionResult(
+                    toolName = toolName,
+                    ok = false,
+                    summary = "Некорректные аргументы инструмента",
+                    errorCode = "INVALID_ARGUMENTS",
+                )
+            }
+
+        val root = workspaceManager.resolveRoot(workspaceId)
+            ?: return@withContext ToolExecutionResult(
+                toolName = toolName,
+                ok = false,
+                summary = "Workspace не выбран или недоступен",
+                errorCode = "WORKSPACE_UNAVAILABLE",
+            )
+
+        return@withContext runCatching {
+            when (toolName) {
+                TOOL_LIST_FILES -> listFiles(root, arguments)
+                TOOL_READ_FILE -> readFile(root, arguments)
+                TOOL_SEARCH_CODE -> searchCode(root, arguments)
+                TOOL_GIT_STATUS -> gitStatus(root)
+                TOOL_GIT_DIFF -> gitDiff(root, arguments)
+                else -> ToolExecutionResult(
+                    toolName = toolName,
+                    ok = false,
+                    summary = "Инструмент не разрешён в P0",
+                    errorCode = "TOOL_NOT_ALLOWED",
+                )
+            }
+        }.getOrElse { error ->
+            ToolExecutionResult(
+                toolName = toolName,
+                ok = false,
+                summary = error.message ?: "Ошибка read-only инструмента",
+                errorCode = "TOOL_FAILED",
+            )
+        }
+    }
+
+    private fun listFiles(root: File, arguments: JSONObject): ToolExecutionResult {
+        val requestedPath = arguments.optString("path")
+        val base = resolvePath(root, requestedPath, requireExisting = true)
+        require(base.isDirectory) { "Путь не является директорией" }
+
+        val maxDepth = arguments.optInt("max_depth", DEFAULT_MAX_DEPTH)
+            .coerceIn(0, MAX_DEPTH)
+        val maxEntries = arguments.optInt("max_entries", DEFAULT_MAX_ENTRIES)
+            .coerceIn(1, MAX_ENTRIES_LIMIT)
+        val includeHidden = arguments.optBoolean("include_hidden", true)
+        val output = JSONArray()
+        var count = 0
+        var wasTruncated = false
+
+        visitTree(
+            root = base,
+            maxDepth = maxDepth,
+            includeHidden = includeHidden,
+        ) { file, depth ->
+            if (count >= maxEntries) {
+                wasTruncated = true
+                return@visitTree false
+            }
+            if (file == base) return@visitTree true
+
+            output.put(
+                JSONObject()
+                    .put("path", relativePath(root, file))
+                    .put("type", if (file.isDirectory) "directory" else "file")
+                    .put("size", if (file.isFile) file.length() else JSONObject.NULL)
+                    .put("depth", depth),
+            )
+            count += 1
+            true
+        }
+
+        return ToolExecutionResult(
+            toolName = TOOL_LIST_FILES,
+            ok = true,
+            summary = "Найдено элементов: " + count,
+            content = output.toString(),
+            truncated = wasTruncated,
+        )
+    }
+
+    private fun readFile(root: File, arguments: JSONObject): ToolExecutionResult {
+        val requestedPath = arguments.optString("path").trim()
+        require(requestedPath.isNotBlank()) { "Для read_file нужен path" }
+        val file = resolvePath(root, requestedPath, requireExisting = true)
+        require(file.isFile) { "Путь не является файлом" }
+        if (isSensitiveFile(file)) {
+            return ToolExecutionResult(
+                toolName = TOOL_READ_FILE,
+                ok = false,
+                summary = "Файл скрыт политикой redaction",
+                errorCode = "SENSITIVE_FILE_BLOCKED",
+            )
+        }
+
+        val maxBytes = arguments.optInt("max_bytes", DEFAULT_READ_BYTES)
+            .coerceIn(1, MAX_READ_BYTES)
+        val bytes = file.inputStream().use { input ->
+            val buffer = ByteArray(maxBytes + 1)
+            var offset = 0
+            while (offset < buffer.size) {
+                val count = input.read(buffer, offset, buffer.size - offset)
+                if (count < 0) break
+                offset += count
+            }
+            buffer.copyOf(offset)
+        }
+        val wasTruncated = bytes.size > maxBytes
+        val visible = if (wasTruncated) bytes.copyOf(maxBytes) else bytes
+        require(!visible.contains(0.toByte())) {
+            "Бинарный файл не принимается read_file"
+        }
+
+        return ToolExecutionResult(
+            toolName = TOOL_READ_FILE,
+            ok = true,
+            summary = "Файл прочитан: " + relativePath(root, file),
+            content = visible.toString(Charsets.UTF_8),
+            truncated = wasTruncated,
+        )
+    }
+
+    private fun searchCode(root: File, arguments: JSONObject): ToolExecutionResult {
+        val query = arguments.optString("query").trim()
+        require(query.isNotBlank()) { "Для search_code нужен query" }
+        require(query.length <= MAX_QUERY_LENGTH) {
+            "Поисковый запрос слишком длинный"
+        }
+
+        val requestedPath = arguments.optString("path")
+        val base = resolvePath(root, requestedPath, requireExisting = true)
+        val maxResults = arguments.optInt("max_results", DEFAULT_MAX_RESULTS)
+            .coerceIn(1, MAX_RESULTS_LIMIT)
+        val maxFileBytes = arguments.optInt("max_file_bytes", DEFAULT_SEARCH_FILE_BYTES)
+            .coerceIn(1, MAX_SEARCH_FILE_BYTES)
+        val output = JSONArray()
+        var matches = 0
+        var wasTruncated = false
+
+        visitTree(
+            root = base,
+            maxDepth = MAX_SEARCH_DEPTH,
+            includeHidden = true,
+        ) { file, _ ->
+            if (matches >= maxResults) {
+                wasTruncated = true
+                return@visitTree false
+            }
+            if (!file.isFile ||
+                isSensitiveFile(file) ||
+                file.length() > maxFileBytes
+            ) return@visitTree true
+
+            val bytes = file.readBytes()
+            if (bytes.contains(0.toByte())) return@visitTree true
+            val text = bytes.toString(Charsets.UTF_8)
+            text.lineSequence().forEachIndexed { index, line ->
+                if (matches >= maxResults) {
+                    wasTruncated = true
+                    return@forEachIndexed
+                }
+                if (line.contains(query, ignoreCase = true)) {
+                    output.put(
+                        JSONObject()
+                            .put("path", relativePath(root, file))
+                            .put("line", index + 1)
+                            .put("text", line.trim().take(MAX_MATCH_LINE_LENGTH)),
+                    )
+                    matches += 1
+                }
+            }
+            true
+        }
+
+        return ToolExecutionResult(
+            toolName = TOOL_SEARCH_CODE,
+            ok = true,
+            summary = "Совпадений: " + matches,
+            content = output.toString(),
+            truncated = wasTruncated,
+        )
+    }
+
+    private fun gitStatus(root: File): ToolExecutionResult {
+        if (!File(root, ".git").exists()) {
+            return ToolExecutionResult(
+                toolName = TOOL_GIT_STATUS,
+                ok = false,
+                summary = "Workspace не содержит .git",
+                errorCode = "NOT_A_GIT_REPOSITORY",
+            )
+        }
+        return runGit(
+            root = root,
+            toolName = TOOL_GIT_STATUS,
+            arguments = listOf(
+                "status",
+                "--short",
+                "--branch",
+                "--untracked-files=all",
+            ),
+        )
+    }
+
+    private fun gitDiff(root: File, arguments: JSONObject): ToolExecutionResult {
+        if (!File(root, ".git").exists()) {
+            return ToolExecutionResult(
+                toolName = TOOL_GIT_DIFF,
+                ok = false,
+                summary = "Workspace не содержит .git",
+                errorCode = "NOT_A_GIT_REPOSITORY",
+            )
+        }
+
+        val requestedPath = arguments.optString("path").trim()
+        val gitArguments = mutableListOf(
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--",
+        )
+        if (requestedPath.isNotBlank()) {
+            val file = resolvePath(root, requestedPath, requireExisting = false)
+            gitArguments += relativePath(root, file)
+        } else {
+            gitArguments += "."
+        }
+
+        return runGit(root, TOOL_GIT_DIFF, gitArguments)
+    }
+
+    private fun runGit(
+        root: File,
+        toolName: String,
+        arguments: List<String>,
+    ): ToolExecutionResult {
+        val command = listOf("git") + arguments
+        val executor = Executors.newSingleThreadExecutor()
+        val process = try {
+            ProcessBuilder(command)
+                .directory(root)
+                .redirectErrorStream(true)
+                .apply {
+                    environment()["GIT_OPTIONAL_LOCKS"] = "0"
+                    environment()["GIT_CONFIG_NOSYSTEM"] = "1"
+                }
+                .start()
+        } catch (error: IOException) {
+            executor.shutdownNow()
+            return ToolExecutionResult(
+                toolName = toolName,
+                ok = false,
+                summary = "Команда git недоступна на устройстве",
+                errorCode = "GIT_UNAVAILABLE",
+            )
+        }
+
+        val capture = executor.submit<CapturedOutput> {
+            captureOutput(process, MAX_GIT_OUTPUT_CHARS)
+        }
+        val finished = process.waitFor(GIT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        if (!finished) process.destroyForcibly()
+        val output = runCatching {
+            capture.get(2, TimeUnit.SECONDS)
+        }.getOrElse {
+            process.destroyForcibly()
+            CapturedOutput("", true)
+        }
+        executor.shutdownNow()
+
+        val exitCode = if (finished) process.exitValue() else -1
+        return ToolExecutionResult(
+            toolName = toolName,
+            ok = finished && exitCode == 0,
+            summary = if (finished && exitCode == 0) {
+                "git " + arguments.firstOrNull().orEmpty() + " выполнен"
+            } else {
+                "git завершился с кодом " + exitCode
+            },
+            content = output.text,
+            truncated = output.truncated,
+            errorCode = if (finished && exitCode == 0) null else "GIT_COMMAND_FAILED",
+        )
+    }
+
+    private fun captureOutput(process: Process, maxChars: Int): CapturedOutput {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8 * 1024)
+        var truncated = false
+        process.inputStream.use { input ->
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                val remaining = maxChars - output.size()
+                if (remaining <= 0) {
+                    truncated = true
+                    break
+                }
+                output.write(buffer, 0, minOf(count, remaining))
+                if (count > remaining) truncated = true
+            }
+        }
+        return CapturedOutput(
+            text = output.toByteArray().toString(Charsets.UTF_8),
+            truncated = truncated,
+        )
+    }
+
+    private fun resolvePath(
+        root: File,
+        requestedPath: String,
+        requireExisting: Boolean,
+    ): File {
+        require(!requestedPath.startsWith("/") && !requestedPath.contains('\u0000')) {
+            "Недопустимый путь"
+        }
+        val target = File(root, requestedPath).canonicalFile
+        val rootPath = root.canonicalFile.path
+        require(target.path == rootPath || target.path.startsWith(rootPath + File.separator)) {
+            "Путь выходит за границы workspace"
+        }
+        if (requireExisting) require(target.exists()) {
+            "Путь не найден: " + requestedPath
+        }
+        return target
+    }
+
+    private fun relativePath(root: File, file: File): String {
+        val rootUri = root.canonicalFile.toURI()
+        return rootUri.relativize(file.canonicalFile.toURI()).path
+            .trimEnd('/')
+            .ifBlank { "." }
+    }
+
+    private fun visitTree(
+        root: File,
+        maxDepth: Int,
+        includeHidden: Boolean,
+        visitor: (File, Int) -> Boolean,
+    ) {
+        fun visit(directory: File, depth: Int): Boolean {
+            if (!visitor(directory, depth)) return false
+            if (!directory.isDirectory || depth >= maxDepth) return true
+
+            val children = directory.listFiles()
+                ?.sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name })
+                ?: return true
+            for (child in children) {
+                if (child.isDirectory && isIgnoredDirectory(child)) continue
+                if (!includeHidden && child.name.startsWith(".")) continue
+                if (!visit(child, depth + 1)) return false
+            }
+            return true
+        }
+        visit(root, 0)
+    }
+
+    private fun isIgnoredDirectory(file: File): Boolean {
+        return file.name in setOf(".git", ".gradle", "build", "node_modules")
+    }
+
+    private fun isSensitiveFile(file: File): Boolean {
+        val name = file.name.lowercase()
+        return name == ".env" ||
+            name.startsWith(".env.") ||
+            name.endsWith(".pem") ||
+            name.endsWith(".key") ||
+            name.endsWith(".p12") ||
+            name.endsWith(".jks") ||
+            name == "google-services.json" ||
+            name.contains("credential") ||
+            name.contains("secret") ||
+            name == "id_rsa"
+    }
+
+    private data class CapturedOutput(
+        val text: String,
+        val truncated: Boolean,
+    )
+
+    companion object {
+        const val TOOL_LIST_FILES = "list_files"
+        const val TOOL_READ_FILE = "read_file"
+        const val TOOL_SEARCH_CODE = "search_code"
+        const val TOOL_GIT_STATUS = "git_status"
+        const val TOOL_GIT_DIFF = "git_diff"
+
+        const val DEFAULT_MAX_DEPTH = 4
+        const val MAX_DEPTH = 8
+        const val DEFAULT_MAX_ENTRIES = 300
+        const val MAX_ENTRIES_LIMIT = 2_000
+        const val DEFAULT_READ_BYTES = 512 * 1024
+        const val MAX_READ_BYTES = 2 * 1024 * 1024
+        const val DEFAULT_MAX_RESULTS = 50
+        const val MAX_RESULTS_LIMIT = 200
+        const val DEFAULT_SEARCH_FILE_BYTES = 512 * 1024
+        const val MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024
+        const val MAX_SEARCH_DEPTH = 8
+        const val MAX_QUERY_LENGTH = 256
+        const val MAX_MATCH_LINE_LENGTH = 500
+        const val MAX_GIT_OUTPUT_CHARS = 100_000
+        const val GIT_TIMEOUT_SECONDS = 8L
+
+        fun definitions(): List<AgentToolDefinition> = listOf(
+            AgentToolDefinition(
+                name = TOOL_LIST_FILES,
+                description = "List source files and directories in the selected workspace.",
+                parameters = JSONObject()
+                    .put("type", "object")
+                    .put(
+                        "properties",
+                        JSONObject()
+                            .put("path", JSONObject().put("type", "string"))
+                            .put("max_depth", JSONObject().put("type", "integer"))
+                            .put("max_entries", JSONObject().put("type", "integer"))
+                            .put("include_hidden", JSONObject().put("type", "boolean")),
+                    ),
+            ),
+            AgentToolDefinition(
+                name = TOOL_READ_FILE,
+                description = "Read one UTF-8 text file from the selected workspace.",
+                parameters = JSONObject()
+                    .put("type", "object")
+                    .put(
+                        "properties",
+                        JSONObject()
+                            .put("path", JSONObject().put("type", "string"))
+                            .put("max_bytes", JSONObject().put("type", "integer")),
+                        )
+                    .put("required", JSONArray().put("path")),
+            ),
+            AgentToolDefinition(
+                name = TOOL_SEARCH_CODE,
+                description = "Search a text query in source files of the selected workspace.",
+                parameters = JSONObject()
+                    .put("type", "object")
+                    .put(
+                        "properties",
+                        JSONObject()
+                            .put("query", JSONObject().put("type", "string"))
+                            .put("path", JSONObject().put("type", "string"))
+                            .put("max_results", JSONObject().put("type", "integer"))
+                            .put("max_file_bytes", JSONObject().put("type", "integer")),
+                        )
+                    .put("required", JSONArray().put("query")),
+            ),
+            AgentToolDefinition(
+                name = TOOL_GIT_STATUS,
+                description = "Read git branch and working tree status without changing files.",
+                parameters = JSONObject().put("type", "object").put(
+                    "properties",
+                    JSONObject(),
+                ),
+            ),
+            AgentToolDefinition(
+                name = TOOL_GIT_DIFF,
+                description = "Read a bounded git diff from the selected workspace.",
+                parameters = JSONObject()
+                    .put("type", "object")
+                    .put(
+                        "properties",
+                        JSONObject().put("path", JSONObject().put("type", "string")),
+                    ),
+            ),
+        )
+    }
+}

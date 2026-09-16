@@ -95,3 +95,59 @@
 - минимальная версия Android для публичного APK.
 
 Любая развилка, влияющая на runtime, секреты, внешний write или единую оболочку, фиксируется отдельным решением и не закрывается скрытым изменением исходников.
+
+
+## P0 implementation audit — 2026-09-16
+
+Этот раздел фиксирует результат статического аудита и текущего P0-прохода. Он не расширяет утверждённую область задач.
+
+### Что было найдено в исходном снимке
+
+- Agent Core уже имел маршрутизацию local/remote, но не имел фактического Workspace Manager.
+- Local Lite Runner выполнял только фиксированный health probe.
+- DeepSeek adapter передавал streaming output, но не выполнял host-side tool round.
+- Durable journal и восстановление после смерти Activity/process отсутствовали.
+- В коде не было apply_patch, произвольного shell, push, PR или Actions observability; это остаётся за пределами P0.
+
+### Что реализуется в текущем P0
+
+- app-private Workspace Manager с импортом ZIP или папки через Storage Access Framework;
+- атомарная фиксация импортированного snapshot;
+- лимиты импорта: количество файлов, размер одного файла и общий размер;
+- canonical path boundary и запрет выхода через ..;
+- read-only ToolRouter с фиксированным каталогом:
+  list_files, read_file, search_code, git_status, git_diff;
+- bounded output, timeout для Git и кодированные ошибки инструментов;
+- отсутствие generic shell tool;
+- redaction типовых секретных файлов (.env, ключи, keystore, credentials/secrets);
+- Responses tool round function_call → host tool → function_call_output с лимитом раундов;
+- versioned app-private session store без DeepSeek/GitHub токенов;
+- восстановление последнего журнала без автоматического повторения незавершённой операции;
+- импортированный workspace и session ID отображаются в event trail.
+
+### Ограничения, выявленные при анализе
+
+1. Android-устройство не обязано иметь исполняемый git. В этом случае git_status и git_diff возвращают нормализованный GIT_UNAVAILABLE; это не превращается в shell fallback.
+2. ZIP и SAF-провайдеры могут отдавать неполное или нестандартное дерево. Импорт выполняется во временную директорию и не становится активным до успешного завершения копирования.
+3. Read-only snapshot не является полноценным Git checkout: .git сохраняется только если был включён в импорт, но внутренности .git не выдаются обычным list traversal.
+4. DeepSeek API round-trip зависит от фактической поддержки Responses tools у выбранного endpoint/model alias. Клиент не считает вызов успешным без host result и ограничивает число последовательных tool rounds.
+5. Session journal сохраняет контекст и события, но не секреты и не полноценный replay внешних операций. Неизвестные write/build операции пока отсутствуют в P0.
+
+### Идеи и расширения, которые не реализованы без отдельного согласования
+
+- repository fingerprint и base commit SHA в WorkspaceIdentity;
+- ignore-файл уровня проекта поверх встроенных исключений;
+- виртуализация больших деревьев и paging ToolRouter;
+- отдельный ToolCapabilityRegistry с версиями схем;
+- UI выбора ранее импортированного workspace;
+- Keystore/proxy для постоянного хранения provider configuration;
+- полноценный unknown state для будущих write/Actions invocations;
+- native Git/libgit2 provider, если read-only Git нужен без бинарника устройства;
+- отдельная проверка tool-result размера по token budget;
+- UI для явного восстановления/экспорта session journal.
+
+Эти направления добавлены как предложения к будущему P1/P2 backlog; текущим кодом они не реализуются.
+
+### Статус проверки
+
+В этом проходе выполняется только статическая проверка дерева, ссылок и контрактов. Сборка, unit-тесты и ручной запуск workflow не выполняются без отдельной команды.

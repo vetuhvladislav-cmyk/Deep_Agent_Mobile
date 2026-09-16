@@ -96,6 +96,8 @@ fun AgentConsoleScreen(
     var permissionMenuOpen by remember { mutableStateOf(false) }
     var image by remember { mutableStateOf<ImageAttachment?>(null) }
     var localError by remember { mutableStateOf<String?>(null) }
+    var workspaceError by remember { mutableStateOf<String?>(null) }
+    val workspace by core.workspace.current.collectAsState()
 
     DisposableEffect(core) {
         onDispose { core.close() }
@@ -114,6 +116,42 @@ fun AgentConsoleScreen(
                 .onFailure {
                     localError = it.message ?: "Не удалось прочитать изображение"
                 }
+        }
+    }
+
+    val zipPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                core.workspace.importUri(
+                    resolver = context.contentResolver,
+                    uri = uri,
+                )
+            }.onSuccess {
+                workspaceError = null
+            }.onFailure {
+                workspaceError = it.message ?: "Не удалось импортировать ZIP"
+            }
+        }
+    }
+
+    val folderPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                core.workspace.importUri(
+                    resolver = context.contentResolver,
+                    uri = uri,
+                )
+            }.onSuccess {
+                workspaceError = null
+            }.onFailure {
+                workspaceError = it.message ?: "Не удалось импортировать папку"
+            }
         }
     }
 
@@ -161,6 +199,63 @@ fun AgentConsoleScreen(
                 minLines = 4,
                 maxLines = 7,
             )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = workspace?.let {
+                            "Workspace: " + it.displayName +
+                                " · " + it.fileCount + " файлов · " +
+                                formatWorkspaceBytes(it.totalBytes)
+                        } ?: "Workspace не выбран",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "P0 read-only tools работают только с импортированной app-private копией.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                zipPicker.launch(
+                                    arrayOf(
+                                        "application/zip",
+                                        "application/octet-stream",
+                                        "application/x-zip-compressed",
+                                    ),
+                                )
+                            },
+                        ) {
+                            Text("Импорт ZIP")
+                        }
+                        OutlinedButton(
+                            onClick = { folderPicker.launch(null) },
+                        ) {
+                            Text("Импорт папки")
+                        }
+                    }
+                    workspaceError?.let {
+                        Text(
+                            text = it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -324,6 +419,7 @@ fun AgentConsoleScreen(
                                     repository = repository,
                                     workflow = workflow,
                                     ref = ref,
+                                    workspaceId = workspace?.id,
                                 ),
                             )
                         }
@@ -435,6 +531,14 @@ private suspend fun readImageAttachment(
         mediaType = mediaType,
         displayName = uri.lastPathSegment,
     )
+}
+
+private fun formatWorkspaceBytes(bytes: Long): String {
+    if (bytes < 1024L) return bytes.toString() + " B"
+    if (bytes < 1024L * 1024L) {
+        return (bytes / 1024L).toString() + " KiB"
+    }
+    return (bytes / (1024L * 1024L)).toString() + " MiB"
 }
 
 private fun ExecutionTarget.shortLabel(): String = when (this) {
