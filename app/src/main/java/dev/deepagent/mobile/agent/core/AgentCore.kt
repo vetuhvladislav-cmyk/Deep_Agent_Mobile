@@ -125,6 +125,10 @@ class AgentCore(context: Context) : AgentBridge {
         activeJob?.cancel()
         patchApplyJob?.cancel()
         patchApplyJob = null
+        completeOpenInvocations(
+            state = "CANCELLED",
+            summary = "Сессия отменена пользователем",
+        )
         _pendingPatch.value = null
         _state.value = _state.value.copy(
             status = AgentSessionStatus.CANCELLED,
@@ -216,9 +220,14 @@ class AgentCore(context: Context) : AgentBridge {
                 append(AgentEventKind.SESSION, "Сессия завершена")
             }
         } catch (cancelled: CancellationException) {
+            completeOpenInvocations(
+                state = "CANCELLED",
+                summary = "Сессия отменена",
+            )
             _state.value = _state.value.copy(
                 status = AgentSessionStatus.CANCELLED,
                 finishedAt = System.currentTimeMillis(),
+                recoveryRequired = false,
             )
             append(AgentEventKind.INFO, "Сессия отменена")
         } catch (error: Exception) {
@@ -626,6 +635,22 @@ class AgentCore(context: Context) : AgentBridge {
             previousState.status == AgentSessionStatus.WAITING_APPROVAL
         val recoveryMessage =
             "Сессия восстановлена после незавершённой операции; требуется re-check"
+        if (requiresRecovery) {
+            val recoveryTimestamp = System.currentTimeMillis()
+            invocationRecords.indices.forEach { index ->
+                val invocation = invocationRecords[index]
+                if (
+                    invocation.state == "RUNNING" ||
+                    invocation.state == "WAITING_APPROVAL"
+                ) {
+                    invocationRecords[index] = invocation.copy(
+                        state = "UNKNOWN",
+                        completedAt = recoveryTimestamp,
+                        summary = "Результат операции не был подтверждён до остановки процесса",
+                    )
+                }
+            }
+        }
         recoveryReason = restored.recoveryReason
             ?: if (requiresRecovery) recoveryMessage else null
         val recoveredState = previousState.copy(
@@ -713,6 +738,29 @@ class AgentCore(context: Context) : AgentBridge {
         }
     }
 
+    private fun completeOpenInvocations(
+        state: String,
+        summary: String,
+    ) {
+        val completedAt = System.currentTimeMillis()
+        invocationRecords.indices.forEach { index ->
+            val invocation = invocationRecords[index]
+            if (
+                invocation.state == "RUNNING" ||
+                invocation.state == "WAITING_APPROVAL"
+            ) {
+                invocationRecords[index] = invocation.copy(
+                    state = state.take(64),
+                    completedAt = completedAt,
+                    summary = AgentRedactor.text(
+                        summary,
+                        SessionInvocationRecord.MAX_SUMMARY_CHARS,
+                    ),
+                )
+            }
+        }
+    }
+
     private fun beginInvocation(toolName: String, callId: String?): String {
         val invocationId = UUID.randomUUID().toString()
         invocationRecords += SessionInvocationRecord(
@@ -770,6 +818,10 @@ class AgentCore(context: Context) : AgentBridge {
     }
 
     private fun fail(message: String) {
+        completeOpenInvocations(
+            state = "FAILED",
+            summary = message,
+        )
         recoveryReason = null
         _state.value = _state.value.copy(
             status = AgentSessionStatus.FAILED,
@@ -781,6 +833,10 @@ class AgentCore(context: Context) : AgentBridge {
     }
 
     private fun markUnknown(message: String) {
+        completeOpenInvocations(
+            state = "UNKNOWN",
+            summary = message,
+        )
         recoveryReason = AgentRedactor.text(message, MAX_ERROR_CHARS)
         _state.value = _state.value.copy(
             status = AgentSessionStatus.UNKNOWN,
