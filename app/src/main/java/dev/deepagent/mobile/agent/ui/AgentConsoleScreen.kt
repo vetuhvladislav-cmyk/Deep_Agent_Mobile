@@ -803,7 +803,9 @@ fun AgentConsoleScreen(
                                     "Применить изменение после проверки",
                                 ),
                                 enabled = pending.canApply,
-                                onClick = { agent.approvePendingPatch() },
+                                onClick = {
+                                    agent.approvePendingPatch(pending.approvalToken)
+                                },
                             ) {
                                 Icon(
                                 imageVector = Icons.Outlined.CheckCircle,
