@@ -18,7 +18,7 @@
 Порядок этапов:
 
 ```text
-P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B
+P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B → D1 → D2 → D3
 ```
 
 Один этап не получает второй самостоятельный статус. Если часть широкого этапа закрывается раньше, это фиксируется в его карточке и не создаёт новый Markdown-документ или новый статусный источник.
@@ -36,6 +36,9 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B
 | P1-C | planned | Android 16 UI и regression contract |
 | P2-A | planned | RuntimeSupervisor и headless DSH |
 | P2-B | planned | PTY и интерактивные команды |
+| D1 | planned | изображения и визуальный анализ |
+| D2 | planned | расширенная рабочая область |
+| D3 | planned | токены, журнал и PR |
 
 ## 3. Карточки реализации
 
@@ -166,3 +169,73 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B
 - **Cancellation / timeout:** cancel завершает process tree; idle/maximum runtime timeout обязателен; UI не блокируется.
 - **Recovery rule:** потерянный процесс получает UNKNOWN, не восстанавливается автоматически и требует явного re-check или controlled termination.
 - **Exit criterion:** интерактивная команда не выходит из workspace/permission scope, не блокирует UI, корректно отменяется и оставляет понятное состояние после process death.
+
+## 4. Расширения после базовой линии P0–P2
+
+D1–D3 являются утверждёнными post-core этапами. Они не изменяют порядок и критерии P0–P2, не создают второй APK, вторую пользовательскую оболочку или новый обязательный внешний runtime. Каждый этап получает статус `planned` до выполнения собственного exit criterion.
+
+### D1 — Изображения и визуальный анализ
+
+- **Статус:** capabilityStatus: planned
+- **Владелец:** Image Pipeline, DeepSeek provider, AgentBridge и Artifact Manager
+- **Зависимости:** P0-C для attachment flow и UI-состояния; P0-B для durable redacted state; действующий AgentBridge v1.
+- **Входной контракт:** attachment из AgentBridge, app-private URI, MIME, размер, pixel bounds, source digest, sessionId и явное состояние передачи внешнему provider.
+- **Выходной контракт:** нормализованный `ImageAttachment`, redacted visual/OCR result, deterministic screenshot diff и provenance исходных изображений.
+- **Порядок внедрения:**
+  1. app-private import/copy, MIME validation, byte/pixel limits и deterministic digest;
+  2. EXIF orientation, resize/downscale, optional crop и bounded temporary cache;
+  3. preview, multiple-image/region model и явное уведомление о передаче изображения DeepSeek;
+  4. OCR, stack-trace/screen-text extraction и визуальный анализ через существующий DeepSeek provider;
+  5. локальное deterministic-сравнение UI-скриншотов с подсветкой отличий;
+  6. экспорт SVG/Compose/HTML как обычных текстовых артефактов без отдельного image runtime.
+- **Не входит в базовый exit criterion:** отдельный raster-generation provider; он остаётся отдельным deferred-решением.
+- **Permission gate:** READ_ONLY для импорта, анализа и сравнения; WORKSPACE_WRITE только для явно подтверждённого сохранения результата в workspace; внешний provider требует явного user-visible disclosure.
+- **Session ID:** связывает attachment, provider call, OCR/diff result, cache lifecycle и artifact.
+- **Redacted audit trail:** attachment ID, MIME, размеры, digest, provider name, transfer decision, result state и artifact reference; raw image bytes и provider secrets не журналируются.
+- **Cancellation / timeout:** отдельный deadline на нормализацию, OCR, visual analysis и diff; скрытый retry не выполняется.
+- **Recovery rule:** незавершённая передача получает UNKNOWN и требует re-check; временный cache удаляется по TTL/size policy; восстановление Activity не повторяет provider call.
+- **Exit criterion:** изображение импортируется и отображается в preview, нормализуется в заданных пределах, передача пользователю понятна, результат восстанавливается через AgentBridge, storage ограничен, OCR/diff имеют проверяемую provenance, а секреты отсутствуют в journal и events.
+
+### D2 — Расширенная рабочая область
+
+- **Статус:** capabilityStatus: planned
+- **Владелец:** Workspace Manager, Session Journal, AgentBridge и Artifact Manager
+- **Зависимости:** P0-A WorkspaceIdentity/fingerprint; P0-B durable recovery; P1-A checkpoint/diff/Git provenance.
+- **Входной контракт:** существующий WorkspaceIdentity, canonical path boundary, fingerprint, repository/ref/commitSha и sessionId.
+- **Выходной контракт:** повторно открываемый workspace catalog, immutable snapshot history, paged tree view, project rules и единое состояние Task/Workspace/Builds/Artifacts/events.
+- **Порядок внедрения:**
+  1. app-private Workspace Catalog со стабильным workspaceId, source, ref, commitSha и последним подтверждённым fingerprint;
+  2. immutable snapshot/checkpoint records с визуальной и событийной связью с sessionId;
+  3. paging/virtualization дерева, output limits и fail-closed path/symlink handling для больших workspace;
+  4. чтение `AGENT_RULES.md` через allowlisted read-only ToolRouter;
+  5. применение project rules только как дополнительных ограничений: они не могут изменить глобальную Permission Policy, повысить session permission или заменить user approval;
+  6. GitHub snapshot/checkout как специализированный provider за Workspace Manager; новые remote providers добавляются только отдельным решением;
+  7. отображение Task, Workspace, Builds, Artifacts и event stream через единый AgentBridge state owner без отдельного TaskTracker runtime.
+- **Permission gate:** каталог и чтение metadata — READ_ONLY; импорт, checkout и изменение локального workspace — соответствующий WORKSPACE_WRITE/GIT_WRITE approval.
+- **Session ID:** связывает workspace selection, snapshot, checkpoint, task metadata, build и artifact.
+- **Redacted audit trail:** workspaceId, source, root summary, repository/ref/commitSha, fingerprints, snapshot IDs и rule decisions; secrets и raw provider responses не сохраняются.
+- **Cancellation / timeout:** import, checkout, snapshot и tree paging имеют bounded timeout; отмена незавершённого checkout удаляет только temporary state.
+- **Recovery rule:** stale/foreign target или fingerprint mismatch останавливает операцию; восстановление не повторяет checkout, write или Git action автоматически.
+- **Exit criterion:** пользователь может повторно открыть ранее импортированный workspace, увидеть подтверждённую provenance, безопасно просмотреть большой tree, применить project rules без permission escalation и восстановить связь результата с session/artifact/build.
+
+### D3 — Токены, журнал и Pull Request
+
+- **Статус:** capabilityStatus: planned
+- **Владелец:** Credential Policy, Session Journal, GitHub Connector и Artifact Manager
+- **Зависимости:** AgentBridge v1, P0-B journal/recovery, P1-A controlled write/Git provenance и P1-B Actions observability.
+- **Входной контракт:** provider credential reference, sessionId, journal record, repository/ref, base/commit SHA, approval и idempotency key.
+- **Выходной контракт:** выбранная token policy, bounded/exportable redacted journal, branch/commit/PR provenance и ручной проверяемый Pull Request flow.
+- **Порядок внедрения:**
+  1. отдельный decision gate DP-01: базовый вариант — повторный ввод provider token после перезапуска; Android Keystore рассматривается как opt-in; внешний proxy не входит в базовый scope;
+  2. retention/size policy для journal и write audit, очистка старых записей и пользовательский export выбранного диапазона с redaction;
+  3. связывание branch, commit SHA, repository/ref, sessionId, approval и PR number;
+  4. ручное создание draft/обычного PR после отдельного GIT_WRITE approval;
+  5. re-check перед dispatch, PR и любым повторением; unknown state блокирует автоматический replay;
+  6. merge/release остаются отдельным REMOTE_ACTION decision gate.
+- **Permission gate:** token configuration не выдаёт permission; branch/commit/push/PR требуют GIT_WRITE и явного approval; merge/release не входят в D3 baseline.
+- **Session ID:** обязателен в credential decision, journal export, commit, Actions run, artifact и PR correlation.
+- **Redacted audit trail:** credential reference без значения token, retention decision, export range, repository/ref, base/commit SHA, approval actor, PR number и run/artifact provenance.
+- **Cancellation / timeout:** journal export, GitHub operation и Actions polling имеют deadline, cancellation и bounded download; failed/unknown operation не повторяется автоматически.
+- **Recovery rule:** завершённый commit/PR не создаётся повторно после восстановления; fingerprint/SHA mismatch требует нового preview/re-check; неизвестный внешний результат остаётся UNKNOWN.
+- **Не входит в базовый exit criterion:** автоматический PR после успешного Actions run и автоматический merge/release.
+- **Exit criterion:** секреты не попадают в UI events/journal/diff, journal ограничен и экспортируется redacted, каждый commit/PR связан с sessionId и проверяемым SHA, ручное approval работает, а неизвестные внешние операции останавливаются без replay.
