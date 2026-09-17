@@ -32,11 +32,13 @@ data class SessionRequestSummary(
     val deepSeekBaseUrl: String? = null,
     val model: String? = null,
     val imageAssetId: String? = null,
+    val providerId: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("task", AgentRedactor.text(task, MAX_TASK_CHARS))
         .put("target", target.name)
         .put("permission", permission.name)
+        .put("provider_id", AgentRedactor.text(providerId, MAX_IDENTIFIER_CHARS))
         .put("workspace_id", AgentRedactor.text(workspaceId, MAX_IDENTIFIER_CHARS))
         .put("workspace_fingerprint", AgentRedactor.text(workspaceFingerprint, 80))
         .put("repository", AgentRedactor.text(repository, MAX_IDENTIFIER_CHARS))
@@ -91,6 +93,10 @@ data class SessionRequestSummary(
                 )?.takeIf { it.isNotBlank() },
                 imageAssetId = AgentRedactor.text(
                     value.optString("image_asset_id"),
+                    MAX_IDENTIFIER_CHARS,
+                )?.takeIf { it.isNotBlank() },
+                providerId = AgentRedactor.text(
+                    value.optString("provider_id"),
                     MAX_IDENTIFIER_CHARS,
                 )?.takeIf { it.isNotBlank() },
             )
