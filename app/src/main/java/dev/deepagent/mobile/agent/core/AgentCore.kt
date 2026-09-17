@@ -140,6 +140,7 @@ class AgentCore(context: Context) : AgentBridge {
     private val actionsRunMutex = Mutex()
     private val gitOperationCache = LinkedHashMap<String, GitOperationResult>()
     private val actionsOperationCache = LinkedHashMap<String, ActionsOperationState>()
+    private var lastGitResult: GitOperationResult? = null
 
     private val _state = MutableStateFlow(AgentSessionState())
     override val state: StateFlow<AgentSessionState> = _state.asStateFlow()
@@ -1658,6 +1659,13 @@ class AgentCore(context: Context) : AgentBridge {
             ?: UUID.randomUUID().toString()
         val startedAt = System.currentTimeMillis()
         currentSessionId = sessionId
+        lastGitResult = null
+        synchronized(gitOperationCache) {
+            gitOperationCache.clear()
+        }
+        synchronized(actionsOperationCache) {
+            actionsOperationCache.clear()
+        }
         _gitState.value = GitOperationState(sessionId = sessionId)
         _actionsState.value = ActionsOperationState(sessionId = sessionId)
         _interactiveState.value = InteractiveSessionState(sessionId = sessionId)
@@ -2376,9 +2384,44 @@ class AgentCore(context: Context) : AgentBridge {
             },
         )
         _state.value = recoveredState
-        _gitState.value = GitOperationState(sessionId = restored.sessionId)
-        _actionsState.value = restored.actionsState
+        val restoredGitResult = restored.gitOperationResult
+        lastGitResult = restoredGitResult
+        if (
+            !requiresRecovery &&
+            restoredGitResult != null &&
+            (
+                restoredGitResult.status == GitOperationStatus.SUCCEEDED ||
+                    restoredGitResult.status == GitOperationStatus.UNKNOWN
+            )
+        ) {
+            cacheGitResult(restoredGitResult)
+        }
+        _gitState.value = when {
+            requiresRecovery -> GitOperationState(
+                status = GitOperationStatus.UNKNOWN,
+                sessionId = restored.sessionId,
+                operationId = restoredGitResult?.operationId,
+                operation = restoredGitResult?.operation?.name,
+                summary = "Git-операция была прервана при остановке процесса; требуется re-check",
+                errorCode = "GIT_RECOVERY_REQUIRED",
+                updatedAt = System.currentTimeMillis(),
+            )
+            restoredGitResult != null -> restoredGitResult.toState(restored.sessionId)
+            else -> GitOperationState(sessionId = restored.sessionId)
+        }
+        val restoredActionsState = restored.actionsState
             ?: ActionsOperationState(sessionId = restored.sessionId)
+        _actionsState.value = restoredActionsState
+        if (
+            !requiresRecovery &&
+            restoredActionsState.operationId != null &&
+            (
+                restoredActionsState.status == ActionsOperationStatus.SUCCEEDED ||
+                    restoredActionsState.status == ActionsOperationStatus.UNKNOWN
+            )
+        ) {
+            cacheActionsResult(restoredActionsState)
+        }
         val restoredInteractive = restored.interactiveState
         _interactiveState.value = restoredInteractive
             ?.takeIf {
@@ -2425,6 +2468,7 @@ class AgentCore(context: Context) : AgentBridge {
             recoveryReason = recoveryReason,
             patchRecovery = _patchRecovery.value,
             actionsState = _actionsState.value,
+            gitOperationResult = lastGitResult,
             interactiveState = _interactiveState.value,
           )
     }
@@ -2600,6 +2644,9 @@ class AgentCore(context: Context) : AgentBridge {
     }
 
     private fun publishGitResult(result: GitOperationResult) {
+        if (result.operation != GitOperation.STATUS) {
+            lastGitResult = result
+        }
         _gitState.value = GitOperationState(
             status = result.status,
             operationId = result.operationId,
@@ -2629,6 +2676,9 @@ class AgentCore(context: Context) : AgentBridge {
             result.summary,
             result.toJson().toString(),
         )
+        if (result.operation != GitOperation.STATUS) {
+            persistAsync()
+        }
     }
 
     private fun cachedGitResult(operationId: String): GitOperationResult? {
