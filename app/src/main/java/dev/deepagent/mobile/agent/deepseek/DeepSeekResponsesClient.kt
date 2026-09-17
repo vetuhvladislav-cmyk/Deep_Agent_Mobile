@@ -2,6 +2,8 @@ package dev.deepagent.mobile.agent.deepseek
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -68,6 +70,17 @@ sealed interface DeepSeekStreamEvent {
  */
 class DeepSeekResponsesClient {
 
+    @Volatile
+    private var activeConnection: HttpURLConnection? = null
+
+    /**
+     * Disconnect the current request before cancelling the coroutine so a
+     * blocking SSE read is released promptly.
+     */
+    fun cancelActive() {
+        activeConnection?.disconnect()
+    }
+
     suspend fun stream(
         request: DeepSeekRequest,
         onEvent: (DeepSeekStreamEvent) -> Unit,
@@ -101,6 +114,7 @@ class DeepSeekResponsesClient {
         var completedResponse: JSONObject? = null
         var failure: String? = null
 
+        activeConnection = connection
         try {
             val body = buildRequestBody(request).toString()
             connection.outputStream.use { output ->
@@ -170,6 +184,7 @@ class DeepSeekResponsesClient {
                 }
 
                 while (true) {
+                    currentCoroutineContext().ensureActive()
                     val line = readSseLine(reader, MAX_SSE_LINE_CHARS) ?: break
                     streamChars += line.length + 1
                     require(streamChars <= MAX_SSE_STREAM_CHARS) {
@@ -197,10 +212,14 @@ class DeepSeekResponsesClient {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
             failure = error.message ?: "DeepSeek request failed"
             onEvent(DeepSeekStreamEvent.Failed(failure.orEmpty()))
         } finally {
             connection.disconnect()
+            if (activeConnection === connection) {
+                activeConnection = null
+            }
         }
 
         DeepSeekRoundResult(
