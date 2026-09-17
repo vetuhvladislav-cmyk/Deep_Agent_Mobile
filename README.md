@@ -39,12 +39,12 @@ Deep Agent использует одну нативную оболочку, Agen
 
 Текущая проверка выполнена на ветке `codex/p1-a-controlled-write-git-pr`; `main` не изменялся.
 
-- Commit [6176a68](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/6176a68ed0e3756fc3f3f623a270f1a8f5c09660): P0-A/P0-B test coverage, strict tool schemas и cancellation/deadline hardening.
-- [GitHub Actions run #20](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35264066884): `testDebugUnitTest` и `assembleDebug` — успешно.
+- Commit [3d97077](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/3d97077f295c0ad4c028aefb9beaecf042026886): operation-bound `ApprovalToken`, UI token handoff и unit-тесты binding/TTL поверх P0-A/P0-B hardening.
+- [GitHub Actions run #22](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35265831202): `testDebugUnitTest`, `assembleDebugAndroidTest` и `assembleDebug` — успешно.
 - [Release v0.1.4](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/tag/v0.1.4) опубликован из проверенного commit [84ca54b](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/84ca54b36c6ffe1ac3fb45ffbd0903275bc99ba7).
 - [APK v0.1.4](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/download/v0.1.4/deep-agent-mobile-v0.1.4-test.apk) — 9 998 464 байта.
 - SHA-256: `c6b20d9db54e5350fbacff14a8fb7cc5cde96fd09684175c366833855c0be762`.
-- Android instrumentation, реальный runtime и device lifecycle acceptance ещё не запускались; поэтому P0-A/P0-B/P0-C остаются `planned` до соответствующих exit criteria.
+- Android instrumentation APK компилируется, но instrumentation/device execution, реальный runtime и device lifecycle acceptance ещё не запускались; поэтому P0-A/P0-B/P0-C остаются `planned` до соответствующих exit criteria.
 
 Для сравнения остаётся историческая проверка базовой ветки `main`.
 
