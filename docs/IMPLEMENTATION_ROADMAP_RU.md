@@ -232,6 +232,7 @@ D1–D3 являются утверждёнными post-core этапами. О
 - **Результат текущей реализации:** Workspace Manager расширен повторно открываемым app-private catalog: сохраняются стабильные workspaceId и optional repository/ref/commitSha, текущий fingerprint refresh-ится перед публикацией, добавлены bounded tree pages с canonical path/symlink guard, выбор workspace через AgentBridge и чтение корневого AGENT_RULES.md через allowlisted read_file; rules передаются модели только как redacted дополнительные ограничения и не меняют permission policy.
 - **Ограничение текущей реализации:** D2 остаётся planned: immutable snapshot history, GitHub snapshot/checkout provider, полноценный lazy paging для очень больших workspace и Android recovery/runtime-проверка требуют отдельного закрытия acceptance gate.
 
+
 ### D3 — Токены, журнал и Pull Request
 
 - **Статус:** capabilityStatus: planned
@@ -253,3 +254,7 @@ D1–D3 являются утверждёнными post-core этапами. О
 - **Recovery rule:** завершённый commit/PR не создаётся повторно после восстановления; fingerprint/SHA mismatch требует нового preview/re-check; неизвестный внешний результат остаётся UNKNOWN.
 - **Не входит в базовый exit criterion:** автоматический PR после успешного Actions run и автоматический merge/release.
 - **Exit criterion:** секреты не попадают в UI events/journal/diff, journal ограничен и экспортируется redacted, каждый commit/PR связан с sessionId и проверяемым SHA, ручное approval работает, а неизвестные внешние операции останавливаются без replay.
+
+- **Результат текущей реализации:** добавлен memory-only EphemeralCredentialVault с bounded TTL и wipe при очистке/закрытии, AgentBridge credential state без значений secrets, санитизация legacy request fields и UI-кнопка очистки; SessionStore получил retention limit (до 12 session-файлов/32 MiB) и SAF export redacted journal; PR flow перед внешним вызовом повторно проверяет Git HEAD, требует sessionId и expected head SHA, сверяет SHA ответа и сохраняет только provenance metadata.
+- **Ограничение текущей реализации:** D3 остаётся planned: Android/provider runtime-проверка, реальный export/recovery сценарий, Keystore decision (baseline остаётся memory-only), Actions/PR integration tests и server-side idempotency требуют отдельного acceptance gate; merge/release и автоматический PR по Actions не добавлялись.
+

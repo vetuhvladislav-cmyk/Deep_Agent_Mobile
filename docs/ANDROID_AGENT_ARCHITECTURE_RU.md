@@ -73,6 +73,14 @@ Workspace Catalog остаётся частью Workspace Manager и публи�
 
 Tree paging использует canonical path boundary, лимит глубины/элементов и fail-closed обработку symbolic links. Root AGENT_RULES.md читается только allowlisted read_file, ограничивается по размеру и передаётся DeepSeek как дополнительные недоверенные ограничения. Rules не могут повысить permission, изменить global policy, выбрать другой workspace или заменить user approval. Catalog не создаёт отдельный TaskTracker/state owner.
 
+### 2.4 Credentials, Session Journal и PR provenance
+
+EphemeralCredentialVault является единственным владельцем provider secrets в runtime. UI вводит DeepSeek API key и GitHub token в memory-only state; AgentBridge публикует только CredentialState с boolean-признаками configured и timestamp. Vault хранит значения в wipeable char arrays, автоматически очищает их после bounded TTL и очищается при закрытии AgentCore. Legacy credential fields входного AgentRequest санитизируются до запуска сессии; секреты не проходят в события, SessionStore или redacted result.
+
+Session Journal остаётся владельцем AgentCore/SessionStore: каждая запись ограничена по размеру, число старых session-файлов и общий объём retention ограничены, запись выполняется atomically. Пользовательский export идёт через SAF destination и содержит только PersistedAgentSession.toJson() с redaction; JournalExportResult возвращает sessionId/status/size/error code без URI, содержимого credentials или raw provider response.
+
+Pull Request не создаётся автоматически. Перед ручным PR_CREATE approval Core повторно проверяет выбранный workspace через Git status, требует подтверждённый текущий HEAD SHA и active sessionId, а GitHub response обязан вернуть тот же head SHA. Ошибка сети, mismatch или неполная provenance переводят операцию в UNKNOWN/FAILED и блокируют replay; merge/release остаются отдельными decision gates.
+
 ## 3. Контракты данных
 
 ### 3.1 WorkspaceIdentity
