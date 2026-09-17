@@ -2436,14 +2436,18 @@ class AgentCore(context: Context) : AgentBridge {
             restoredActionsState.status == ActionsOperationStatus.DISPATCHING ||
             restoredActionsState.status == ActionsOperationStatus.DISCOVERING_RUN ||
             restoredActionsState.status == ActionsOperationStatus.RUNNING
-        val recoveredActionsState = if (
-            restoredActionsState.status == ActionsOperationStatus.DISPATCHING ||
-            restoredActionsState.status == ActionsOperationStatus.DISCOVERING_RUN ||
-            restoredActionsState.status == ActionsOperationStatus.RUNNING
-        ) {
+        val recoveredActionsState = if (actionsRecoveryRequired) {
             restoredActionsState.copy(
                 status = ActionsOperationStatus.UNKNOWN,
-                summary = "Actions-операция была прервана при остановке процесса; требуется re-check",
+                summary = if (
+                    restoredActionsState.status == ActionsOperationStatus.DISPATCHING ||
+                    restoredActionsState.status == ActionsOperationStatus.DISCOVERING_RUN ||
+                    restoredActionsState.status == ActionsOperationStatus.RUNNING
+                ) {
+                    "Actions-операция была прервана при остановке процесса; требуется re-check"
+                } else {
+                    "Сессия была прервана; Actions side effect требует re-check"
+                },
                 errorCode = "ACTIONS_RECOVERY_REQUIRED",
             )
         } else {
