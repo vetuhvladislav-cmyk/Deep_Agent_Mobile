@@ -97,6 +97,18 @@ class ToolRouter(
                     errorCode = "INVALID_ARGUMENTS",
                 )
             }
+        val argumentError = runCatching {
+            validateArguments(toolName, arguments)
+        }.exceptionOrNull()
+        if (argumentError != null) {
+            return@withContext ToolExecutionResult(
+                toolName = toolName,
+                ok = false,
+                summary = "Некорректные аргументы инструмента",
+                errorCode = "INVALID_ARGUMENTS",
+            )
+        }
+
         val root = workspaceManager.resolveRoot(workspaceId)
             ?: return@withContext ToolExecutionResult(
                 toolName = TOOL_APPLY_PATCH,
@@ -113,6 +125,7 @@ class ToolRouter(
             )
 
         return@withContext try {
+            validateArguments(TOOL_APPLY_PATCH, arguments)
             val identity = workspaceManager.captureIdentity(workspaceId)
                 ?: error("Workspace identity недоступна")
             val preview = PatchEngine(checkpointDirectory).preview(
@@ -193,6 +206,7 @@ class ToolRouter(
             }
 
             return@withContext try {
+                validateArguments(TOOL_APPLY_PATCH, arguments)
                 val patchEngine = PatchEngine(checkpointDirectory)
                 val applied = patchEngine.apply(
                     workspaceRoot = root,
@@ -404,6 +418,135 @@ class ToolRouter(
             )
         }
     }
+
+    private fun validateArguments(toolName: String, arguments: JSONObject) {
+        val schema = when (toolName) {
+            TOOL_LIST_FILES -> ArgumentSchema(
+                allowed = setOf("path", "max_depth", "max_entries", "include_hidden"),
+            )
+            TOOL_READ_FILE -> ArgumentSchema(
+                allowed = setOf("path", "max_bytes"),
+                required = setOf("path"),
+            )
+            TOOL_SEARCH_CODE -> ArgumentSchema(
+                allowed = setOf("query", "path", "max_results", "max_file_bytes"),
+                required = setOf("query"),
+            )
+            TOOL_GIT_STATUS -> ArgumentSchema(allowed = emptySet())
+            TOOL_GIT_DIFF -> ArgumentSchema(allowed = setOf("path"))
+            TOOL_APPLY_PATCH -> ArgumentSchema(
+                allowed = setOf(
+                    "path",
+                    "expected_sha256",
+                    "patch",
+                    "replacement",
+                    "create",
+                ),
+                required = setOf("path", "expected_sha256"),
+            )
+            else -> error("Инструмент не разрешён")
+        }
+
+        val keys = arguments.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            require(key in schema.allowed) {
+                "Неизвестный аргумент инструмента"
+            }
+        }
+        schema.required.forEach { key ->
+            require(arguments.has(key) && arguments.opt(key) != JSONObject.NULL) {
+                "Отсутствует обязательный аргумент инструмента"
+            }
+        }
+
+        when (toolName) {
+            TOOL_LIST_FILES -> {
+                requireOptionalString(arguments, "path", 512)
+                requireOptionalInt(arguments, "max_depth", 0L, MAX_DEPTH.toLong())
+                requireOptionalInt(arguments, "max_entries", 1L, MAX_ENTRIES_LIMIT.toLong())
+                requireOptionalBoolean(arguments, "include_hidden")
+            }
+            TOOL_READ_FILE -> {
+                requireString(arguments, "path", 512)
+                requireOptionalInt(arguments, "max_bytes", 1L, MAX_READ_BYTES.toLong())
+            }
+            TOOL_SEARCH_CODE -> {
+                requireString(arguments, "query", MAX_QUERY_LENGTH)
+                requireOptionalString(arguments, "path", 512)
+                requireOptionalInt(arguments, "max_results", 1L, MAX_RESULTS_LIMIT.toLong())
+                requireOptionalInt(
+                    arguments,
+                    "max_file_bytes",
+                    1L,
+                    MAX_SEARCH_FILE_BYTES.toLong(),
+                )
+            }
+            TOOL_GIT_DIFF -> requireOptionalString(arguments, "path", 512)
+            TOOL_APPLY_PATCH -> {
+                requireString(arguments, "path", 512)
+                requireString(arguments, "expected_sha256", 128)
+                requireOptionalString(arguments, "patch", MAX_PATCH_CHARS)
+                requireOptionalString(arguments, "replacement", MAX_PATCH_CHARS)
+                requireOptionalBoolean(arguments, "create")
+            }
+        }
+    }
+
+    private fun requireString(
+        arguments: JSONObject,
+        key: String,
+        maxLength: Int,
+    ) {
+        val value = arguments.opt(key)
+        require(value is String && value.length <= maxLength) {
+            "Аргумент инструмента должен быть строкой"
+        }
+    }
+
+    private fun requireOptionalString(
+        arguments: JSONObject,
+        key: String,
+        maxLength: Int,
+    ) {
+        if (!arguments.has(key) || arguments.opt(key) == JSONObject.NULL) return
+        requireString(arguments, key, maxLength)
+    }
+
+    private fun requireOptionalInt(
+        arguments: JSONObject,
+        key: String,
+        minimum: Long,
+        maximum: Long,
+    ) {
+        if (!arguments.has(key) || arguments.opt(key) == JSONObject.NULL) return
+        val value = arguments.opt(key)
+        require(value is Number) {
+            "Аргумент инструмента должен быть целым числом"
+        }
+        val longValue = value.toDouble()
+        require(longValue.isFinite() && longValue == value.toLong().toDouble()) {
+            "Аргумент инструмента должен быть целым числом"
+        }
+        require(value.toLong() in minimum..maximum) {
+            "Аргумент инструмента выходит за допустимый диапазон"
+        }
+    }
+
+    private fun requireOptionalBoolean(
+        arguments: JSONObject,
+        key: String,
+    ) {
+        if (!arguments.has(key) || arguments.opt(key) == JSONObject.NULL) return
+        require(arguments.opt(key) is Boolean) {
+            "Аргумент инструмента должен быть boolean"
+        }
+    }
+
+    private data class ArgumentSchema(
+        val allowed: Set<String>,
+        val required: Set<String> = emptySet(),
+    )
 
     private fun listFiles(root: File, arguments: JSONObject): ToolExecutionResult {
         val requestedPath = arguments.optString("path")
