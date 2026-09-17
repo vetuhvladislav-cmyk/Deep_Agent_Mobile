@@ -597,7 +597,7 @@ class GitHubActionsClient {
         return AgentRedactor.text(response.bytes.toUtf8(), MAX_LOG_CHARS).orEmpty()
     }
 
-    private fun extractPayload(
+    internal fun extractPayload(
         archive: ByteArray,
         artifactId: Long,
         sourceSha: String,
