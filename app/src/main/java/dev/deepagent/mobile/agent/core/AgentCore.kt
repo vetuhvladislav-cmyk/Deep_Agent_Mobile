@@ -47,6 +47,9 @@ import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
+import dev.deepagent.mobile.agent.plan.BoundedPlanner
+import dev.deepagent.mobile.agent.plan.CompletionDecision
+import dev.deepagent.mobile.agent.plan.CompletionEvaluator
 import dev.deepagent.mobile.agent.provider.DeepSeekLlmProvider
 import dev.deepagent.mobile.agent.provider.ProviderRegistry
 import dev.deepagent.mobile.agent.model.ApprovalToken
@@ -1590,11 +1593,23 @@ class AgentCore(context: Context) : AgentBridge {
         persistAsync()
 
         append(AgentEventKind.SESSION, "Сессия Agent Core запущена")
+        val boundedPlan = BoundedPlanner.create(
+            target = target,
+            hasWorkspace = workspaceId != null,
+            maxToolRounds = MAX_TOOL_ROUNDS,
+        )
         append(
             AgentEventKind.PLAN,
             "Исполнитель: " + target.label(),
             "permission=" + request.permission.name +
                 "; workspace=" + (workspaceId ?: "не выбран"),
+        )
+        append(
+            AgentEventKind.PLAN,
+            "Bounded plan сформирован",
+            "steps=" + boundedPlan.steps.size +
+                "; max_tool_rounds=" + boundedPlan.maxToolRounds,
+            payload = boundedPlan.toJson().toString(),
         )
 
         val boundRequest = request.copy(
@@ -1885,30 +1900,49 @@ class AgentCore(context: Context) : AgentBridge {
                 }
                 return
             }
-            if (result.response == null) {
-                fail("DeepSeek не вернул response")
+            val response = result.response ?: run {
+                markUnknown("DeepSeek не вернул completed response")
                 return
             }
-            if (result.functionCalls.isEmpty()) {
-                if (visualImage != null) {
-                    _imageState.value = _imageState.value.copy(
-                        status = ImageAnalysisStatus.SUCCEEDED,
-                        summary = "Визуальный анализ завершён",
-                        errorCode = null,
-                        updatedAt = System.currentTimeMillis(),
-                    )
-                    persistAsync()
+            val completion = CompletionEvaluator.evaluate(
+                result = result,
+                nextToolRound = round + 1,
+                maxToolRounds = MAX_TOOL_ROUNDS,
+            )
+            when (completion.decision) {
+                CompletionDecision.COMPLETED -> {
+                    if (visualImage != null) {
+                        _imageState.value = _imageState.value.copy(
+                            status = ImageAnalysisStatus.SUCCEEDED,
+                            summary = "Визуальный анализ завершён",
+                            errorCode = null,
+                            updatedAt = System.currentTimeMillis(),
+                        )
+                        persistAsync()
+                    }
+                    return
                 }
-                return
+
+                CompletionDecision.UNKNOWN -> {
+                    if (visualImage != null) {
+                        _imageState.value = _imageState.value.copy(
+                            status = ImageAnalysisStatus.UNKNOWN,
+                            summary = "Completion evidence не подтверждён",
+                            errorCode = "COMPLETION_RECHECK_REQUIRED",
+                            updatedAt = System.currentTimeMillis(),
+                        )
+                    }
+                    markUnknown(
+                        "Completion evidence не подтверждён: " + completion.reason,
+                    )
+                    return
+                }
+
+                CompletionDecision.CONTINUE -> Unit
             }
 
             round += 1
-            if (round > MAX_TOOL_ROUNDS) {
-                fail("Достигнут лимит read-only tool rounds")
-                return
-            }
-
-            val nextInput = responseOutputItems(result.response).toMutableList()
+            val nextInput = responseOutputItems(response).toMutableList()
             for (call in result.functionCalls) {
                 val invocationId = beginInvocation(call.name, call.callId)
                 append(
