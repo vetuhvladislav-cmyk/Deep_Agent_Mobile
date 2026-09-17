@@ -83,7 +83,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Redacted audit trail:** invocation ID, tool name, workspace ID, input summary, output size, truncation, fingerprint и redacted error.
 - **Cancellation / timeout:** отдельный deadline для каждого tool; Git timeout и cancellation возвращают нормализованный результат; generic shell не добавляется.
 - **Recovery rule:** running без подтверждённого результата переводится в UNKNOWN; автоматический replay запрещён, выполняется re-check.
-- **Результат текущей реализации:** пять allowlisted read-only entry points и fail-closed guards присутствуют в едином ToolRouter; статическая проверка контрактов и границ выполнена. GitHub Actions run #6 подтвердил компиляцию тестового варианта и `assembleDebug`.
+- **Результат текущей реализации:** пять allowlisted read-only entry points и fail-closed guards присутствуют в едином ToolRouter; статический hardening-проход подтвердил контрактные границы. Build, тесты и Actions для текущей ветки не запускались.
 - **Acceptance gate:** capabilityStatus остаётся `planned` до runtime-проверки пяти tools на импортированном workspace, включая path/symlink escape, sensitive files, overflow, no-git и неизменность workspace; в репозитории пока нет `src/test` и `src/androidTest`, поэтому поведенческое покрытие не подтверждено.
 - **Exit criterion:** все пять tools работают через единый router contract; path escape, symlink escape, sensitive files, output overflow и отсутствие git обрабатываются fail-closed; workspace не изменяется.
 
@@ -98,8 +98,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Redacted audit trail:** journal сохраняет состояние вызовов, event sequence, decisions и provider references без tokens, cookies и Authorization headers.
 - **Cancellation / timeout:** journal write атомарен; recovery имеет bounded timeout и сообщает неполное состояние вместо зависания.
 - **Recovery rule:** завершённые side effects не повторяются; незавершённые операции получают UNKNOWN и требуют re-check.
-- **Результат текущей реализации:** кодовая часть P0-B внесена: versioned journal v2 с чтением v1, атомарная запись session/latest, сохранение events/invocations/decisions, redaction и recovery без автоматического replay; статическая согласованность изменённых файлов проверена.
-- **Validation:** GitHub Actions run #6 на commit `35bfd006` успешно выполнил `testDebugUnitTest` и `assembleDebug`; APK `v0.1.1` опубликован, SHA-256 зафиксирован в README.
+- **Результат текущей реализации:** кодовая часть P0-B внесена: versioned bounded journal v5 с чтением версий 1–5, per-session JSON snapshots, атомарная запись session/latest, сохранение events/invocations/decisions, redaction и recovery без автоматического replay; статическая согласованность изменённых файлов проверена.
+- **Validation:** текущий проход ограничен статическим анализом; Android build/test и GitHub Actions не запускались. Историческая проверка базовой ветки описана отдельно в README.
 - **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки восстановления после background/process death/rotation и подтверждения отсутствия replay; в репозитории пока нет `src/test` и `src/androidTest`, поэтому поведенческое покрытие не подтверждено.
 - **Exit criterion:** сессия восстанавливается без повторения завершённых tool/build/write операций, сохраняет correlation IDs и объясняет неизвестное состояние.
 
@@ -115,7 +115,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Cancellation / timeout:** cancel доступен из UI; network/provider timeout переводится в понятное состояние без скрытого retry.
 - **Recovery rule:** после rotation/background UI подписывается на AgentBridge, а не читает journal; при UNKNOWN предлагает re-check.
 - **Результат текущей реализации:** Agent Console подключён только к AgentBridge, workspace import и patch approval выведены из внутренних типов, добавлены provider/session/recovery summary, сохранение несекретной формы, восстановление image URI и единый scrollable mobile layout; статическая проверка пройдена.
-- **Validation:** GitHub Actions run #6 на commit `35bfd006` успешно выполнил `testDebugUnitTest` и `assembleDebug`; APK `v0.1.1` опубликован, ссылка и checksum зафиксированы в README.
+- **Validation:** текущий проход ограничен статическим анализом; Android build/test и GitHub Actions не запускались. Историческая проверка базовой ветки описана отдельно в README.
 - **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки читаемости состояния, recovery affordances, rotation/background и keyboard/insets; в репозитории пока нет `src/test` и `src/androidTest`, поэтому поведенческое покрытие не подтверждено.
 - **Exit criterion:** новый пользователь из одного экрана понимает, что настроено, что отсутствует, какой permission требуется и почему операция остановилась.
 
