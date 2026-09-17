@@ -21,7 +21,7 @@
 - Bounded Planner формирует детерминированный линейный план, а Completion Evaluator принимает завершение только по подтверждённому response evidence; полноценный DAG отложен.
 - DeepSeek endpoint ограничен HTTPS host policy (api.deepseek.com, default/443), а redirects отключены.
 
-Последний подтверждённый baseline прошёл unit-тесты, компиляцию instrumentation APK и debug APK в [GitHub Actions run #27](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35269039901) на commit `aa6b7a3`. После него bounded Planner/Evaluator и DeepSeek host-policy изменены в коммитах `b056589`, `82b29ba`, `0e751ed` и `2ab6f1f`; по текущему ограничению пользователя новая компиляция и тесты не запускались. Android device execution, реальный runtime и device lifecycle acceptance ещё не запускались, поэтому соответствующие exit criteria остаются открытыми.
+Последний подтверждённый baseline прошёл unit-тесты, компиляцию instrumentation APK и debug APK в [GitHub Actions run #27](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35269039901) на commit `aa6b7a3`. После него bounded Planner/Evaluator и DeepSeek host-policy изменены в коммитах `b056589`, `82b29ba`, `0e751ed`, `2ab6f1f` и `d9744b7`; по текущему ограничению пользователя новая компиляция и тесты не запускались. Android device execution, реальный runtime и device lifecycle acceptance ещё не запускались, поэтому соответствующие exit criteria остаются открытыми.
 
 ## 1. Правила статусов и этапов
 
