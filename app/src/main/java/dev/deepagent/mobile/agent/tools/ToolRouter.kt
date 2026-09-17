@@ -104,18 +104,6 @@ class ToolRouter(
                     errorCode = "INVALID_ARGUMENTS",
                 )
             }
-        val argumentError = runCatching {
-            validateArguments(toolName, arguments)
-        }.exceptionOrNull()
-        if (argumentError != null) {
-            return@withContext ToolExecutionResult(
-                toolName = toolName,
-                ok = false,
-                summary = "Некорректные аргументы инструмента",
-                errorCode = "INVALID_ARGUMENTS",
-            )
-        }
-
         val root = workspaceManager.resolveRoot(workspaceId)
             ?: return@withContext ToolExecutionResult(
                 toolName = TOOL_APPLY_PATCH,
@@ -392,6 +380,18 @@ class ToolRouter(
                     errorCode = "INVALID_ARGUMENTS",
                 )
             }
+
+        val argumentError = runCatching {
+            validateArguments(toolName, arguments)
+        }.exceptionOrNull()
+        if (argumentError != null) {
+            return@withContext ToolExecutionResult(
+                toolName = toolName,
+                ok = false,
+                summary = "Некорректные аргументы инструмента",
+                errorCode = "INVALID_ARGUMENTS",
+            )
+        }
 
         val root = workspaceManager.resolveRoot(workspaceId)
             ?: return@withContext ToolExecutionResult(
