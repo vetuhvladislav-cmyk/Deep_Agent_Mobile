@@ -9,6 +9,7 @@ import dev.deepagent.mobile.agent.workspace.WorkspaceManager
 import dev.deepagent.mobile.agent.workspace.WorkspacePathPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -144,6 +145,9 @@ class InteractiveCommandSession(
                 onState,
             )
         }
+        val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion {
+            terminate(process)
+        }
 
         synchronized(processLock) {
             activeProcess = process
@@ -233,6 +237,7 @@ class InteractiveCommandSession(
             terminate(process)
             throw cancelled
         } finally {
+            cancellationHandle?.dispose()
             synchronized(processLock) {
                 if (activeProcess === process) {
                     activeProcess = null
