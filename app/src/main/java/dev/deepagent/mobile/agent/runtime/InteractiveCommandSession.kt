@@ -60,17 +60,28 @@ class InteractiveCommandSession(
             args = request.args.take(MAX_ARGS),
             cwd = request.cwd,
         )
-        val validation = validate(request)
-        if (validation != null) {
+        val validationError = validate(request)
+        if (validationError != null) {
             return@withContext publish(
                 base.copy(
                     status = InteractiveSessionStatus.FAILED,
-                    summary = validation,
+                    summary = validationError,
                     errorCode = "INTERACTIVE_INVALID_ARGUMENTS",
                 ),
                 onState,
             )
         }
+
+        val cwd = workspaceManager.resolveRoot(request.workspaceId)
+            ?.let { File(it, request.cwd).canonicalFile }
+            ?: return@withContext publish(
+                base.copy(
+                    status = InteractiveSessionStatus.FAILED,
+                    summary = "Workspace не выбран или недоступен",
+                    errorCode = "INTERACTIVE_WORKSPACE_UNAVAILABLE",
+                ),
+                onState,
+            )
 
         publish(
             base.copy(
@@ -82,7 +93,7 @@ class InteractiveCommandSession(
         val startedAt = System.nanoTime()
         val process = try {
             ProcessBuilder(listOf(request.executable) + request.args)
-                .directory(validation.cwd)
+                .directory(cwd)
                 .redirectErrorStream(false)
                 .apply {
                     val environment = environment()
@@ -226,7 +237,7 @@ class InteractiveCommandSession(
         outputExecutor.shutdownNow()
     }
 
-    private fun validate(request: InteractiveCommandRequest): Validation? {
+    private fun validate(request: InteractiveCommandRequest): String? {
         if (request.executable != ALLOWED_EXECUTABLE) {
             return "Executable не входит в allowlist"
         }
@@ -337,8 +348,6 @@ class InteractiveCommandSession(
 
     private fun elapsedMs(startedAt: Long): Long =
         (System.nanoTime() - startedAt) / 1_000_000L
-
-    private data class Validation(val cwd: File)
 
     private data class CapturedOutput(
         val text: String,

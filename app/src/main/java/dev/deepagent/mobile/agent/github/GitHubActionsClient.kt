@@ -452,7 +452,7 @@ class GitHubActionsClient {
                 "Не удалось получить workflow run" + response.errorSuffix(),
             )
         }
-        return parseRun(response.body.toUtf8())
+        return parseRun(JSONObject(response.body.toUtf8()))
     }
 
     private fun fetchJobs(
@@ -945,8 +945,7 @@ class GitHubActionsClient {
     ) {
         fun errorSuffix(): String =
             if (status in 200..299 || body.isEmpty()) "" else ": " +
-                AgentRedactor.text(body.toUtf8(), MAX_ERROR_CHARS).orEmpty()
-    }
+                AgentRedactor.text(body.toString(Charsets.UTF_8), MAX_ERROR_CHARS).orEmpty()    }
 
     private data class DownloadResponse(
         val bytes: ByteArray,

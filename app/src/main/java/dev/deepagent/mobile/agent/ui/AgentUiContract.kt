@@ -33,6 +33,8 @@ object AgentUiContract {
     const val SUBMIT = "agent.session.submit"
     const val CANCEL = "agent.session.cancel"
     const val CLEAR_EVENTS = "agent.events.clear"
+    const val EXPORT_JOURNAL = "agent.credentials.export_journal"
+    const val CLEAR_CREDENTIALS = "agent.credentials.clear"
 
     fun workspace(id: String): String = "agent.workspace." + id
     fun workspaceEntry(path: String): String = "agent.workspace.entry." + path.hashCode()

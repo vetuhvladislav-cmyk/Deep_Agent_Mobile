@@ -943,7 +943,7 @@ fun AgentConsoleScreen(
                                                     "--short",
                                                     "--branch",
                                                 ),
-                                                workspaceId = workspace.id,
+                                                workspaceId = workspace?.id,
                                                 sessionId = state.sessionId,
                                             ),
                                         )
@@ -1068,7 +1068,7 @@ fun AgentConsoleScreen(
                                                         runId = runId,
                                                         artifactId = artifact.id,
                                                         expectedCommitSha = sourceSha,
-                                                        workspaceId = workspace.id,
+                                                        workspaceId = workspace?.id,
                                                     ),
                                                 )
                                                 if (
@@ -1103,11 +1103,11 @@ fun AgentConsoleScreen(
                                 onClick = {
                                     actionsError = null
                                     scope.launch {
+                                        agent.configureCredentials(
+                                            deepSeekApiKey = deepSeekKey,
+                                            githubToken = githubToken,
+                                        )
                                         agent.runActions(
-                                            agent.configureCredentials(
-                                                deepSeekApiKey = deepSeekKey,
-                                                githubToken = githubToken,
-                                            )
                                             ActionsRunRequest(
                                                 token = "",
                                                 repository = repository,
@@ -1484,14 +1484,17 @@ fun AgentConsoleScreen(
                     ),
                     onClick = { imagePicker.launch("image/*") },
                 ) {
-                    Text(if (image == null) "Добавить изображение" else "Изображение выбрано")
-                }
-                if (image != null) {
-                    TextButton(
-                        onClick = {
-                            imageUri = null
-                            image = null
+                    Text(
+                        if (imageState.status == ImageAnalysisStatus.IDLE) {
+                            "Добавить изображение"
+                        } else {
+                            "Изображение выбрано"
                         },
+                    )
+                }
+                if (imageState.status != ImageAnalysisStatus.IDLE) {
+                    TextButton(
+                        onClick = { agent.clearImage() },
                     ) {
                         Text("Убрать")
                     }

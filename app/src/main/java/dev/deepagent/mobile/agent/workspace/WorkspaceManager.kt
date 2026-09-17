@@ -5,6 +5,8 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import dev.deepagent.mobile.agent.model.WorkspaceFileEntry
+import dev.deepagent.mobile.agent.model.WorkspaceTreePage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

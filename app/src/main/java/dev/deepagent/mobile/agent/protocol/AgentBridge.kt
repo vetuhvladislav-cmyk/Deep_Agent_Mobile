@@ -15,7 +15,6 @@ import dev.deepagent.mobile.agent.model.WorkspaceCatalogState
 import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
 import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentSessionState
-import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
 import dev.deepagent.mobile.agent.git.GitBranchRequest
 import dev.deepagent.mobile.agent.git.GitCommitRequest
 import dev.deepagent.mobile.agent.git.GitOperationResult

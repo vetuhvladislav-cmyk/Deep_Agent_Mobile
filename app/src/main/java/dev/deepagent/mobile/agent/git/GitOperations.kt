@@ -663,6 +663,7 @@ class GitRepositoryClient(
         const val MAX_COMMAND_OUTPUT_CHARS = 64_000
         const val MAX_COMMIT_MESSAGE_CHARS = 2_000
         const val MAX_IDENTIFIER_CHARS = 200
+        const val GIT_TIMEOUT_SECONDS = 8L
         val URL_CREDENTIAL_PATTERN = Regex(
             "(?i)(https?://)[^\\s/@:]+:[^\\s/@]+@",
         )
