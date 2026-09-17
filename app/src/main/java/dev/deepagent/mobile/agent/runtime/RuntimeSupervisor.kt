@@ -246,6 +246,8 @@ class RuntimeSupervisor(
                         updatedAt = System.currentTimeMillis(),
                     ).also { _state.value = it }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 rollback(
                     sessionId = sessionId ?: _state.value.sessionId,
@@ -293,6 +295,8 @@ class RuntimeSupervisor(
                     )
                     _state.value
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 publish(
                     _state.value.copy(

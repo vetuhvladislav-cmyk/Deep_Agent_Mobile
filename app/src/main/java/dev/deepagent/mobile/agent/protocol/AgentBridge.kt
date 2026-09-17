@@ -2,6 +2,8 @@ package dev.deepagent.mobile.agent.protocol
 
 import dev.deepagent.mobile.agent.model.ActionsArtifactRequest
 import dev.deepagent.mobile.agent.model.RuntimeState
+import dev.deepagent.mobile.agent.model.InteractiveCommandRequest
+import dev.deepagent.mobile.agent.model.InteractiveSessionState
 import dev.deepagent.mobile.agent.model.ActionsArtifactSaveResult
 import dev.deepagent.mobile.agent.model.ActionsOperationState
 import dev.deepagent.mobile.agent.model.ActionsRunRequest
@@ -35,6 +37,7 @@ interface AgentBridge {
     val patchRecovery: StateFlow<PatchRecoveryState?>
     val actions: StateFlow<ActionsOperationState>
     val runtime: StateFlow<RuntimeState>
+    val interactive: StateFlow<InteractiveSessionState>
 
     suspend fun submit(request: AgentRequest)
 
@@ -61,6 +64,14 @@ interface AgentBridge {
     ): GitOperationResult
 
     suspend fun startRuntime(): RuntimeState
+
+    suspend fun runInteractive(
+        request: InteractiveCommandRequest,
+    ): InteractiveSessionState
+
+    fun sendInteractiveInput(sessionId: String, input: String): Boolean
+
+    fun cancelInteractive()
 
     suspend fun stopRuntime(): RuntimeState
 

@@ -2,6 +2,8 @@ package dev.deepagent.mobile.agent.session
 
 import android.content.Context
 import dev.deepagent.mobile.agent.model.ActionsOperationState
+import dev.deepagent.mobile.agent.model.InteractiveSessionState
+import dev.deepagent.mobile.agent.model.InteractiveSessionStatus
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRedactor
@@ -178,6 +180,7 @@ data class PersistedAgentSession(
     val recoveryReason: String? = null,
     val patchRecovery: PatchRecoveryState? = null,
     val actionsState: ActionsOperationState? = null,
+    val interactiveState: InteractiveSessionState? = null,
   ) {
     fun toJson(): JSONObject = JSONObject()
         .put("schema_version", VERSION)
@@ -225,18 +228,19 @@ data class PersistedAgentSession(
         .put("recovery_reason", AgentRedactor.text(recoveryReason, MAX_ERROR_CHARS))
         .put("patch_recovery", patchRecovery?.toJson())
         .put("actions_state", actionsState?.toJson())
+        .put("interactive_state", interactiveState?.toJson())
         .put("event_cursor", eventCursor)
         .put("updated_at", updatedAt)
 
     companion object {
-        const val VERSION = 4
+        const val VERSION = 5
         const val MAX_EVENTS = 500
         const val MAX_INVOCATIONS = 500
         const val MAX_DECISIONS = 200
         const val MAX_ERROR_CHARS = 4_000
         const val MAX_EVENT_ID_CHARS = 160
         const val MAX_EVENT_MESSAGE_CHARS = 1_000
-        val SUPPORTED_VERSIONS = setOf(1, 2, 3, 4)
+        val SUPPORTED_VERSIONS = setOf(1, 2, 3, 4, 5)
         const val MAX_EVENT_DETAIL_CHARS = 4_000
 
         fun fromJson(value: JSONObject): PersistedAgentSession? {
@@ -354,6 +358,8 @@ data class PersistedAgentSession(
                     ?.let(PatchRecoveryState::fromJson),
                 actionsState = value.optJSONObject("actions_state")
                     ?.let(ActionsOperationState::fromJson),
+                interactiveState = value.optJSONObject("interactive_state")
+                    ?.let(InteractiveSessionState::fromJson),
             )
         }
 

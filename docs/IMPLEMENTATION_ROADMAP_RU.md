@@ -174,6 +174,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Redacted audit trail:** command metadata, scoped cwd, process ID, exit state, duration и redacted output; credentials не журналируются.
 - **Cancellation / timeout:** cancel завершает process tree; idle/maximum runtime timeout обязателен; UI не блокируется.
 - **Recovery rule:** потерянный процесс получает UNKNOWN, не восстанавливается автоматически и требует явного re-check или controlled termination.
+- **Результат текущей реализации:** добавлен AgentBridge/Core interactive contract и bounded direct-process adapter с allowlist только для git status/diff/log, canonical cwd, очищенным scoped environment, input/output limits, timeout, cancel, redacted output и persisted UNKNOWN recovery state; UI показывает нормализованные output/exit/recovery события.
+- **Ограничение текущей реализации:** capabilityStatus остаётся `planned`: текущий backend использует pipes, а не полноценный PTY; расширение allowlist и реальный PTY ABI зависят от подтверждённого P2-A runtime/DP-02; process-tree, Android 16 и process-death сценарии требуют runtime-проверки; build и тесты в этой сессии не запускались.
 - **Exit criterion:** интерактивная команда не выходит из workspace/permission scope, не блокирует UI, корректно отменяется и оставляет понятное состояние после process death.
 
 ## 4. Расширения после базовой линии P0–P2

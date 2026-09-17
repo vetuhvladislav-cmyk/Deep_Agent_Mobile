@@ -59,7 +59,7 @@ DeepSeek и GitHub Actions являются внешними сервисами,
 
 RuntimeSupervisor является внутренним владельцем lifecycle локального headless runtime. Разрешённая последовательность — EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY; ошибки проходят через FAILED/ROLLBACK, а активным становится только runtime с подтверждённым manifest, ABI, checksum и readiness probe. Loopback provider допустим как безопасный reference adapter, пока DP-02 не выберет и не проверит подписанный ARM64 bundle.
 
-Runtime provider не получает GitHub, merge/release или credential permission. PTY/interactive provider, когда он включён, вызывается только через Agent Core с canonical workspace scope, allowlisted executable/arguments, bounded timeout и redacted output. Произвольный shell и sh -c не являются скрытым fallback.
+Runtime provider не получает GitHub, merge/release или credential permission. PTY/interactive provider, когда он включён, вызывается только через Agent Core с canonical workspace scope, allowlisted executable/arguments, bounded timeout и redacted output. Произвольный shell и sh -c не являются скрытым fallback. Текущий interactive adapter допускает только прямой pipe-backed git status/diff/log; это не объявляется полноценным PTY до отдельного ABI/backend решения.
 
 ## 3. Контракты данных
 

@@ -113,6 +113,132 @@ data class PendingPatchApproval(
 
 
 
+
+enum class InteractiveSessionStatus {
+    IDLE,
+    STARTING,
+    RUNNING,
+    SUCCEEDED,
+    FAILED,
+    CANCELLED,
+    UNKNOWN,
+}
+
+data class InteractiveCommandRequest(
+    val executable: String,
+    val args: List<String> = emptyList(),
+    val workspaceId: String? = null,
+    val cwd: String = ".",
+    val input: String? = null,
+    val timeoutMs: Long = 30_000L,
+    val sessionId: String? = null,
+    val env: Map<String, String> = emptyMap(),
+) {
+    fun toAuditJson(): JSONObject = JSONObject()
+        .put("executable", AgentRedactor.text(executable, 96))
+        .put(
+            "args",
+            JSONArray().apply {
+                args.take(32).forEach { put(AgentRedactor.text(it, 256)) }
+            },
+        )
+        .put("workspace_id", AgentRedactor.text(workspaceId, 160))
+        .put("cwd", AgentRedactor.text(cwd, 512))
+        .put("session_id", AgentRedactor.text(sessionId, 160))
+        .put("timeout_ms", timeoutMs.coerceIn(1_000L, 120_000L))
+        .put(
+            "env_keys",
+            JSONArray().apply {
+                env.keys.map { it.trim() }.filter { it.isNotBlank() }
+                    .sorted().take(16).forEach { put(AgentRedactor.text(it, 96)) }
+            },
+        )
+}
+
+data class InteractiveSessionState(
+    val sessionId: String? = null,
+    val workspaceId: String? = null,
+    val executable: String? = null,
+    val args: List<String> = emptyList(),
+    val cwd: String? = null,
+    val status: InteractiveSessionStatus = InteractiveSessionStatus.IDLE,
+    val stdout: String? = null,
+    val stderr: String? = null,
+    val exitCode: Int? = null,
+    val durationMs: Long? = null,
+    val summary: String? = null,
+    val errorCode: String? = null,
+    val updatedAt: Long = System.currentTimeMillis(),
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("session_id", AgentRedactor.text(sessionId, 160))
+        .put("workspace_id", AgentRedactor.text(workspaceId, 160))
+        .put("executable", AgentRedactor.text(executable, 96))
+        .put(
+            "args",
+            JSONArray().apply {
+                args.take(MAX_ARGS).forEach { put(AgentRedactor.text(it, 256)) }
+            },
+        )
+        .put("cwd", AgentRedactor.text(cwd, 512))
+        .put("status", status.name)
+        .put("stdout", AgentRedactor.text(stdout, MAX_OUTPUT_CHARS))
+        .put("stderr", AgentRedactor.text(stderr, MAX_OUTPUT_CHARS))
+        .put("exit_code", exitCode)
+        .put("duration_ms", durationMs)
+        .put("summary", AgentRedactor.text(summary, MAX_SUMMARY_CHARS))
+        .put("error_code", AgentRedactor.text(errorCode, 96))
+        .put("updated_at", updatedAt)
+
+    companion object {
+        private const val MAX_ARGS = 32
+        private const val MAX_OUTPUT_CHARS = 32_000
+        private const val MAX_SUMMARY_CHARS = 2_000
+
+        fun fromJson(value: JSONObject): InteractiveSessionState {
+            val status = runCatching {
+                InteractiveSessionStatus.valueOf(value.optString("status"))
+            }.getOrDefault(InteractiveSessionStatus.UNKNOWN)
+            val args = buildList {
+                val array = value.optJSONArray("args") ?: JSONArray()
+                for (index in 0 until array.length().coerceAtMost(MAX_ARGS)) {
+                    val item = AgentRedactor.text(array.optString(index), 256)
+                        ?.takeIf { it.isNotBlank() && it != "null" }
+                    if (item != null) add(item)
+                }
+            }
+            return InteractiveSessionState(
+                sessionId = safeText(value.optString("session_id"), 160),
+                workspaceId = safeText(value.optString("workspace_id"), 160),
+                executable = safeText(value.optString("executable"), 96),
+                args = args,
+                cwd = safeText(value.optString("cwd"), 512),
+                status = status,
+                stdout = safeText(value.optString("stdout"), MAX_OUTPUT_CHARS),
+                stderr = safeText(value.optString("stderr"), MAX_OUTPUT_CHARS),
+                exitCode = if (value.has("exit_code") && !value.isNull("exit_code")) {
+                    value.optInt("exit_code")
+                } else {
+                    null
+                },
+                durationMs = if (value.has("duration_ms") && !value.isNull("duration_ms")) {
+                    value.optLong("duration_ms").takeIf { it >= 0L }
+                } else {
+                    null
+                },
+                summary = safeText(value.optString("summary"), MAX_SUMMARY_CHARS),
+                errorCode = safeText(value.optString("error_code"), 96),
+                updatedAt = value.optLong("updated_at", System.currentTimeMillis()),
+            )
+        }
+
+        private fun safeText(value: String?, maxChars: Int): String? =
+            AgentRedactor.text(value, maxChars)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() && it != "null" }
+    }
+}
+
 enum class RuntimeStatus {
     EMPTY,
     INSTALLING,

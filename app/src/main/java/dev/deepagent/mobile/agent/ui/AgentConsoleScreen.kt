@@ -70,6 +70,8 @@ import dev.deepagent.mobile.agent.model.PermissionMode
 import dev.deepagent.mobile.agent.model.PatchRecoveryStatus
 import dev.deepagent.mobile.agent.model.PatchRollbackStatus
 import dev.deepagent.mobile.agent.model.RuntimeStatus
+import dev.deepagent.mobile.agent.model.InteractiveCommandRequest
+import dev.deepagent.mobile.agent.model.InteractiveSessionStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -141,6 +143,7 @@ fun AgentConsoleScreen(
     val patchRecovery by agent.patchRecovery.collectAsState()
     val actionsState by agent.actions.collectAsState()
     val runtimeState by agent.runtime.collectAsState()
+    val interactiveState by agent.interactive.collectAsState()
 
     LaunchedEffect(imageUri) {
         val persistedUri = imageUri ?: return@LaunchedEffect
@@ -664,6 +667,111 @@ fun AgentConsoleScreen(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+
+
+            if (workspace != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = "P2-B Interactive command",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Состояние: " + interactiveState.status.name +
+                                " · " + (interactiveState.executable ?: "команда не выбрана"),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        interactiveState.summary?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (
+                                    interactiveState.status == InteractiveSessionStatus.FAILED ||
+                                    interactiveState.status == InteractiveSessionStatus.UNKNOWN
+                                ) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                },
+                            )
+                        }
+                        interactiveState.stdout?.takeIf { it.isNotBlank() }?.let {
+                            Text(
+                                text = it.take(6_000),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp,
+                            )
+                        }
+                        interactiveState.stderr?.takeIf { it.isNotBlank() }?.let {
+                            Text(
+                                text = it.take(6_000),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(
+                                modifier = Modifier.agentControl(
+                                    "agent.interactive.run",
+                                    "Запустить разрешённую интерактивную git-команду",
+                                ),
+                                enabled = runtimeState.status == RuntimeStatus.READY &&
+                                    interactiveState.status != InteractiveSessionStatus.RUNNING &&
+                                    state.status != AgentSessionStatus.RUNNING &&
+                                    pendingApproval == null,
+                                onClick = {
+                                    scope.launch {
+                                        agent.runInteractive(
+                                            InteractiveCommandRequest(
+                                                executable = "git",
+                                                args = listOf(
+                                                    "status",
+                                                    "--short",
+                                                    "--branch",
+                                                ),
+                                                workspaceId = workspace.id,
+                                                sessionId = state.sessionId,
+                                            ),
+                                        )
+                                    }
+                                },
+                            ) {
+                                Text("Git status")
+                            }
+                            OutlinedButton(
+                                modifier = Modifier.agentControl(
+                                    "agent.interactive.cancel",
+                                    "Остановить интерактивную команду",
+                                ),
+                                enabled = interactiveState.status ==
+                                    InteractiveSessionStatus.RUNNING,
+                                onClick = { agent.cancelInteractive() },
+                            ) {
+                                Text("Остановить")
+                            }
+                        }
+                        Text(
+                            text = "Сейчас разрешён только прямой read-only git status/diff/log; shell, sh -c и произвольные команды заблокированы.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
                 }
             }
 

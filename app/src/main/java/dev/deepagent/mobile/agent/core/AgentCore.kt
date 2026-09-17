@@ -30,6 +30,9 @@ import dev.deepagent.mobile.agent.model.ActionsOperationStatus
 import dev.deepagent.mobile.agent.model.ActionsRunRequest
 import dev.deepagent.mobile.agent.model.RuntimeState
 import dev.deepagent.mobile.agent.model.RuntimeStatus
+import dev.deepagent.mobile.agent.model.InteractiveCommandRequest
+import dev.deepagent.mobile.agent.model.InteractiveSessionState
+import dev.deepagent.mobile.agent.model.InteractiveSessionStatus
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
@@ -48,6 +51,7 @@ import dev.deepagent.mobile.agent.patch.PatchPreview
 import dev.deepagent.mobile.agent.protocol.AgentBridge
 import dev.deepagent.mobile.agent.runtime.LocalLiteRunner
 import dev.deepagent.mobile.agent.runtime.RuntimeSupervisor
+import dev.deepagent.mobile.agent.runtime.InteractiveCommandSession
 import dev.deepagent.mobile.agent.session.PersistedAgentSession
 import dev.deepagent.mobile.agent.session.SessionDecisionRecord
 import dev.deepagent.mobile.agent.session.SessionInvocationRecord
@@ -96,6 +100,7 @@ class AgentCore(context: Context) : AgentBridge {
     private val workspaceManager = WorkspaceManager(appContext)
     private val localRunner = LocalLiteRunner(appContext, workspaceManager)
     private val runtimeSupervisor = RuntimeSupervisor()
+    private val interactiveSession = InteractiveCommandSession(workspaceManager)
     private val toolRouter = ToolRouter(workspaceManager)
     private val deepSeek = DeepSeekResponsesClient()
     private val actionsClient = GitHubActionsClient()
@@ -136,6 +141,10 @@ class AgentCore(context: Context) : AgentBridge {
     private val _runtimeState = MutableStateFlow(RuntimeState())
     override val runtime: StateFlow<RuntimeState> = _runtimeState.asStateFlow()
 
+    private val _interactiveState = MutableStateFlow(InteractiveSessionState())
+    override val interactive: StateFlow<InteractiveSessionState> =
+        _interactiveState.asStateFlow()
+
     private var activeJob: Job? = null
     private var patchApplyJob: Job? = null
     private var currentSessionId: String? = null
@@ -175,6 +184,7 @@ class AgentCore(context: Context) : AgentBridge {
         activeJob?.cancel()
         patchApplyJob?.cancel()
         patchApplyJob = null
+        interactiveSession.cancelActive()
         completeOpenInvocations(
             state = "CANCELLED",
             summary = "Сессия отменена пользователем",
@@ -287,6 +297,148 @@ class AgentCore(context: Context) : AgentBridge {
             }
         }
     }
+
+
+    override suspend fun runInteractive(
+        request: InteractiveCommandRequest,
+    ): InteractiveSessionState {
+        check(!closed) { "AgentCore уже закрыт" }
+        if (
+            _state.value.status == AgentSessionStatus.RUNNING ||
+            _state.value.status == AgentSessionStatus.WAITING_APPROVAL
+        ) {
+            return interactiveFailure(
+                request,
+                "Сначала завершите текущую сессию Agent Core",
+                "SESSION_BUSY",
+            )
+        }
+        val runtime = runtimeSupervisor.probe(currentSessionId)
+        _runtimeState.value = runtime
+        if (runtime.status != RuntimeStatus.READY) {
+            return interactiveFailure(
+                request,
+                "Interactive command требует READY RuntimeSupervisor",
+                "RUNTIME_NOT_READY",
+            )
+        }
+        val requiredPermission = interactiveSession.requiredPermission(request)
+        val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
+        if (permission < requiredPermission) {
+            recordDecision(
+                kind = "INTERACTIVE",
+                state = "DENIED",
+                detail = "required=" + requiredPermission.name,
+            )
+            return interactiveFailure(
+                request,
+                "Для этой interactive command нужен permission " +
+                    requiredPermission.name,
+                "PERMISSION_REQUIRED",
+            )
+        }
+        val sessionId = request.sessionId ?: currentSessionId
+            ?: UUID.randomUUID().toString()
+        recordDecision(
+            kind = "INTERACTIVE",
+            state = "APPROVED",
+            detail = "user_action=true",
+        )
+        append(
+            AgentEventKind.APPROVAL,
+            "Пользователь подтвердил interactive command",
+            request.copy(sessionId = sessionId).toAuditJson().toString(),
+        )
+        val initial = InteractiveSessionState(
+            sessionId = sessionId,
+            workspaceId = request.workspaceId,
+            executable = request.executable,
+            args = request.args.take(32),
+            cwd = request.cwd,
+            status = InteractiveSessionStatus.STARTING,
+            summary = "Interactive command запускается",
+        )
+        _interactiveState.value = initial
+        persistAsync()
+        val result = interactiveSession.run(
+            request.copy(sessionId = sessionId),
+        ) { update ->
+            _interactiveState.value = update
+            persistAsync()
+        }
+        _interactiveState.value = result
+        append(
+            if (result.status == InteractiveSessionStatus.SUCCEEDED) {
+                AgentEventKind.TOOL
+            } else {
+                AgentEventKind.ERROR
+            },
+            result.summary ?: "Interactive command обновил состояние",
+            result.toJson().toString(),
+        )
+        persistAsync()
+        if (result.status == InteractiveSessionStatus.UNKNOWN) {
+            markUnknown(
+                (result.summary ?: "Interactive process state неизвестен") +
+                    "; автоматическое восстановление запрещено",
+            )
+        }
+        return result
+    }
+
+    override fun sendInteractiveInput(
+        sessionId: String,
+        input: String,
+    ): Boolean {
+        val sent = interactiveSession.sendInput(sessionId, input)
+        if (sent) {
+            append(
+                AgentEventKind.TOOL,
+                "Interactive input передан",
+                "session_id=" + sessionId.take(160),
+            )
+        }
+        return sent
+    }
+
+    override fun cancelInteractive() {
+        val sessionId = _interactiveState.value.sessionId
+        if (interactiveSession.cancelActive(sessionId)) {
+            _interactiveState.value = _interactiveState.value.copy(
+                status = InteractiveSessionStatus.CANCELLED,
+                summary = "Interactive process остановлен пользователем",
+                errorCode = null,
+                updatedAt = System.currentTimeMillis(),
+            )
+            append(
+                AgentEventKind.INFO,
+                "Interactive process остановлен пользователем",
+                "session_id=" + (sessionId ?: "unknown"),
+            )
+            persistAsync()
+        }
+    }
+
+    private fun interactiveFailure(
+        request: InteractiveCommandRequest,
+        summary: String,
+        errorCode: String,
+    ): InteractiveSessionState {
+        val result = InteractiveSessionState(
+            sessionId = request.sessionId ?: currentSessionId,
+            workspaceId = request.workspaceId,
+            executable = request.executable,
+            args = request.args.take(32),
+            cwd = request.cwd,
+            status = InteractiveSessionStatus.FAILED,
+            summary = summary,
+            errorCode = errorCode,
+        )
+        _interactiveState.value = result
+        append(AgentEventKind.ERROR, summary, result.toJson().toString())
+        return result
+    }
+
 
 
     override suspend fun startRuntime(): RuntimeState {
@@ -803,6 +955,7 @@ class AgentCore(context: Context) : AgentBridge {
         activeJob?.cancel()
         patchApplyJob?.cancel()
         patchApplyJob = null
+        interactiveSession.cancelActive()
         runtimeSupervisor.close()
         coreScope.cancel()
         closed = true
@@ -823,6 +976,7 @@ class AgentCore(context: Context) : AgentBridge {
         currentSessionId = sessionId
         _gitState.value = GitOperationState(sessionId = sessionId)
         _actionsState.value = ActionsOperationState(sessionId = sessionId)
+        _interactiveState.value = InteractiveSessionState(sessionId = sessionId)
         eventSequence = 0L
         invocationRecords.clear()
         decisionRecords.clear()
@@ -1335,6 +1489,20 @@ class AgentCore(context: Context) : AgentBridge {
         _gitState.value = GitOperationState(sessionId = restored.sessionId)
         _actionsState.value = restored.actionsState
             ?: ActionsOperationState(sessionId = restored.sessionId)
+        val restoredInteractive = restored.interactiveState
+        _interactiveState.value = if (
+            restoredInteractive?.status == InteractiveSessionStatus.STARTING ||
+            restoredInteractive?.status == InteractiveSessionStatus.RUNNING
+        ) {
+            restoredInteractive.copy(
+                status = InteractiveSessionStatus.UNKNOWN,
+                summary = "Interactive process не подтверждён после восстановления",
+                errorCode = "INTERACTIVE_RECOVERY_REQUIRED",
+                updatedAt = System.currentTimeMillis(),
+            )
+        } else {
+            restoredInteractive ?: InteractiveSessionState(sessionId = restored.sessionId)
+        }
         _patchRecovery.value = restored.patchRecovery
         _events.value = restored.events.takeLast(MAX_EVENTS)
 
@@ -1367,6 +1535,7 @@ class AgentCore(context: Context) : AgentBridge {
             recoveryReason = recoveryReason,
             patchRecovery = _patchRecovery.value,
             actionsState = _actionsState.value,
+            interactiveState = _interactiveState.value,
           )
     }
 
