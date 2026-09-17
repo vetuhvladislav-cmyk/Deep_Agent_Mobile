@@ -133,10 +133,9 @@ class AgentPresetStore(context: Context) {
             "Файл пресета превышает допустимый размер"
         }
         val root = JSONObject(serialized)
-        val preset = AgentPreset.fromJson(root).copy(
-            deepSeekBaseUrl = validateBaseUrl(
-                AgentPreset.fromJson(root).deepSeekBaseUrl,
-            ),
+        val parsedPreset = AgentPreset.fromJson(root)
+        val preset = parsedPreset.copy(
+            deepSeekBaseUrl = validateBaseUrl(parsedPreset.deepSeekBaseUrl),
         )
         val credentials = root.optJSONObject("credentials")
         return AgentPresetPayload(
