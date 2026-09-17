@@ -7,6 +7,7 @@ import dev.deepagent.mobile.agent.model.PermissionMode
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -111,7 +112,10 @@ class AgentPresetStore(context: Context) {
         deepSeekApiKey: String?,
         githubToken: String?,
     ): String {
-        val root = preset.toJson()
+        val normalizedPreset = preset.copy(
+            deepSeekBaseUrl = validateBaseUrl(preset.deepSeekBaseUrl),
+        )
+        val root = normalizedPreset.toJson()
         val credentials = JSONObject()
         normalizeSecret(deepSeekApiKey)?.let {
             credentials.put("deep_seek_api_key", encrypt(it))
@@ -129,7 +133,11 @@ class AgentPresetStore(context: Context) {
             "Файл пресета превышает допустимый размер"
         }
         val root = JSONObject(serialized)
-        val preset = AgentPreset.fromJson(root)
+        val preset = AgentPreset.fromJson(root).copy(
+            deepSeekBaseUrl = validateBaseUrl(
+                AgentPreset.fromJson(root).deepSeekBaseUrl,
+            ),
+        )
         val credentials = root.optJSONObject("credentials")
         return AgentPresetPayload(
             preset = preset,
@@ -191,6 +199,25 @@ class AgentPresetStore(context: Context) {
         return runCatching {
             decode(localFile.readText(StandardCharsets.UTF_8))
         }.getOrNull()
+    }
+
+    private fun validateBaseUrl(value: String): String {
+        val normalized = value.trim()
+        require(normalized.isNotBlank() && normalized.length <= 512) {
+            "DeepSeek base URL пустой или превышает лимит"
+        }
+        val url = runCatching { URL(normalized) }.getOrElse {
+            throw IllegalArgumentException("DeepSeek base URL имеет неверный формат")
+        }
+        require(
+            url.host.isNotBlank() &&
+                url.userInfo == null &&
+                url.query == null &&
+                url.ref == null
+        ) {
+            "DeepSeek base URL не должен содержать credentials, query или fragment"
+        }
+        return normalized
     }
 
     private fun encrypt(value: String): JSONObject {
