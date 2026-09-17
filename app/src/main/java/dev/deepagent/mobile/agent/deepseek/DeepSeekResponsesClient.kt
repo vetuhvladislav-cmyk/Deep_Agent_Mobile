@@ -17,6 +17,7 @@ import java.net.URL
 private const val DEEPSEEK_CONNECT_TIMEOUT_MS = 20_000
 private const val DEEPSEEK_READ_TIMEOUT_MS = 120_000
 private const val DEEPSEEK_MIN_TIMEOUT_MS = 1_000L
+private const val DEEPSEEK_API_HOST = "api.deepseek.com"
 private const val MAX_SSE_LINE_CHARS = 512 * 1024
 private const val MAX_SSE_STREAM_CHARS = 8 * 1024 * 1024
 
@@ -110,14 +111,18 @@ class DeepSeekResponsesClient {
         require(url.protocol.equals("https", ignoreCase = true)) {
             "DeepSeek endpoint должен использовать HTTPS"
         }
-        require(url.host.isNotBlank() && url.userInfo == null) {
-            "DeepSeek endpoint не должен содержать credentials"
-        }
-        require(url.query == null && url.ref == null) {
-            "DeepSeek base URL не должен содержать query или fragment"
+        require(
+            url.host.equals(DEEPSEEK_API_HOST, ignoreCase = true) &&
+                (url.port == -1 || url.port == 443) &&
+                url.userInfo == null &&
+                url.query == null &&
+                url.ref == null
+        ) {
+            "DeepSeek endpoint должен использовать разрешённый host без credentials"
         }
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
+            instanceFollowRedirects = false
             doOutput = true
             connectTimeout = DEEPSEEK_CONNECT_TIMEOUT_MS
             readTimeout = DEEPSEEK_READ_TIMEOUT_MS
