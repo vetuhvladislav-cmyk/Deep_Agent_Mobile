@@ -355,6 +355,7 @@ class AgentCore(context: Context) : AgentBridge {
 
     override fun cancel() {
         activeJob?.cancel()
+        deepSeek.cancelActive()
         patchApplyJob?.cancel()
         patchApplyJob = null
         interactiveSession.cancelActive()
@@ -1402,6 +1403,7 @@ class AgentCore(context: Context) : AgentBridge {
         activeJob?.cancel()
         patchApplyJob?.cancel()
         patchApplyJob = null
+        deepSeek.cancelActive()
         interactiveSession.close()
         runtimeSupervisor.close()
         imagePipeline.clear()
@@ -1541,7 +1543,7 @@ class AgentCore(context: Context) : AgentBridge {
         runDeepSeekAgent(request)
         if (_state.value.status != AgentSessionStatus.RUNNING) return
 
-        if (request.permission < PermissionMode.GITHUB_WRITE) {
+        if (!request.permission.allows(PermissionMode.GITHUB_WRITE)) {
             _state.value = _state.value.copy(
                 status = AgentSessionStatus.WAITING_APPROVAL,
             )
@@ -1584,12 +1586,7 @@ class AgentCore(context: Context) : AgentBridge {
     private suspend fun runDeepSeekAgent(request: AgentRequest) {
         val apiKey = readCredential(CredentialKind.DEEPSEEK_API_KEY).orEmpty()
         if (apiKey.isBlank()) {
-            append(
-                AgentEventKind.OUTPUT,
-                "Offline prototype: DeepSeek API key не задан",
-                "Локальный контракт и маршрутизация проверены; для реального ответа " +
-                    "укажите ключ DeepSeek в Agent Console.",
-            )
+            fail("DeepSeek API key не задан; выполнение остановлено")
             return
         }
 
@@ -1641,7 +1638,7 @@ class AgentCore(context: Context) : AgentBridge {
             )
             resolved
         } else {
-            request.image?.let { DeepSeekImage(it.dataUrl, it.detail) }
+            null
         }
 
 
