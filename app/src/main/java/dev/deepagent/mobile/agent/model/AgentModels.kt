@@ -483,7 +483,7 @@ data class ActionsRunRequest(
                     .forEach { (key, value) ->
                         put(
                             AgentRedactor.text(key, 96) ?: "input",
-                            AgentRedactor.text(value, 1_000),
+                            AgentRedactor.inputValue(key, value, 1_000),
                         )
                     }
             },
@@ -924,6 +924,18 @@ internal object AgentRedactor {
     private val knownTokenPattern = Regex(
         """\b(?:ghp_|github_pat_|sk-)[A-Za-z0-9_-]{8,}\b""",
     )
+
+    private val secretKeyPattern = Regex(
+        """(?i)(^|[_-])(key|token|secret|password|authorization|cookie|credential)($|[_-])""",
+    )
+
+    fun inputValue(key: String, value: String?, maxChars: Int): String? {
+        return if (secretKeyPattern.containsMatchIn(key)) {
+            "<redacted>"
+        } else {
+            text(value, maxChars)
+        }
+    }
 
     fun text(value: String?, maxChars: Int): String? {
         if (value == null) return null
