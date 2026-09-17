@@ -37,14 +37,15 @@ Deep Agent использует одну нативную оболочку, Agen
 
 ## Проверки
 
-Текущая проверка выполнена на ветке `codex/p1-a-controlled-write-git-pr`; `main` не изменялся.
+Последнее подтверждение выполнено на ветке `codex/p1-a-controlled-write-git-pr`; `main` не изменялся.
 
-- Commit [da200d9](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/da200d92cf2c79057bfaea543537a5a536d858a5): operation-bound `ApprovalToken`, patch/checkpoint и ZIP verifier tests, обязательная Actions correlation `operation_id + agent_session_id + commit SHA`.
-- [GitHub Actions run #25](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35267746916): `testDebugUnitTest`, `assembleDebugAndroidTest` и `assembleDebug` — успешно.
+- Последний проверенный baseline — commit [aa6b7a3](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/aa6b7a3427259b4afdecdf0c4ffa153caec190): `ProviderRegistry`, typed `AgentEvent` с bounded redacted payload, обязательная Actions correlation, ApprovalToken и patch/artifact provenance.
+- [GitHub Actions run #27](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35269039901): `testDebugUnitTest`, `assembleDebugAndroidTest` и `assembleDebug` — успешно.
+- После baseline в той же ветке добавлены bounded Planner/Evaluator и строгая host-policy для DeepSeek (коммиты [b056589](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/b056589b1b62c30592453da13a667b1b7ca3a0cb), [82b29ba](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/82b29ba00272a04e97b1410ba5b99e8dd1aafec4), [0e751ed](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/0e751eddd2cdcb427918da60566ffaee1f3bbae7), [2ab6f1f](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/2ab6f1f237f8b8bf84198fde276353ef327ee243)); эти последние изменения пока проверены статически, без новой компиляции и запуска тестов.
 - [Release v0.1.4](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/tag/v0.1.4) опубликован из проверенного commit [84ca54b](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/84ca54b36c6ffe1ac3fb45ffbd0903275bc99ba7).
 - [APK v0.1.4](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/download/v0.1.4/deep-agent-mobile-v0.1.4-test.apk) — 9 998 464 байта.
 - SHA-256: `c6b20d9db54e5350fbacff14a8fb7cc5cde96fd09684175c366833855c0be762`.
-- Android instrumentation APK компилируется, но instrumentation/device execution, реальный runtime и device lifecycle acceptance ещё не запускались; поэтому P0-A/P0-B/P0-C остаются `planned` до соответствующих exit criteria.
+- Android instrumentation APK ранее компилировался, но instrumentation/device execution, реальный runtime и device lifecycle acceptance ещё не запускались; поэтому P0-A/P0-B/P0-C остаются `planned` до соответствующих exit criteria.
 
 Для сравнения остаётся историческая проверка базовой ветки `main`.
 
