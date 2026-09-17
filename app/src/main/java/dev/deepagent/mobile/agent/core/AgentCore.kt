@@ -1118,7 +1118,8 @@ class AgentCore(context: Context) : AgentBridge {
             recordDecision(
                 kind = "ACTIONS",
                 state = "DENIED",
-                detail = "required=" + PermissionMode.GITHUB_WRITE.name,
+                detail = "operation_id=" + boundRequest.operationId +
+                    "; required=" + PermissionMode.GITHUB_WRITE.name,
             )
             append(AgentEventKind.ERROR, denied.summary.orEmpty(), denied.toJson().toString())
             return denied
@@ -1127,7 +1128,8 @@ class AgentCore(context: Context) : AgentBridge {
         recordDecision(
             kind = "ACTIONS",
             state = "APPROVED",
-            detail = "workflow dispatch; user_action=true",
+            detail = "operation_id=" + boundRequest.operationId +
+                "; workflow dispatch; user_action=true",
         )
         append(
             AgentEventKind.APPROVAL,
@@ -1643,6 +1645,13 @@ class AgentCore(context: Context) : AgentBridge {
         coreScope.cancel()
         closed = true
         persistOnClose()
+        lastGitResult = null
+        synchronized(gitOperationCache) {
+            gitOperationCache.clear()
+        }
+        synchronized(actionsOperationCache) {
+            actionsOperationCache.clear()
+        }
     }
 
     private suspend fun execute(request: AgentRequest) {
