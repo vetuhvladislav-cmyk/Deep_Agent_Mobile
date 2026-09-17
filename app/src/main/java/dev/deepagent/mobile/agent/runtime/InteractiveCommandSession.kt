@@ -289,6 +289,11 @@ class InteractiveCommandSession(
             return "Разрешены только read-only git status/diff/log"
         }
         val verb = request.args.first()
+        if (request.workspaceId.isNullOrBlank()) {
+            return "Для interactive command нужен workspace"
+        }
+        val root = workspaceManager.resolveRoot(request.workspaceId)
+            ?: return "Workspace не выбран или недоступен"
         var pathArgumentsStarted = false
         for (argument in request.args.drop(1)) {
             if (
@@ -306,7 +311,7 @@ class InteractiveCommandSession(
                 continue
             }
             if (pathArgumentsStarted) {
-                if (!isSafeRelativePath(argument)) {
+                if (!isSafeRelativePath(root, argument)) {
                     return "Аргументы выходят за пределы interactive policy"
                 }
                 continue
@@ -325,11 +330,6 @@ class InteractiveCommandSession(
         ) {
             return "Interactive input превышает лимит"
         }
-        if (request.workspaceId.isNullOrBlank()) {
-            return "Для interactive command нужен workspace"
-        }
-        val root = workspaceManager.resolveRoot(request.workspaceId)
-            ?: return "Workspace не выбран или недоступен"
         if (request.cwd.isBlank() || request.cwd.contains('\u0000')) {
             return "cwd имеет недопустимый формат"
         }
@@ -346,11 +346,23 @@ class InteractiveCommandSession(
         return null
     }
 
-    private fun isSafeRelativePath(value: String): Boolean {
+    private fun isSafeRelativePath(root: File, value: String): Boolean {
         val normalized = value.replace('\\', '/')
-        return !normalized.startsWith("/") &&
-            normalized.split('/').none { it.isBlank() || it == "." || it == ".." } &&
-            !WorkspacePathPolicy.isBlockedRelativePath(normalized)
+        if (
+            normalized.startsWith("/") ||
+            normalized.split('/').any { it.isBlank() || it == "." || it == ".." } ||
+            WorkspacePathPolicy.isBlockedRelativePath(normalized)
+        ) {
+            return false
+        }
+        val resolved = runCatching {
+            WorkspacePathPolicy.resolve(
+                root = root,
+                requestedPath = normalized,
+                requireExisting = false,
+            )
+        }.getOrNull() ?: return false
+        return !resolved.exists() || resolved.isFile
     }
 
     private fun publish(
@@ -465,6 +477,5 @@ class InteractiveCommandSession(
         const val MAX_SUMMARY_CHARS = 2_000
         const val MIN_TIMEOUT_MS = 1_000L
         const val MAX_TIMEOUT_MS = 120_000L
-        const val TERMINATE_GRACE_MS = 1_000L
     }
 }
