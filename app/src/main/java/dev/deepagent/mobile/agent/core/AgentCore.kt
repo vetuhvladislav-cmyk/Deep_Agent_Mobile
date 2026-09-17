@@ -136,6 +136,7 @@ class AgentCore(context: Context) : AgentBridge {
     private val journalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val submitMutex = Mutex()
     private val journalMutex = Mutex()
+    private val gitWriteMutex = Mutex()
     private val gitOperationCache = LinkedHashMap<String, GitOperationResult>()
 
     private val _state = MutableStateFlow(AgentSessionState())
@@ -2404,8 +2405,42 @@ class AgentCore(context: Context) : AgentBridge {
         description: String,
         action: suspend () -> GitOperationResult,
     ): GitOperationResult {
-        check(!closed) { "AgentCore уже закрыт" }
-        if (
+        gitWriteMutex.lock()
+        try {
+            check(!closed) { "AgentCore уже закрыт" }
+            val cached = cachedGitResult(operationId)
+            if (cached != null && cached.sessionId == currentSessionId) {
+                val replay = if (cached.operation == operation) {
+                    cached
+                } else {
+                    GitOperationResult(
+                        operation = operation,
+                        operationId = operationId,
+                        sessionId = currentSessionId,
+                        status = GitOperationStatus.FAILED,
+                        summary = "Operation id уже связан с другой Git-операцией",
+                        errorCode = "OPERATION_ID_REUSE",
+                    )
+                }
+                publishGitResult(replay)
+                return replay
+            }
+            if (
+                _gitState.value.status == GitOperationStatus.UNKNOWN &&
+                _gitState.value.sessionId == currentSessionId
+            ) {
+                val blocked = GitOperationResult(
+                    operation = operation,
+                    operationId = operationId,
+                    sessionId = currentSessionId,
+                    status = GitOperationStatus.UNKNOWN,
+                    summary = "Предыдущая Git-операция не подтверждена; сначала выполните re-check",
+                    errorCode = "GIT_RECHECK_REQUIRED",
+                )
+                publishGitResult(blocked)
+                return blocked
+            }
+            if (
             _state.value.status == AgentSessionStatus.RUNNING ||
             _state.value.status == AgentSessionStatus.WAITING_APPROVAL
         ) {
@@ -2425,6 +2460,7 @@ class AgentCore(context: Context) : AgentBridge {
         if (!permission.allows(requiredPermission)) {
             val result = GitOperationResult(
                 operation = operation,
+                operationId = operationId,
                 status = GitOperationStatus.FAILED,
                 summary = "Для операции нужен permission " + requiredPermission.name,
                 errorCode = "PERMISSION_REQUIRED",
@@ -2444,7 +2480,9 @@ class AgentCore(context: Context) : AgentBridge {
         recordDecision(
             kind = "GIT",
             state = "APPROVED",
-            detail = operation.name + "; user_action=true",
+            detail = operation.name +
+                "; operation_id=" + operationId +
+                "; user_action=true",
         )
         append(
             AgentEventKind.APPROVAL,
@@ -2466,6 +2504,7 @@ class AgentCore(context: Context) : AgentBridge {
         } catch (error: Exception) {
             GitOperationResult(
                 operation = operation,
+                operationId = operationId,
                 status = GitOperationStatus.FAILED,
                 summary = AgentRedactor.text(
                     error.message ?: "Git-операция завершилась с ошибкой",
@@ -2491,6 +2530,9 @@ class AgentCore(context: Context) : AgentBridge {
             )
         }
         return boundResult
+        } finally {
+            gitWriteMutex.unlock()
+        }
     }
 
     private fun publishGitResult(result: GitOperationResult) {
