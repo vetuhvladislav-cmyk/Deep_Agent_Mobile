@@ -4,6 +4,7 @@ import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.model.PatchRollbackResult
 import dev.deepagent.mobile.agent.model.PatchRollbackStatus
 import dev.deepagent.mobile.agent.workspace.WorkspaceIdentity
+import dev.deepagent.mobile.agent.workspace.WorkspacePathPolicy
 import org.json.JSONObject
 import java.io.File
 import java.nio.file.Files
@@ -897,34 +898,15 @@ class PatchEngine(
         return if (body.isEmpty()) emptyList() else body.split('\n')
     }
 
-    private fun resolvePath(root: File, path: String): File {
-        require(!path.startsWith("/") && !path.contains('\u0000')) {
-            "Недопустимый patch path"
-        }
-        val target = File(root, path).canonicalFile
-        val rootPath = root.canonicalFile.path
-        require(
-            target.path == rootPath ||
-                target.path.startsWith(rootPath + File.separator),
-        ) {
-            "Patch path выходит за границы workspace"
-        }
-        return target
-    }
+    private fun resolvePath(root: File, path: String): File =
+        WorkspacePathPolicy.resolve(
+            root = root,
+            requestedPath = path,
+            requireExisting = false,
+        )
 
-    private fun isSensitiveFile(file: File): Boolean {
-        val name = file.name.lowercase()
-        return name == ".env" ||
-            name.startsWith(".env.") ||
-            name.endsWith(".pem") ||
-            name.endsWith(".key") ||
-            name.endsWith(".p12") ||
-            name.endsWith(".jks") ||
-            name == "google-services.json" ||
-            name.contains("credential") ||
-            name.contains("secret") ||
-            name == "id_rsa"
-    }
+    private fun isSensitiveFile(file: File): Boolean =
+        WorkspacePathPolicy.isSensitiveFile(file)
 
     private fun sha256(bytes: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
