@@ -682,6 +682,7 @@ class GitHubPullRequestClient {
             connectTimeout = GITHUB_CONNECT_TIMEOUT_MS
             readTimeout = GITHUB_READ_TIMEOUT_MS
             useCaches = false
+            instanceFollowRedirects = false
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
             setRequestProperty("Authorization", "Bearer " + token)
