@@ -311,7 +311,7 @@ class GitRepositoryClient(
 
         val commitCommand = runGit(
             root,
-            listOf("commit", "--no-verify", "-m", message, "--"),
+            listOf("commit", "--no-verify", "--only", "-m", message, "--") + paths,
         )
         val after = captureFingerprint(workspaceId)
         val head = readHead(root)
@@ -420,11 +420,14 @@ class GitRepositoryClient(
             require(!value.startsWith("/") && !value.contains('\u0000')) {
                 "Недопустимый commit path"
             }
-            WorkspacePathPolicy.resolve(
+            val resolved = WorkspacePathPolicy.resolve(
                 root = root,
                 requestedPath = value,
                 requireExisting = false,
             )
+            require(!resolved.exists() || resolved.isFile) {
+                "Commit path должен указывать на файл"
+            }
             value
         }.distinct()
         require(normalized.isNotEmpty()) { "Для commit нужен хотя бы один path" }
@@ -602,9 +605,6 @@ class GitRepositoryClient(
             truncated = truncated,
         )
     }
-
-    private fun isSensitiveFile(file: File): Boolean =
-        WorkspacePathPolicy.isSensitiveFile(file)
 
     private fun safeText(value: String?, maxChars: Int): String {
         val withoutUrlCredentials = value.orEmpty().replace(URL_CREDENTIAL_PATTERN) { match ->
