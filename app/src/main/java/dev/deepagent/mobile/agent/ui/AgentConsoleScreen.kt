@@ -21,6 +21,7 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Card
@@ -375,7 +376,7 @@ fun AgentConsoleScreen(
                         OutlinedButton(
                             modifier = Modifier.agentControl(
                                 AgentUiContract.EXPORT_JOURNAL,
-                                "Экспортировать redacted journal",
+                                "Экспортировать очищенный журнал",
                             ),
                             onClick = {
                                 journalExportMessage = null
@@ -562,7 +563,7 @@ fun AgentConsoleScreen(
                                                 agent.selectWorkspace(candidate.id)
                                             }.onFailure {
                                                 workspaceError = it.message
-                                                    ?: "Не удалось выбрать workspace"
+                                                    ?: "Не удалось выбрать рабочую область"
                                             }
                                         }
                                     },
@@ -590,7 +591,7 @@ fun AgentConsoleScreen(
                                         agent.refreshWorkspace()
                                     }.onFailure {
                                         workspaceError = it.message
-                                            ?: "Не удалось обновить workspace catalog"
+                                            ?: "Не удалось обновить каталог рабочей области"
                                     }
                                 }
                             },
@@ -631,7 +632,7 @@ fun AgentConsoleScreen(
                                     },
                                 modifier = Modifier.agentControl(
                                     AgentUiContract.workspaceEntry(entry.path),
-                                    "Workspace entry " + entry.path,
+                                    "Элемент рабочей области " + entry.path,
                                 ),
                                 style = MaterialTheme.typography.labelSmall,
                             )
@@ -1021,7 +1022,7 @@ fun AgentConsoleScreen(
                         )
                         Text(
                             text = "Состояние: " + actionsState.status.name +
-                                " · run: " +
+                                " · запуск: " +
                                 (actionsState.runNumber?.toString()
                                     ?: actionsState.runId?.toString()
                                     ?: "нет"),
@@ -1120,7 +1121,7 @@ fun AgentConsoleScreen(
                             Button(
                                 modifier = Modifier.agentControl(
                                     AgentUiContract.RUN_ACTIONS,
-                                    "Запустить GitHub Actions явно",
+                                    "Явно запустить GitHub Actions",
                                 ),
                                 enabled = permission >= PermissionMode.GITHUB_WRITE &&
                                     githubToken.isNotBlank() &&
@@ -1159,8 +1160,8 @@ fun AgentConsoleScreen(
                             )
                         }
                         Text(
-                            text = "Dispatch/retry выполняется только явной кнопкой и требует GITHUB_WRITE. " +
-                                "Artifact сохраняется после проверки source SHA, sidecar checksum и provenance.",
+                            text = "Запуск и повтор выполняются только явной кнопкой и требуют GITHUB_WRITE. " +
+                                "Артефакт сохраняется после проверки исходного SHA, контрольной суммы и происхождения.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                         )
@@ -1455,7 +1456,7 @@ fun AgentConsoleScreen(
                         }
                         Text(
                             text = "Ветка, коммит и push требуют GITHUB_WRITE; PR требует PR_CREATE. " +
-                                "Нажатие кнопки является явным approval.",
+                                "Нажатие кнопки является явным подтверждением.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                         )
@@ -1484,7 +1485,7 @@ fun AgentConsoleScreen(
                     OutlinedButton(
                         modifier = Modifier.agentControl(
                             AgentUiContract.PERMISSION_MENU,
-                            "Выбрать permission текущей сессии",
+                            "Выбрать разрешение текущей сессии",
                         ),
                         onClick = { permissionMenuOpen = true },
                     ) {
@@ -1684,12 +1685,17 @@ fun AgentConsoleScreen(
                     enabled = state.status == AgentSessionStatus.RUNNING,
                     onClick = { agent.cancel() },
                 ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Stop,
+                        contentDescription = null,
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Text("Остановить")
                 }
                 TextButton(
                     modifier = Modifier.agentControl(
                         AgentUiContract.CLEAR_EVENTS,
-                        "Очистить live-события",
+                        "Очистить активные события",
                     ),
                     onClick = { agent.clearEvents() },
                 ) {
