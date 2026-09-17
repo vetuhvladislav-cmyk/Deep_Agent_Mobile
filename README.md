@@ -37,7 +37,7 @@ Deep Agent использует одну нативную оболочку, Agen
 
 ## Проверки
 
-Текущий статический аудит выполнен на ветке `codex/p1-a-controlled-write-git-pr`, HEAD `5f0b148343cf7ca5abc4fd9371282a12403ccc87`; `main` не изменялся. Для текущего рабочего diff Android build/test не запускались: в локальной среде отсутствуют Gradle wrapper JAR, Kotlin compiler, Android SDK build tools и ADB.
+Текущая визуальная адаптация и статический аудит выполнены на ветке `codex/p1-a-controlled-write-git-pr`, HEAD `d13117031d85690c0ee6736bc0049984e109f80f`; `main` не изменялся. Для текущего рабочего diff Android build/test не запускались по согласованному ограничению.
 
 Ниже приведена историческая проверка базовой ветки `main`, а не результат текущего diff.
 
