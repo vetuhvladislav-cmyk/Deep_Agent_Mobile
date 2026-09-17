@@ -181,7 +181,13 @@ class AgentPresetStore(context: Context) {
     }
 
     fun loadLocal(): AgentPresetPayload? {
-        if (!localFile.isFile) return null
+        if (
+            !localFile.isFile ||
+            localFile.length() <= 0L ||
+            localFile.length() > MAX_PRESET_BYTES
+        ) {
+            return null
+        }
         return runCatching {
             decode(localFile.readText(StandardCharsets.UTF_8))
         }.getOrNull()
@@ -251,6 +257,7 @@ class AgentPresetStore(context: Context) {
         const val GCM_TAG_BITS = 128
         const val LOCAL_FILE_NAME = "agent-preset.json"
         const val MAX_PRESET_CHARS = 64 * 1024
+        const val MAX_PRESET_BYTES = MAX_PRESET_CHARS.toLong()
         const val MAX_SECRET_CHARS = 4 * 1024
     }
 }
