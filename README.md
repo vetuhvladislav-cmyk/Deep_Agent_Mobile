@@ -37,7 +37,7 @@ Deep Agent использует одну нативную оболочку, Agen
 
 ## Проверки
 
-Текущая визуальная адаптация и статический аудит выполнены на ветке `codex/p1-a-controlled-write-git-pr`, HEAD `d13117031d85690c0ee6736bc0049984e109f80f`; `main` не изменялся. Для текущего рабочего diff Android build/test не запускались по согласованному ограничению.
+Текущая визуальная адаптация и статический hardening-аудит выполнены на ветке `codex/p1-a-controlled-write-git-pr`; `main` не изменялся. В проход вошли контракт UI, permission/path guards, cancellation/recovery, Git/Actions provenance и атомарная persistence. Для текущего рабочего diff Android build/test и GitHub Actions не запускались по согласованному ограничению.
 
 Ниже приведена историческая проверка базовой ветки `main`, а не результат текущего diff.
 
