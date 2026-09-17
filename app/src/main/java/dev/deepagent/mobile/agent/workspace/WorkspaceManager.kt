@@ -262,9 +262,7 @@ class WorkspaceManager(context: Context) {
                 copyDocumentTree(
                     resolver = resolver,
                     treeUri = uri,
-                    documentId = DocumentsContract.getTreeDocumentId(uri),
                     destination = temporaryDirectory,
-                    relativeParent = "",
                     budget = budget,
                 )
             } else {
