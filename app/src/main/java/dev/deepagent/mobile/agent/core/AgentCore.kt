@@ -881,7 +881,7 @@ class AgentCore(context: Context) : AgentBridge {
 
 
 
-    override suspend fun startRuntime(): RuntimeState {
+    override suspend fun startRuntime(requestedPermission: PermissionMode): RuntimeState {
         check(!closed) { "AgentCore уже закрыт" }
         if (_state.value.status == AgentSessionStatus.RUNNING) {
             val busy = RuntimeState(
@@ -894,7 +894,7 @@ class AgentCore(context: Context) : AgentBridge {
             append(AgentEventKind.ERROR, busy.summary.orEmpty(), busy.toJson().toString())
             return busy
         }
-        val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
+        val permission = requestedPermission
         if (permission < PermissionMode.LOCAL_WRITE) {
             val denied = RuntimeState(
                 status = RuntimeStatus.FAILED,
