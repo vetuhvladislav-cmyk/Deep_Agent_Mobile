@@ -6,7 +6,10 @@ import dev.deepagent.mobile.agent.model.ExecutionTarget
 import dev.deepagent.mobile.agent.model.PermissionMode
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.KeyStore
 import java.util.UUID
 import javax.crypto.Cipher
@@ -149,15 +152,31 @@ class AgentPresetStore(context: Context) {
             "Не удалось создать каталог локальных пресетов"
         }
         try {
-            temporary.writeText(payload, StandardCharsets.UTF_8)
-            if (!temporary.renameTo(localFile)) {
-                localFile.delete()
-                check(temporary.renameTo(localFile)) {
-                    "Не удалось сохранить локальный пресет"
-                }
+            FileOutputStream(temporary).use { output ->
+                output.write(payload.toByteArray(StandardCharsets.UTF_8))
+                output.flush()
+                output.fd.sync()
             }
+            moveAtomically(temporary, localFile)
         } finally {
             temporary.delete()
+        }
+    }
+
+    private fun moveAtomically(source: File, target: File) {
+        try {
+            Files.move(
+                source.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: Exception) {
+            Files.move(
+                source.toPath(),
+                target.toPath(),
+                StandardCopyOption.REPLACE_EXISTING,
+            )
         }
     }
 
