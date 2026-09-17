@@ -36,7 +36,10 @@ jobs:
       - name: Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
 
       - name: Кэш Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -88,7 +91,10 @@ jobs:
       - name: Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
 
       - name: Кэш Gradle
         uses: gradle/actions/setup-gradle@v4

@@ -5,9 +5,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+
+private const val DEEPSEEK_CONNECT_TIMEOUT_MS = 20_000
+private const val DEEPSEEK_READ_TIMEOUT_MS = 120_000
+private const val MAX_SSE_LINE_CHARS = 512 * 1024
+private const val MAX_SSE_STREAM_CHARS = 8 * 1024 * 1024
 
 data class DeepSeekImage(
     val dataUrl: String,
@@ -77,11 +83,15 @@ class DeepSeekResponsesClient {
         require(request.model.isNotBlank()) { "DeepSeek model is empty" }
 
         val endpoint = request.baseUrl.trimEnd('/') + "/responses"
-        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+        val url = URL(endpoint)
+        require(url.protocol.equals("https", ignoreCase = true)) {
+            "DeepSeek endpoint должен использовать HTTPS"
+        }
+        val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
-            connectTimeout = 20_000
-            readTimeout = 0
+            connectTimeout = DEEPSEEK_CONNECT_TIMEOUT_MS
+            readTimeout = DEEPSEEK_READ_TIMEOUT_MS
             useCaches = false
             setRequestProperty("Authorization", "Bearer " + request.apiKey)
             setRequestProperty("Content-Type", "application/json")
@@ -105,6 +115,7 @@ class DeepSeekResponsesClient {
             connection.inputStream.bufferedReader().use { reader ->
                 var eventName: String? = null
                 val data = StringBuilder()
+                var streamChars = 0
 
                 fun dispatchEvent() {
                     val currentEvent = eventName
@@ -136,11 +147,14 @@ class DeepSeekResponsesClient {
                                 ?.let { onEvent(DeepSeekStreamEvent.ToolArgumentsDelta(it)) }
                         }
 
-                        "response.completed",
-                        "response.incomplete",
-                        -> {
+                        "response.completed" -> {
                             completedResponse = json?.optJSONObject("response") ?: json
                             onEvent(DeepSeekStreamEvent.Completed(completedResponse))
+                        }
+
+                        "response.incomplete" -> {
+                            failure = "DeepSeek response incomplete"
+                            onEvent(DeepSeekStreamEvent.Failed(failure.orEmpty()))
                         }
 
                         "response.failed" -> {
@@ -156,7 +170,11 @@ class DeepSeekResponsesClient {
                 }
 
                 while (true) {
-                    val line = reader.readLine() ?: break
+                    val line = readSseLine(reader, MAX_SSE_LINE_CHARS) ?: break
+                    streamChars += line.length + 1
+                    require(streamChars <= MAX_SSE_STREAM_CHARS) {
+                        "DeepSeek SSE response exceeds the limit"
+                    }
                     when {
                         line.startsWith("event:") -> {
                             eventName = line.removePrefix("event:").trim()
@@ -165,6 +183,9 @@ class DeepSeekResponsesClient {
                         line.startsWith("data:") -> {
                             if (data.isNotEmpty()) data.append('\n')
                             data.append(line.removePrefix("data:").trimStart())
+                            require(data.length <= MAX_SSE_LINE_CHARS) {
+                                "DeepSeek SSE event exceeds the limit"
+                            }
                         }
 
                         line.isBlank() -> dispatchEvent()
@@ -187,6 +208,31 @@ class DeepSeekResponsesClient {
             functionCalls = parseFunctionCalls(completedResponse),
             failure = failure,
         )
+    }
+
+    private fun readSseLine(reader: BufferedReader, maxChars: Int): String? {
+        val line = StringBuilder()
+        var hasCharacters = false
+        while (true) {
+            val code = reader.read()
+            if (code < 0) return if (hasCharacters) line.toString() else null
+            hasCharacters = true
+            when (code) {
+                '\n'.code -> return line.toString()
+                '\r'.code -> {
+                    reader.mark(1)
+                    val next = reader.read()
+                    if (next >= 0 && next != '\n'.code) reader.reset()
+                    return line.toString()
+                }
+                else -> {
+                    if (line.length >= maxChars) {
+                        throw IOException("DeepSeek SSE line exceeds the limit")
+                    }
+                    line.append(code.toChar())
+                }
+            }
+        }
     }
 
     private fun buildRequestBody(request: DeepSeekRequest): JSONObject {

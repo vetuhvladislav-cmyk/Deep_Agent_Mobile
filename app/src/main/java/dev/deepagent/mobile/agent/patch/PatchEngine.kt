@@ -11,6 +11,8 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
 
+private const val MAX_DIFF_CHARS = 32 * 1024
+
 data class PatchPreview(
     val path: String,
     val workspaceFingerprint: String,
@@ -22,11 +24,14 @@ data class PatchPreview(
     val createsFile: Boolean,
 ) {
     fun toJson(): JSONObject = JSONObject()
-        .put("path", path)
-        .put("workspace_fingerprint", workspaceFingerprint)
-        .put("old_sha256", oldSha256)
-        .put("new_sha256", newSha256)
-        .put("unified_diff", unifiedDiff)
+        .put("path", AgentRedactor.text(path, 512))
+        .put(
+            "workspace_fingerprint",
+            AgentRedactor.text(workspaceFingerprint, 80),
+        )
+        .put("old_sha256", AgentRedactor.text(oldSha256, 80))
+        .put("new_sha256", AgentRedactor.text(newSha256, 80))
+        .put("unified_diff", AgentRedactor.text(unifiedDiff, MAX_DIFF_CHARS))
         .put("creates_file", createsFile)
 }
 
@@ -141,13 +146,16 @@ data class PatchApplyResult(
     val checkpointPath: String?,
 ) {
     fun toJson(): JSONObject = JSONObject()
-        .put("operation_id", operationId)
-        .put("path", preview.path)
-        .put("old_sha256", preview.oldSha256)
-        .put("new_sha256", preview.newSha256)
-        .put("checkpoint", checkpointFileName)
-        .put("workspace_fingerprint", preview.workspaceFingerprint)
-        .put("unified_diff", preview.unifiedDiff)
+        .put("operation_id", AgentRedactor.text(operationId, 80))
+        .put("path", AgentRedactor.text(preview.path, 512))
+        .put("old_sha256", AgentRedactor.text(preview.oldSha256, 80))
+        .put("new_sha256", AgentRedactor.text(preview.newSha256, 80))
+        .put("checkpoint", AgentRedactor.text(checkpointFileName, 512))
+        .put(
+            "workspace_fingerprint",
+            AgentRedactor.text(preview.workspaceFingerprint, 80),
+        )
+        .put("unified_diff", AgentRedactor.text(preview.unifiedDiff, MAX_DIFF_CHARS))
 }
 
 /**
@@ -946,6 +954,5 @@ class PatchEngine(
         const val MAX_CHECKPOINT_BYTES = 64 * 1024
         const val MAX_ERROR_CHARS = 4_000
         const val MAX_PATCH_CHARS = 2 * 1024 * 1024
-        const val MAX_DIFF_CHARS = 32 * 1024
     }
 }

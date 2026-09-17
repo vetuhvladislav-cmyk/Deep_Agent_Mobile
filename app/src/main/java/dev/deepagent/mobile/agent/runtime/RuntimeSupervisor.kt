@@ -4,6 +4,8 @@ import dev.deepagent.mobile.agent.model.RuntimeState
 import dev.deepagent.mobile.agent.model.RuntimeStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -204,8 +206,19 @@ class RuntimeSupervisor(
                     ),
                 )
                 _state.value
+            } catch (timeout: TimeoutCancellationException) {
+                rollback(
+                    sessionId = sessionId,
+                    manifest = manifest,
+                    summary = "Запуск runtime превысил timeout",
+                    errorCode = "RUNTIME_START_TIMEOUT",
+                )
             } catch (cancelled: CancellationException) {
-                runCatching { provider.stop() }
+                runCatching {
+                    withContext(NonCancellable) {
+                        withTimeout(STOP_TIMEOUT_MS) { provider.stop() }
+                    }
+                }
                 publish(
                     RuntimeState(
                         status = RuntimeStatus.EMPTY,
@@ -246,6 +259,13 @@ class RuntimeSupervisor(
                         updatedAt = System.currentTimeMillis(),
                     ).also { _state.value = it }
                 }
+            } catch (timeout: TimeoutCancellationException) {
+                rollback(
+                    sessionId = sessionId ?: _state.value.sessionId,
+                    manifest = RuntimeManifest.loopback(),
+                    summary = "Readiness probe превысил timeout",
+                    errorCode = "RUNTIME_HEALTH_TIMEOUT",
+                )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -295,6 +315,16 @@ class RuntimeSupervisor(
                     )
                     _state.value
                 }
+            } catch (timeout: TimeoutCancellationException) {
+                publish(
+                    _state.value.copy(
+                        status = RuntimeStatus.FAILED,
+                        summary = "Остановка runtime превысила timeout",
+                        errorCode = "RUNTIME_STOP_TIMEOUT",
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+                _state.value
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -335,7 +365,14 @@ class RuntimeSupervisor(
                 errorCode = errorCode,
             ),
         )
-        runCatching { withTimeout(STOP_TIMEOUT_MS) { provider.stop() } }
+        try {
+            withTimeout(STOP_TIMEOUT_MS) { provider.stop() }
+        } catch (_: TimeoutCancellationException) {
+            // The supervisor still moves to EMPTY; a later start must perform
+            // a fresh install/start/probe sequence instead of trusting state.
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        }
         return RuntimeState(
             status = RuntimeStatus.EMPTY,
             sessionId = sessionId,

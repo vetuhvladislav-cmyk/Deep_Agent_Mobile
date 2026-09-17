@@ -12,6 +12,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
+import java.nio.file.Files
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -309,21 +310,11 @@ class GitRepositoryClient(
 
         val commitCommand = runGit(
             root,
-            listOf("commit", "-m", message, "--"),
+            listOf("commit", "--no-verify", "-m", message, "--"),
         )
         val after = captureFingerprint(workspaceId)
         val head = readHead(root)
-        val status = if (
-            commitCommand.startError == null &&
-            !commitCommand.timedOut &&
-            commitCommand.exitCode == 0 &&
-            after != null &&
-            head?.sha != null
-        ) {
-            GitOperationStatus.SUCCEEDED
-        } else {
-            GitOperationStatus.UNKNOWN
-        }
+        val status = writeStatus(commitCommand, after, head)
         GitOperationResult(
             operation = GitOperation.COMMIT,
             status = status,
@@ -336,12 +327,7 @@ class GitRepositoryClient(
                 commitCommand.startError ?: commitCommand.output,
                 MAX_COMMAND_OUTPUT_CHARS,
             ),
-            errorCode = when {
-                commitCommand.startError != null -> "GIT_UNAVAILABLE"
-                commitCommand.timedOut -> "GIT_COMMIT_UNKNOWN"
-                status == GitOperationStatus.UNKNOWN -> "GIT_COMMIT_UNKNOWN"
-                else -> null
-            },
+            errorCode = writeErrorCode(commitCommand, status, "GIT_COMMIT_FAILED"),
             branch = head?.branch,
             headSha = head?.sha,
             workspaceFingerprintBefore = before,
@@ -371,21 +357,18 @@ class GitRepositoryClient(
 
         val command = runGit(
             root,
-            listOf("push", "--porcelain", "--set-upstream", remote, branch),
+            listOf(
+                "push",
+                "--no-verify",
+                "--porcelain",
+                "--set-upstream",
+                remote,
+                branch,
+            ),
         )
         val after = captureFingerprint(workspaceId)
         val head = readHead(root)
-        val status = if (
-            command.startError == null &&
-            !command.timedOut &&
-            command.exitCode == 0 &&
-            after != null &&
-            head?.sha != null
-        ) {
-            GitOperationStatus.SUCCEEDED
-        } else {
-            GitOperationStatus.UNKNOWN
-        }
+        val status = writeStatus(command, after, head)
         GitOperationResult(
             operation = GitOperation.PUSH,
             status = status,
@@ -398,12 +381,7 @@ class GitRepositoryClient(
                 command.startError ?: command.output,
                 MAX_COMMAND_OUTPUT_CHARS,
             ),
-            errorCode = when {
-                command.startError != null -> "GIT_UNAVAILABLE"
-                command.timedOut -> "GIT_PUSH_UNKNOWN"
-                status == GitOperationStatus.UNKNOWN -> "GIT_PUSH_UNKNOWN"
-                else -> null
-            },
+            errorCode = writeErrorCode(command, status, "GIT_PUSH_FAILED"),
             branch = head?.branch ?: branch,
             headSha = head?.sha,
             workspaceFingerprintBefore = before,
@@ -429,16 +407,20 @@ class GitRepositoryClient(
     }
 
     private fun isGitRepository(root: File): Boolean {
-        return File(root, ".git").exists()
+        val metadata = File(root, ".git")
+        return metadata.isDirectory && !Files.isSymbolicLink(metadata.toPath())
     }
 
     private fun validatePaths(root: File, paths: List<String>): List<String> {
         require(paths.isNotEmpty()) { "Для commit нужен хотя бы один path" }
         val normalized = paths.map { path ->
-            val value = path.trim()
+            val value = path.trim().replace('\\', '/')
             require(value.isNotBlank()) { "Commit path не может быть пустым" }
             require(!value.startsWith("/") && !value.contains('\u0000')) {
                 "Недопустимый commit path"
+            }
+            require(!containsSymbolicLink(root, value)) {
+                "Commit path содержит symbolic link"
             }
             val target = File(root, value).canonicalFile
             val rootPath = root.canonicalFile.path
@@ -455,6 +437,21 @@ class GitRepositoryClient(
         }.distinct()
         require(normalized.isNotEmpty()) { "Для commit нужен хотя бы один path" }
         return normalized
+    }
+
+    private fun containsSymbolicLink(root: File, relativePath: String): Boolean {
+        var cursor = root.canonicalFile.toPath()
+        relativePath.split('/').forEach { part ->
+            when (part) {
+                "", "." -> Unit
+                ".." -> cursor = cursor.parent ?: cursor
+                else -> {
+                    cursor = cursor.resolve(part)
+                    if (Files.isSymbolicLink(cursor)) return true
+                }
+            }
+        }
+        return false
     }
 
     private fun validateRef(value: String, label: String): String {
@@ -557,12 +554,21 @@ class GitRepositoryClient(
     private fun runGit(root: File, arguments: List<String>): CommandResult {
         val executor = Executors.newSingleThreadExecutor()
         val process = try {
-            ProcessBuilder(listOf("git") + arguments)
+            ProcessBuilder(
+                listOf(
+                    "git",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "core.fsmonitor=false",
+                ) + arguments,
+            )
                 .directory(root)
                 .redirectErrorStream(true)
                 .apply {
                     environment()["GIT_OPTIONAL_LOCKS"] = "0"
                     environment()["GIT_CONFIG_NOSYSTEM"] = "1"
+                    environment()["GIT_CONFIG_GLOBAL"] = "/dev/null"
                     environment()["GIT_TERMINAL_PROMPT"] = "0"
                     environment()["GCM_INTERACTIVE"] = "Never"
                 }
@@ -761,6 +767,28 @@ class GitHubPullRequestClient {
             if (!SHA_PATTERN.matches(headSha.orEmpty())) {
                 return@withContext GitHubPullRequestResult.Failed(
                     "GitHub PR response не содержит подтверждённый head SHA",
+                    "GITHUB_PR_UNKNOWN",
+                )
+            }
+            val responseHead = response.optJSONObject("head")
+            val responseHeadRef = responseHead?.optString("ref")?.trim().orEmpty()
+            val responseHeadLabel = responseHead?.optString("label")?.trim().orEmpty()
+            val responseBaseRef = response.optJSONObject("base")
+                ?.optString("ref")
+                ?.trim()
+                .orEmpty()
+            if (
+                responseHeadRef != validated.head &&
+                    responseHeadLabel != validated.head
+            ) {
+                return@withContext GitHubPullRequestResult.Failed(
+                    "GitHub PR response не подтвердил head ref; повтор запрещён до re-check",
+                    "GITHUB_PR_UNKNOWN",
+                )
+            }
+            if (responseBaseRef != validated.base) {
+                return@withContext GitHubPullRequestResult.Failed(
+                    "GitHub PR response не подтвердил base ref; повтор запрещён до re-check",
                     "GITHUB_PR_UNKNOWN",
                 )
             }

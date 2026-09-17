@@ -12,6 +12,7 @@ import dev.deepagent.mobile.agent.model.ImageAnalysisStatus
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -145,22 +146,28 @@ class ImageAnalysisPipeline(context: Context) {
             val asset = synchronized(lock) {
                 activeAsset?.takeIf { it.assetId == assetId }
             } ?: return@withContext null
-            if (!asset.file.isFile || asset.file.length() != asset.sizeBytes) {
-                return@withContext null
+            try {
+                if (!asset.file.isFile || asset.file.length() != asset.sizeBytes) {
+                    return@withContext null
+                }
+                val bytes = asset.file.readBytes()
+                if (bytes.size.toLong() != asset.sizeBytes) return@withContext null
+                val checksum = MessageDigest.getInstance("SHA-256")
+                    .digest(bytes)
+                    .toHex()
+                if (!checksum.equals(asset.checksum, ignoreCase = true)) {
+                    return@withContext null
+                }
+                DeepSeekImage(
+                    dataUrl = "data:" + asset.mediaType + ";base64," +
+                        Base64.encodeToString(bytes, Base64.NO_WRAP),
+                    detail = "auto",
+                )
+            } catch (_: IOException) {
+                null
+            } catch (_: SecurityException) {
+                null
             }
-            val bytes = asset.file.readBytes()
-            if (bytes.size.toLong() != asset.sizeBytes) return@withContext null
-            val checksum = MessageDigest.getInstance("SHA-256")
-                .digest(bytes)
-                .toHex()
-            if (!checksum.equals(asset.checksum, ignoreCase = true)) {
-                return@withContext null
-            }
-            DeepSeekImage(
-                dataUrl = "data:" + asset.mediaType + ";base64," +
-                    Base64.encodeToString(bytes, Base64.NO_WRAP),
-                detail = "auto",
-            )
         }
 
     fun clear(assetId: String? = null) {
@@ -220,6 +227,9 @@ class ImageAnalysisPipeline(context: Context) {
         }
         require(detectedType in SUPPORTED_MEDIA_TYPES) {
             "Сигнатура изображения не поддерживается"
+        }
+        require(normalized !in SUPPORTED_MEDIA_TYPES || normalized == detectedType) {
+            "MIME не совпадает с сигнатурой изображения"
         }
     }
 

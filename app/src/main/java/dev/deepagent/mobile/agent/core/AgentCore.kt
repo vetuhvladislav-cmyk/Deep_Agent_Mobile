@@ -79,6 +79,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -123,6 +124,7 @@ class AgentCore(context: Context) : AgentBridge {
     private val sessionStore = SessionStore(appContext)
     private val coreScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val journalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val submitMutex = Mutex()
     private val journalMutex = Mutex()
 
     private val _state = MutableStateFlow(AgentSessionState())
@@ -195,28 +197,32 @@ class AgentCore(context: Context) : AgentBridge {
     }
 
     override suspend fun submit(request: AgentRequest) {
-        check(!closed) { "AgentCore уже закрыт" }
-        if (
-            !request.deepSeekApiKey.isNullOrBlank() ||
-            !request.githubToken.isNullOrBlank()
-        ) {
-            configureCredentials(
-                deepSeekApiKey = request.deepSeekApiKey,
-                githubToken = request.githubToken,
+        val job = submitMutex.withLock {
+            check(!closed) { "AgentCore уже закрыт" }
+            validateRequest(request)
+            val sanitizedRequest = request.copy(
+                deepSeekApiKey = null,
+                githubToken = null,
             )
-        }
-        val sanitizedRequest = request.copy(
-            deepSeekApiKey = null,
-            githubToken = null,
-        )
-        activeJob?.cancel()
-        patchApplyJob?.cancel()
-        patchApplyJob = null
+            activeJob?.cancelAndJoin()
+            patchApplyJob?.cancelAndJoin()
+            activeJob = null
+            patchApplyJob = null
 
-        val job = coreScope.launch {
-            execute(sanitizedRequest)
+            if (
+                !request.deepSeekApiKey.isNullOrBlank() ||
+                !request.githubToken.isNullOrBlank()
+            ) {
+                configureCredentials(
+                    deepSeekApiKey = request.deepSeekApiKey,
+                    githubToken = request.githubToken,
+                )
+            }
+
+            coreScope.launch {
+                execute(sanitizedRequest)
+            }.also { activeJob = it }
         }
-        activeJob = job
 
         try {
             job.join()
@@ -527,6 +533,8 @@ class AgentCore(context: Context) : AgentBridge {
             _workspace.value = selected?.toAgentSnapshot()
             _workspaceCatalog.value = next
             next
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
             val failed = _workspaceCatalog.value.copy(
                 status = WorkspaceCatalogStatus.FAILED,
@@ -738,6 +746,12 @@ class AgentCore(context: Context) : AgentBridge {
                 "Сначала завершите текущую сессию Agent Core",
                 "SESSION_BUSY",
             )
+        }
+        if (
+            _interactiveState.value.status == InteractiveSessionStatus.STARTING ||
+            _interactiveState.value.status == InteractiveSessionStatus.RUNNING
+        ) {
+            return _interactiveState.value
         }
         val runtime = runtimeSupervisor.probe(currentSessionId)
         _runtimeState.value = runtime
@@ -1406,7 +1420,8 @@ class AgentCore(context: Context) : AgentBridge {
 
         val target = resolveTarget(request)
         val workspaceId = request.workspaceId ?: workspaceManager.current.value?.id
-        val sessionId = request.sessionId ?: UUID.randomUUID().toString()
+        val sessionId = request.sessionId?.trim()?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString()
         val startedAt = System.currentTimeMillis()
         currentSessionId = sessionId
         _gitState.value = GitOperationState(sessionId = sessionId)
@@ -1483,6 +1498,22 @@ class AgentCore(context: Context) : AgentBridge {
             append(AgentEventKind.INFO, "Сессия отменена")
         } catch (error: Exception) {
             fail(error.message ?: "Неизвестная ошибка Agent Core")
+        }
+    }
+
+    private fun validateRequest(request: AgentRequest) {
+        val task = request.task.trim()
+        require(task.isNotBlank()) { "Задача не может быть пустой" }
+        require(task.length <= SessionRequestSummary.MAX_TASK_CHARS) {
+            "Задача превышает лимит " + SessionRequestSummary.MAX_TASK_CHARS + " символов"
+        }
+        request.sessionId?.let { sessionId ->
+            require(SESSION_ID_PATTERN.matches(sessionId.trim())) {
+                "sessionId имеет недопустимый формат"
+            }
+        }
+        require(request.image == null) {
+            "Raw image attachment отключён; используйте AgentBridge.prepareImage"
         }
     }
 
@@ -2437,6 +2468,7 @@ class AgentCore(context: Context) : AgentBridge {
         const val MAX_EVENT_MESSAGE_CHARS = 8_000
         const val MAX_EVENT_DETAIL_CHARS = 12_000
         const val MAX_ERROR_CHARS = 4_000
+        val SESSION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
         val SHA_PATTERN = Regex("[A-Fa-f0-9]{40,64}")
     }
 }

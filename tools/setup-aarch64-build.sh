@@ -19,8 +19,8 @@ set -euo pipefail
 TOOLS_DIR="${DEEP_AGENT_TOOLS:-$HOME/android-tools}"
 SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/android-sdk}}"
 BUILD_TOOLS_VERSION="${BUILD_TOOLS_VERSION:-35.0.0}"
-UBUNTU_ARCHIVE="${UBUNTU_ARCHIVE:-http://archive.ubuntu.com/ubuntu/pool/main}"
-UBUNTU_PORTS="${UBUNTU_PORTS:-http://ports.ubuntu.com/ubuntu-ports/pool/universe/q/qemu}"
+UBUNTU_ARCHIVE="${UBUNTU_ARCHIVE:-https://archive.ubuntu.com/ubuntu/pool/main}"
+UBUNTU_PORTS="${UBUNTU_PORTS:-https://ports.ubuntu.com/ubuntu-ports/pool/universe/q/qemu}"
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 

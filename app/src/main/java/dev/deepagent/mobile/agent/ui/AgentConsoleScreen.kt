@@ -930,6 +930,7 @@ fun AgentConsoleScreen(
                                     "Запустить разрешённую интерактивную git-команду",
                                 ),
                                 enabled = runtimeState.status == RuntimeStatus.READY &&
+                                    interactiveState.status != InteractiveSessionStatus.STARTING &&
                                     interactiveState.status != InteractiveSessionStatus.RUNNING &&
                                     state.status != AgentSessionStatus.RUNNING &&
                                     pendingApproval == null,
@@ -958,7 +959,8 @@ fun AgentConsoleScreen(
                                     "Остановить интерактивную команду",
                                 ),
                                 enabled = interactiveState.status ==
-                                    InteractiveSessionStatus.RUNNING,
+                                    InteractiveSessionStatus.STARTING ||
+                                    interactiveState.status == InteractiveSessionStatus.RUNNING,
                                 onClick = { agent.cancelInteractive() },
                             ) {
                                 Text("Остановить")

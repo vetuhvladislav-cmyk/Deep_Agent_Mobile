@@ -126,7 +126,13 @@ class GitHubActionsClient {
         var current = baseState
         fun publish(next: ActionsOperationState): ActionsOperationState {
             current = next.copy(updatedAt = System.currentTimeMillis())
-            runCatching { onState(current) }
+            try {
+                onState(current)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // A diagnostic UI callback must not change provider state.
+            }
             return current
         }
 
@@ -526,15 +532,31 @@ class GitHubActionsClient {
         var payload: Pair<String, ByteArray>? = null
         val checksums = mutableMapOf<String, String>()
         var provenanceSha: String? = null
+        var entryCount = 0
+        var totalEntryBytes = 0L
         ZipInputStream(ByteArrayInputStream(archive)).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
+                entryCount += 1
+                if (entryCount > MAX_ARCHIVE_ENTRIES) {
+                    throw ArtifactVerificationException(
+                        "Artifact содержит слишком много ZIP entries",
+                        "ARTIFACT_ENTRY_COUNT_LIMIT",
+                    )
+                }
                 requireSafeArchivePath(entry.name)
                 if (entry.isDirectory) {
                     zip.closeEntry()
                     continue
                 }
                 val bytes = readEntryLimited(zip, MAX_ENTRY_BYTES)
+                totalEntryBytes += bytes.size.toLong()
+                if (totalEntryBytes > MAX_TOTAL_ENTRY_BYTES) {
+                    throw ArtifactVerificationException(
+                        "Суммарный распакованный размер artifact превышает лимит",
+                        "ARTIFACT_TOTAL_ENTRY_BYTES_LIMIT",
+                    )
+                }
                 val lower = entry.name.lowercase()
                 when {
                     lower.endsWith(".apk") || lower.endsWith(".aab") -> {
@@ -652,18 +674,31 @@ class GitHubActionsClient {
         ) {
             return "Репозиторий должен иметь формат owner/name"
         }
+        val normalizedWorkflow = workflow.trim()
         if (
-            workflow.isBlank() ||
-            workflow.length > MAX_IDENTIFIER_CHARS ||
-            workflow.contains('\u0000') ||
-            workflow.contains(' ')
+            normalizedWorkflow.isBlank() ||
+            normalizedWorkflow.length > MAX_IDENTIFIER_CHARS ||
+            normalizedWorkflow.contains('\u0000') ||
+            normalizedWorkflow.split('/').any { part ->
+                part.isBlank() ||
+                    part == "." ||
+                    part == ".." ||
+                    !WORKFLOW_PART_PATTERN.matches(part)
+            }
         ) {
-            return "Нужен workflow без пробелов"
+            return "Нужен корректный workflow id или путь"
         }
+        val normalizedRef = ref.trim()
         if (
-            ref.isBlank() ||
-            ref.length > MAX_IDENTIFIER_CHARS ||
-            ref.contains('\u0000')
+            normalizedRef.isBlank() ||
+            normalizedRef.length > MAX_IDENTIFIER_CHARS ||
+            normalizedRef.startsWith('/') ||
+            normalizedRef.endsWith('/') ||
+            normalizedRef.contains("..") ||
+            normalizedRef.contains("//") ||
+            normalizedRef.contains("@{") ||
+            normalizedRef.any { it.isWhitespace() || it == '\u0000' } ||
+            !normalizedRef.all { it.isLetterOrDigit() || it in "._/@-" }
         ) {
             return "Нужен ref"
         }
@@ -945,7 +980,8 @@ class GitHubActionsClient {
     ) {
         fun errorSuffix(): String =
             if (status in 200..299 || body.isEmpty()) "" else ": " +
-                AgentRedactor.text(body.toString(Charsets.UTF_8), MAX_ERROR_CHARS).orEmpty()    }
+                AgentRedactor.text(body.toString(Charsets.UTF_8), MAX_ERROR_CHARS).orEmpty()
+    }
 
     private data class DownloadResponse(
         val bytes: ByteArray,
@@ -1015,8 +1051,24 @@ class GitHubActionsClient {
         return output.toByteArray()
     }
 
-    private fun readEntryLimited(input: InputStream, maxBytes: Int): ByteArray =
-        readLimited(input, maxBytes)
+    /**
+     * Reads only the current ZIP entry. Unlike readLimited(), this function
+     * must not close the supplied ZipInputStream: closing it would make the
+     * following checksum/provenance entries unreadable.
+     */
+    private fun readEntryLimited(input: InputStream, maxBytes: Int): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (output.size() + count > maxBytes) {
+                throw IOException("Размер ZIP entry превышает установленный лимит")
+            }
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
 
     private fun requireSafeArchivePath(path: String) {
         val normalized = path.trimEnd('/')
@@ -1054,6 +1106,8 @@ class GitHubActionsClient {
         const val MAX_LOG_CHARS = 32_000
         const val MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
         const val MAX_ENTRY_BYTES = 128 * 1024 * 1024
+        const val MAX_TOTAL_ENTRY_BYTES = 128L * 1024L * 1024L
+        const val MAX_ARCHIVE_ENTRIES = 256
         const val MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
         const val MAX_INPUTS = 32
         const val MAX_INPUT_KEY_CHARS = 96
@@ -1070,6 +1124,7 @@ class GitHubActionsClient {
         const val MAX_ERROR_CHARS = 4_000
         const val MAX_REDIRECTS = 4
         private val REPOSITORY_PART_PATTERN = Regex("[A-Za-z0-9_.-]{1,100}")
+        private val WORKFLOW_PART_PATTERN = Regex("[A-Za-z0-9._-]{1,100}")
         private val SHA_PATTERN = Regex("[A-Fa-f0-9]{40,64}")
         private val FILE_NAME_PATTERN =
             Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(?i:apk|aab)")

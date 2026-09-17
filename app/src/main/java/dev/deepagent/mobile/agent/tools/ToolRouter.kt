@@ -9,7 +9,9 @@ import dev.deepagent.mobile.agent.git.GitCommitRequest
 import dev.deepagent.mobile.agent.git.GitOperationResult
 import dev.deepagent.mobile.agent.git.GitPushRequest
 import dev.deepagent.mobile.agent.git.GitRepositoryClient
+import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -17,6 +19,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -38,16 +41,30 @@ data class ToolExecutionResult(
     val workspaceFingerprintAfter: String? = null,
 ) {
     fun toModelJson(): String = JSONObject()
-        .put("tool", toolName)
+        .put("tool", AgentRedactor.text(toolName, MAX_TOOL_NAME_CHARS))
         .put("ok", ok)
-        .put("summary", summary)
-        .put("content", content)
-        .put("truncated", truncated)
-        .put("error_code", errorCode)
+        .put("summary", AgentRedactor.text(summary, MAX_SUMMARY_CHARS))
+        .put("content", AgentRedactor.text(content, MAX_CONTENT_CHARS))
+        .put("truncated", truncated || content.length > MAX_CONTENT_CHARS)
+        .put("error_code", AgentRedactor.text(errorCode, MAX_ERROR_CODE_CHARS))
         .put("preview", patchPreview?.toJson())
-        .put("patch_checkpoint_id", patchCheckpointId)
-        .put("workspace_fingerprint_after", workspaceFingerprintAfter)
+        .put(
+            "patch_checkpoint_id",
+            AgentRedactor.text(patchCheckpointId, MAX_IDENTIFIER_CHARS),
+        )
+        .put(
+            "workspace_fingerprint_after",
+            AgentRedactor.text(workspaceFingerprintAfter, MAX_IDENTIFIER_CHARS),
+        )
         .toString()
+
+    private companion object {
+        const val MAX_TOOL_NAME_CHARS = 160
+        const val MAX_SUMMARY_CHARS = 2_000
+        const val MAX_CONTENT_CHARS = 128 * 1024
+        const val MAX_ERROR_CODE_CHARS = 96
+        const val MAX_IDENTIFIER_CHARS = 80
+    }
 }
 
 /**
@@ -94,7 +111,7 @@ class ToolRouter(
                 errorCode = "CHECKPOINT_UNAVAILABLE",
             )
 
-        return@withContext runCatching {
+        return@withContext try {
             val identity = workspaceManager.captureIdentity(workspaceId)
                 ?: error("Workspace identity недоступна")
             val preview = PatchEngine(checkpointDirectory).preview(
@@ -109,7 +126,9 @@ class ToolRouter(
                 content = preview.unifiedDiff,
                 patchPreview = preview,
             )
-        }.getOrElse { error ->
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
             ToolExecutionResult(
                 toolName = TOOL_APPLY_PATCH,
                 ok = false,
@@ -172,7 +191,7 @@ class ToolRouter(
                 )
             }
 
-            return@withContext runCatching {
+            return@withContext try {
                 val patchEngine = PatchEngine(checkpointDirectory)
                 val applied = patchEngine.apply(
                     workspaceRoot = root,
@@ -244,7 +263,9 @@ class ToolRouter(
                     patchCheckpointId = applied.operationId,
                     workspaceFingerprintAfter = afterFingerprint,
                 )
-            }.getOrElse { error ->
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
                 ToolExecutionResult(
                     toolName = TOOL_APPLY_PATCH,
                     ok = false,
@@ -351,7 +372,7 @@ class ToolRouter(
                 errorCode = "WORKSPACE_UNAVAILABLE",
             )
 
-        return@withContext runCatching {
+        return@withContext try {
             when (toolName) {
                 TOOL_LIST_FILES -> listFiles(root, arguments)
                 TOOL_READ_FILE -> readFile(root, arguments)
@@ -371,7 +392,9 @@ class ToolRouter(
                     errorCode = "TOOL_NOT_ALLOWED",
                 )
             }
-        }.getOrElse { error ->
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
             ToolExecutionResult(
                 toolName = toolName,
                 ok = false,
@@ -442,17 +465,9 @@ class ToolRouter(
 
         val maxBytes = arguments.optInt("max_bytes", DEFAULT_READ_BYTES)
             .coerceIn(1, MAX_READ_BYTES)
-        val bytes = file.inputStream().use { input ->
-            val buffer = ByteArray(maxBytes + 1)
-            var offset = 0
-            while (offset < buffer.size) {
-                val count = input.read(buffer, offset, buffer.size - offset)
-                if (count < 0) break
-                offset += count
-            }
-            buffer.copyOf(offset)
-        }
-        val wasTruncated = bytes.size > maxBytes
+        val bounded = readBounded(file, maxBytes)
+        val bytes = bounded.bytes
+        val wasTruncated = bounded.truncated
         val visible = if (wasTruncated) bytes.copyOf(maxBytes) else bytes
         require(!visible.contains(0.toByte())) {
             "Бинарный файл не принимается read_file"
@@ -498,7 +513,9 @@ class ToolRouter(
                 file.length() > maxFileBytes
             ) return@visitTree true
 
-            val bytes = file.readBytes()
+            val bounded = readBounded(file, maxFileBytes)
+            if (bounded.truncated) return@visitTree true
+            val bytes = bounded.bytes
             if (bytes.contains(0.toByte())) return@visitTree true
             val text = bytes.toString(Charsets.UTF_8)
             text.lineSequence().forEachIndexed { index, line ->
@@ -529,7 +546,7 @@ class ToolRouter(
     }
 
     private fun gitStatus(root: File): ToolExecutionResult {
-        if (!File(root, ".git").exists()) {
+        if (!hasSafeGitMetadata(root)) {
             return ToolExecutionResult(
                 toolName = TOOL_GIT_STATUS,
                 ok = false,
@@ -550,7 +567,7 @@ class ToolRouter(
     }
 
     private fun gitDiff(root: File, arguments: JSONObject): ToolExecutionResult {
-        if (!File(root, ".git").exists()) {
+        if (!hasSafeGitMetadata(root)) {
             return ToolExecutionResult(
                 toolName = TOOL_GIT_DIFF,
                 ok = false,
@@ -577,12 +594,23 @@ class ToolRouter(
         return runGit(root, TOOL_GIT_DIFF, gitArguments)
     }
 
+    private fun hasSafeGitMetadata(root: File): Boolean {
+        val metadata = File(root, ".git")
+        return metadata.isDirectory && !Files.isSymbolicLink(metadata.toPath())
+    }
+
     private fun runGit(
         root: File,
         toolName: String,
         arguments: List<String>,
     ): ToolExecutionResult {
-        val command = listOf("git") + arguments
+        val command = listOf(
+            "git",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+        ) + arguments
         val executor = Executors.newSingleThreadExecutor()
         val process = try {
             ProcessBuilder(command)
@@ -591,6 +619,9 @@ class ToolRouter(
                 .apply {
                     environment()["GIT_OPTIONAL_LOCKS"] = "0"
                     environment()["GIT_CONFIG_NOSYSTEM"] = "1"
+                    environment()["GIT_CONFIG_GLOBAL"] = "/dev/null"
+                    environment()["GIT_TERMINAL_PROMPT"] = "0"
+                    environment()["GCM_INTERACTIVE"] = "Never"
                 }
                 .start()
         } catch (error: IOException) {
@@ -662,8 +693,23 @@ class ToolRouter(
         require(!requestedPath.startsWith("/") && !requestedPath.contains('\u0000')) {
             "Недопустимый путь"
         }
-        val target = File(root, requestedPath).canonicalFile
-        val rootPath = root.canonicalFile.path
+        val canonicalRoot = root.canonicalFile
+        val rootPath = canonicalRoot.path
+        val normalizedPath = requestedPath.replace('\\', '/')
+        var cursor = canonicalRoot.toPath()
+        normalizedPath.split('/').forEach { part ->
+            when (part) {
+                "", "." -> Unit
+                ".." -> cursor = cursor.parent ?: cursor
+                else -> {
+                    cursor = cursor.resolve(part)
+                    require(!Files.isSymbolicLink(cursor)) {
+                        "Symbolic link запрещён в workspace: " + part
+                    }
+                }
+            }
+        }
+        val target = File(canonicalRoot, normalizedPath).canonicalFile
         require(target.path == rootPath || target.path.startsWith(rootPath + File.separator)) {
             "Путь выходит за границы workspace"
         }
@@ -694,6 +740,9 @@ class ToolRouter(
                 ?.sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name })
                 ?: return true
             for (child in children) {
+                require(!Files.isSymbolicLink(child.toPath())) {
+                    "Symbolic link запрещён в workspace: " + child.name
+                }
                 if (child.isDirectory && isIgnoredDirectory(child)) continue
                 if (!includeHidden && child.name.startsWith(".")) continue
                 if (!visit(child, depth + 1)) return false
@@ -704,7 +753,7 @@ class ToolRouter(
     }
 
     private fun isIgnoredDirectory(file: File): Boolean {
-        return file.name in setOf(".git", ".gradle", "build", "node_modules")
+        return file.name in IGNORED_DIRECTORIES
     }
 
     private fun isSensitiveFile(file: File): Boolean {
@@ -720,6 +769,40 @@ class ToolRouter(
             name.contains("secret") ||
             name == "id_rsa"
     }
+
+    private fun readBounded(file: File, maxBytes: Int): BoundedRead {
+        val output = ByteArrayOutputStream(
+            minOf(maxBytes + 1, READ_BUFFER_SIZE),
+        )
+        val buffer = ByteArray(READ_BUFFER_SIZE)
+        var truncated = false
+        file.inputStream().use { input ->
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                val remaining = maxBytes + 1 - output.size()
+                if (remaining <= 0) {
+                    truncated = true
+                    break
+                }
+                val copied = minOf(count, remaining)
+                output.write(buffer, 0, copied)
+                if (copied < count) {
+                    truncated = true
+                    break
+                }
+            }
+        }
+        return BoundedRead(
+            bytes = output.toByteArray(),
+            truncated = truncated || output.size() > maxBytes,
+        )
+    }
+
+    private data class BoundedRead(
+        val bytes: ByteArray,
+        val truncated: Boolean,
+    )
 
     private data class CapturedOutput(
         val text: String,
@@ -748,8 +831,10 @@ class ToolRouter(
         const val MAX_SEARCH_DEPTH = 8
         const val MAX_QUERY_LENGTH = 256
         const val MAX_MATCH_LINE_LENGTH = 500
+        const val READ_BUFFER_SIZE = 16 * 1024
         const val MAX_GIT_OUTPUT_CHARS = 100_000
         const val GIT_TIMEOUT_SECONDS = 8L
+        val IGNORED_DIRECTORIES = setOf(".git", ".gradle", "build", "node_modules")
 
         fun definitions(): List<AgentToolDefinition> = listOf(
             AgentToolDefinition(

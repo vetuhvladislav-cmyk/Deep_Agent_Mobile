@@ -18,8 +18,9 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.file.Files
 import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.zip.ZipInputStream
 
@@ -537,10 +538,32 @@ class WorkspaceManager(context: Context) {
                         .forEach { put(it.toJson()) }
                 },
             )
-        val temporary = File(indexFile.parentFile, indexFile.name + ".tmp")
-        temporary.writeText(payload.toString(), Charsets.UTF_8)
-        check(temporary.renameTo(indexFile)) {
-            "Не удалось сохранить индекс workspace"
+        val parent = indexFile.parentFile ?: error("У workspace index нет parent directory")
+        check(parent.mkdirs() || parent.isDirectory) {
+            "Не удалось создать директорию workspace index"
+        }
+        val temporary = File(
+            parent,
+            "." + indexFile.name + "." + UUID.randomUUID() + ".tmp",
+        )
+        try {
+            temporary.writeText(payload.toString(), Charsets.UTF_8)
+            try {
+                Files.move(
+                    temporary.toPath(),
+                    indexFile.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: Exception) {
+                Files.move(
+                    temporary.toPath(),
+                    indexFile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            }
+        } finally {
+            temporary.delete()
         }
     }
 

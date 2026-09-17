@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  HTTPS нужен для DeepSeek/GitHub. Cleartext оставлен только для будущего
-  app-private loopback runtime и локальной отладки; пользовательские CA
-  поддерживают самоподписанные сертификаты в инженерной среде.
+  Внешние provider endpoints работают только по HTTPS. Если будущий
+  app-private loopback backend потребует cleartext, его нужно разрешить
+  отдельным узким domain-config после подтверждения backend ABI.
 -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />
