@@ -204,6 +204,9 @@ D1–D3 являются утверждёнными post-core этапами. О
 - **Recovery rule:** незавершённая передача получает UNKNOWN и требует re-check; временный cache удаляется по TTL/size policy; восстановление Activity не повторяет provider call.
 - **Exit criterion:** изображение импортируется и отображается в preview, нормализуется в заданных пределах, передача пользователю понятна, результат восстанавливается через AgentBridge, storage ограничен, OCR/diff имеют проверяемую provenance, а секреты отсутствуют в journal и events.
 
+- **Результат текущей реализации:** добавлен внутренний ImageAnalysisPipeline, который копирует изображение в bounded app-private cache, проверяет MIME/file signature, byte/pixel limits и создаёт SHA-256 asset identity; AgentBridge/UI показывают redacted metadata и disclosure перед временной передачей проверенного изображения в существующий DeepSeek provider; raw bytes и data URL не сохраняются в events/journal.
+- **Ограничение текущей реализации:** D1 остаётся planned: OCR, multi-image/region model, EXIF/crop, deterministic screenshot diff и проверяемая visual-result provenance требуют отдельной реализации и Android/provider-проверки; raster-generation provider остаётся deferred.
+
 ### D2 — Расширенная рабочая область
 
 - **Статус:** capabilityStatus: planned

@@ -8,6 +8,7 @@ import dev.deepagent.mobile.agent.deepseek.DeepSeekResponsesClient
 import dev.deepagent.mobile.agent.deepseek.DeepSeekStreamEvent
 import dev.deepagent.mobile.agent.deepseek.DeepSeekToolDefinition
 import dev.deepagent.mobile.agent.github.GitHubActionsClient
+import dev.deepagent.mobile.agent.image.ImageAnalysisPipeline
 import dev.deepagent.mobile.agent.github.GitHubActionsRequest
 import dev.deepagent.mobile.agent.github.GitHubActionsResult
 import dev.deepagent.mobile.agent.github.ArtifactDownloadResult
@@ -33,6 +34,8 @@ import dev.deepagent.mobile.agent.model.RuntimeStatus
 import dev.deepagent.mobile.agent.model.InteractiveCommandRequest
 import dev.deepagent.mobile.agent.model.InteractiveSessionState
 import dev.deepagent.mobile.agent.model.InteractiveSessionStatus
+import dev.deepagent.mobile.agent.model.ImageAnalysisState
+import dev.deepagent.mobile.agent.model.ImageAnalysisStatus
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
@@ -105,6 +108,7 @@ class AgentCore(context: Context) : AgentBridge {
     private val deepSeek = DeepSeekResponsesClient()
     private val actionsClient = GitHubActionsClient()
     private val artifactManager = ArtifactManager()
+    private val imagePipeline = ImageAnalysisPipeline(appContext)
       private val pullRequests = GitHubPullRequestClient()
     private val sessionStore = SessionStore(appContext)
     private val coreScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -144,6 +148,9 @@ class AgentCore(context: Context) : AgentBridge {
     private val _interactiveState = MutableStateFlow(InteractiveSessionState())
     override val interactive: StateFlow<InteractiveSessionState> =
         _interactiveState.asStateFlow()
+
+    private val _imageState = MutableStateFlow(ImageAnalysisState())
+    override val image: StateFlow<ImageAnalysisState> = _imageState.asStateFlow()
 
     private var activeJob: Job? = null
     private var patchApplyJob: Job? = null
@@ -219,6 +226,71 @@ class AgentCore(context: Context) : AgentBridge {
         return summary.toAgentSnapshot().also { _workspace.value = it }
     }
 
+
+
+    override suspend fun prepareImage(
+        uri: String,
+        displayName: String?,
+    ): ImageAnalysisState {
+        check(!closed) { "AgentCore уже закрыт" }
+        val normalizedUri = uri.trim()
+        require(normalizedUri.isNotBlank()) { "URI изображения не задан" }
+        _imageState.value = ImageAnalysisState(
+            status = ImageAnalysisStatus.VALIDATING,
+            displayName = displayName?.trim()?.takeIf { it.isNotBlank() },
+            summary = "Проверка изображения",
+        )
+        return try {
+            val asset = imagePipeline.prepare(
+                resolver = appContext.contentResolver,
+                uri = Uri.parse(normalizedUri),
+                displayName = displayName,
+            )
+            val ready = asset.toState()
+            _imageState.value = ready
+            append(
+                AgentEventKind.IMAGE,
+                "Изображение подготовлено для визуального анализа",
+                ready.toJson().toString(),
+            )
+            persistAsync()
+            ready
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            val failed = ImageAnalysisState(
+                status = ImageAnalysisStatus.FAILED,
+                displayName = displayName?.trim()?.takeIf { it.isNotBlank() },
+                summary = AgentRedactor.text(
+                    error.message ?: "Не удалось подготовить изображение",
+                    MAX_ERROR_CHARS,
+                ),
+                errorCode = "IMAGE_PREPARE_FAILED",
+            )
+            _imageState.value = failed
+            append(
+                AgentEventKind.ERROR,
+                failed.summary ?: "Не удалось подготовить изображение",
+                failed.toJson().toString(),
+            )
+            persistAsync()
+            failed
+        }
+    }
+
+    override fun clearImage() {
+        val assetId = _imageState.value.assetId
+        imagePipeline.clear(assetId)
+        _imageState.value = ImageAnalysisState(
+            status = ImageAnalysisStatus.IDLE,
+            summary = "Изображение удалено из временного cache",
+        )
+        append(
+            AgentEventKind.IMAGE,
+            "Временное изображение удалено пользователем",
+        )
+        persistAsync()
+    }
 
     override suspend fun inspectGit(): GitOperationResult {
         check(!closed) { "AgentCore уже закрыт" }
@@ -957,6 +1029,7 @@ class AgentCore(context: Context) : AgentBridge {
         patchApplyJob = null
         interactiveSession.close()
         runtimeSupervisor.close()
+        imagePipeline.clear()
         coreScope.cancel()
         closed = true
         persistOnClose()
@@ -1143,6 +1216,36 @@ class AgentCore(context: Context) : AgentBridge {
             )
         }
 
+
+        val imageAssetId = request.imageAssetId?.trim().orEmpty()
+        val visualImage = if (imageAssetId.isNotBlank()) {
+            val resolved = imagePipeline.toDeepSeekImage(imageAssetId)
+            if (resolved == null) {
+                _imageState.value = _imageState.value.copy(
+                    status = ImageAnalysisStatus.UNKNOWN,
+                    summary = "Image asset недоступен; требуется повторный импорт",
+                    errorCode = "IMAGE_ASSET_RECHECK_REQUIRED",
+                    updatedAt = System.currentTimeMillis(),
+                )
+                fail("Image asset недоступен; визуальный анализ остановлен")
+                return
+            }
+            _imageState.value = _imageState.value.copy(
+                status = ImageAnalysisStatus.ANALYZING,
+                summary = "Изображение будет передано DeepSeek после явного disclosure",
+                errorCode = null,
+                updatedAt = System.currentTimeMillis(),
+            )
+            append(
+                AgentEventKind.IMAGE,
+                "Изображение передаётся DeepSeek для визуального анализа",
+                _imageState.value.toJson().toString(),
+            )
+            resolved
+        } else {
+            request.image?.let { DeepSeekImage(it.dataUrl, it.detail) }
+        }
+
         append(
             AgentEventKind.SESSION,
             "DeepSeek " + request.model + " streaming запущен",
@@ -1158,9 +1261,7 @@ class AgentCore(context: Context) : AgentBridge {
                     baseUrl = request.deepSeekBaseUrl,
                     model = request.model,
                     task = request.task,
-                    image = request.image?.let {
-                        DeepSeekImage(it.dataUrl, it.detail)
-                    },
+                    image = visualImage,
                     inputItems = inputItems,
                     tools = definitions.map { it.toDeepSeekDefinition() },
                 ),
@@ -1187,6 +1288,17 @@ class AgentCore(context: Context) : AgentBridge {
                     }
 
                     is DeepSeekStreamEvent.Failed -> {
+                        if (visualImage != null) {
+                            _imageState.value = _imageState.value.copy(
+                                status = ImageAnalysisStatus.FAILED,
+                                summary = AgentRedactor.text(
+                                    event.message,
+                                    MAX_ERROR_CHARS,
+                                ),
+                                errorCode = "IMAGE_ANALYSIS_FAILED",
+                                updatedAt = System.currentTimeMillis(),
+                            )
+                        }
                         fail(event.message)
                     }
                 }
@@ -1202,7 +1314,18 @@ class AgentCore(context: Context) : AgentBridge {
                 fail("DeepSeek не вернул response")
                 return
             }
-            if (result.functionCalls.isEmpty()) return
+            if (result.functionCalls.isEmpty()) {
+                if (visualImage != null) {
+                    _imageState.value = _imageState.value.copy(
+                        status = ImageAnalysisStatus.SUCCEEDED,
+                        summary = "Визуальный анализ завершён",
+                        errorCode = null,
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                    persistAsync()
+                }
+                return
+            }
 
             round += 1
             if (round > MAX_TOOL_ROUNDS) {

@@ -8,6 +8,7 @@ import dev.deepagent.mobile.agent.model.ActionsArtifactSaveResult
 import dev.deepagent.mobile.agent.model.ActionsOperationState
 import dev.deepagent.mobile.agent.model.ActionsRunRequest
 import dev.deepagent.mobile.agent.model.AgentEvent
+import dev.deepagent.mobile.agent.model.ImageAnalysisState
 import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentSessionState
 import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
@@ -38,6 +39,7 @@ interface AgentBridge {
     val actions: StateFlow<ActionsOperationState>
     val runtime: StateFlow<RuntimeState>
     val interactive: StateFlow<InteractiveSessionState>
+    val image: StateFlow<ImageAnalysisState>
 
     suspend fun submit(request: AgentRequest)
 
@@ -45,6 +47,13 @@ interface AgentBridge {
         uri: String,
         displayName: String? = null,
     ): AgentWorkspaceSnapshot
+
+    suspend fun prepareImage(
+        uri: String,
+        displayName: String? = null,
+    ): ImageAnalysisState
+
+    fun clearImage()
 
     fun approvePendingPatch()
 
@@ -102,6 +111,7 @@ object AgentBridgeProtocol {
     const val REASONING = "reasoning"
     const val OUTPUT = "output"
     const val TOOL = "tool"
+    const val IMAGE = "image"
     const val BUILD = "build"
     const val APPROVAL = "approval"
     const val ARTIFACT = "artifact"

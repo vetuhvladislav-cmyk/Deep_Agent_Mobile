@@ -1,8 +1,5 @@
 package dev.deepagent.mobile.agent.ui
 
-import android.content.Context
-import android.net.Uri
-import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -45,7 +42,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import dev.deepagent.mobile.agent.ui.agentControl
 import dev.deepagent.mobile.agent.ui.AgentUiContract
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -65,7 +61,7 @@ import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentSessionStatus
 import dev.deepagent.mobile.agent.model.ExecutionTarget
-import dev.deepagent.mobile.agent.model.ImageAttachment
+import dev.deepagent.mobile.agent.model.ImageAnalysisStatus
 import dev.deepagent.mobile.agent.model.PermissionMode
 import dev.deepagent.mobile.agent.model.PatchRecoveryStatus
 import dev.deepagent.mobile.agent.model.PatchRollbackStatus
@@ -73,9 +69,7 @@ import dev.deepagent.mobile.agent.model.RuntimeStatus
 import dev.deepagent.mobile.agent.model.InteractiveCommandRequest
 import dev.deepagent.mobile.agent.model.InteractiveSessionStatus
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 private const val DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 private const val DEFAULT_DEEPSEEK_MODEL = "deepseek-flash"
@@ -92,7 +86,6 @@ fun AgentConsoleScreen(
     agent: AgentBridge,
     onBack: () -> Unit,
 ) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by agent.state.collectAsState()
     val events by agent.events.collectAsState()
@@ -119,8 +112,6 @@ fun AgentConsoleScreen(
     var ref by rememberSaveable { mutableStateOf("main") }
     var showConfig by rememberSaveable { mutableStateOf(false) }
     var permissionMenuOpen by remember { mutableStateOf(false) }
-    var imageUri by rememberSaveable { mutableStateOf<String?>(null) }
-    var image by remember { mutableStateOf<ImageAttachment?>(null) }
     var localError by remember { mutableStateOf<String?>(null) }
     var workspaceError by remember { mutableStateOf<String?>(null) }
     var gitError by remember { mutableStateOf<String?>(null) }
@@ -144,20 +135,7 @@ fun AgentConsoleScreen(
     val actionsState by agent.actions.collectAsState()
     val runtimeState by agent.runtime.collectAsState()
     val interactiveState by agent.interactive.collectAsState()
-
-    LaunchedEffect(imageUri) {
-        val persistedUri = imageUri ?: return@LaunchedEffect
-        runCatching {
-            readImageAttachment(context, Uri.parse(persistedUri))
-        }.onSuccess {
-            image = it
-            localError = null
-        }.onFailure {
-            image = null
-            imageUri = null
-            localError = it.message ?: "Не удалось восстановить изображение"
-        }
-    }
+    val imageState by agent.image.collectAsState()
 
     DisposableEffect(agent) {
         onDispose { agent.close() }
@@ -168,14 +146,16 @@ fun AgentConsoleScreen(
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            runCatching { readImageAttachment(context, uri) }
-                .onSuccess {
-                    imageUri = uri.toString()
-                    image = it
-                    localError = null
+            runCatching { agent.prepareImage(uri.toString()) }
+                .onSuccess { result ->
+                    if (result.status == ImageAnalysisStatus.READY) {
+                        localError = null
+                    } else {
+                        localError = result.summary ?: "Изображение не прошло проверку"
+                    }
                 }
                 .onFailure {
-                    localError = it.message ?: "Не удалось прочитать изображение"
+                    localError = it.message ?: "Не удалось подготовить изображение"
                 }
         }
     }
@@ -220,7 +200,9 @@ fun AgentConsoleScreen(
                         task = task,
                         target = target,
                         permission = permission,
-                        image = image,
+                        imageAssetId = imageState.assetId.takeIf {
+                            imageState.status == ImageAnalysisStatus.READY
+                        },
                         deepSeekApiKey = deepSeekKey,
                         deepSeekBaseUrl = deepSeekBaseUrl,
                         model = model,
@@ -1286,18 +1268,50 @@ fun AgentConsoleScreen(
                 }
             }
 
-            image?.let {
+            if (imageState.status != ImageAnalysisStatus.IDLE) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
                     ),
                 ) {
-                    Text(
-                        text = "Вложение: ${it.displayName ?: "image"} · ${it.mediaType} · ${it.detail}",
+                    Column(
                         modifier = Modifier.padding(10.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Text(
+                            text = "Изображение: " +
+                                (imageState.displayName ?: "image") +
+                                " · " + (imageState.mediaType ?: "unknown"),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Состояние: " + imageState.status.name +
+                                " · " + formatImageBytes(imageState.sizeBytes ?: 0L) +
+                                " · " + (imageState.width ?: 0) + "×" +
+                                (imageState.height ?: 0),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        imageState.checksum?.let {
+                            Text(
+                                text = "SHA-256: " + it.take(16) + "…",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        Text(
+                            text = "Перед отправкой в DeepSeek приложение покажет disclosure; " +
+                                "raw image bytes и data URL не сохраняются в journal.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        imageState.summary?.takeIf { it.isNotBlank() }?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1494,32 +1508,18 @@ private fun AgentEventCard(event: AgentEvent) {
     }
 }
 
-private suspend fun readImageAttachment(
-    context: Context,
-    uri: Uri,
-): ImageAttachment = withContext(Dispatchers.IO) {
-    val mediaType = context.contentResolver.getType(uri)
-        ?.takeIf { it.startsWith("image/") }
-        ?: "image/jpeg"
-    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-        ?: error("Не удалось открыть изображение")
-    require(bytes.isNotEmpty()) { "Изображение пустое" }
-    require(bytes.size <= 32 * 1024 * 1024) {
-        "Изображение больше лимита inline input (32 MiB)"
-    }
-
-    val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
-    ImageAttachment(
-        dataUrl = "data:$mediaType;base64,$encoded",
-        mediaType = mediaType,
-        displayName = uri.lastPathSegment,
-    )
-}
-
 private fun parseCommitPaths(value: String): List<String> = value
     .split(',', '\n', ';')
     .map { it.trim() }
     .filter { it.isNotBlank() }
+
+private fun formatImageBytes(bytes: Long): String {
+    if (bytes < 1024L) return bytes.toString() + " B"
+    if (bytes < 1024L * 1024L) {
+        return (bytes / 1024L).toString() + " KiB"
+    }
+    return (bytes / (1024L * 1024L)).toString() + " MiB"
+}
 
 private fun formatWorkspaceBytes(bytes: Long): String {
     if (bytes < 1024L) return bytes.toString() + " B"

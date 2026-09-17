@@ -24,6 +24,7 @@ enum class AgentEventKind {
     REASONING,
     OUTPUT,
     TOOL,
+    IMAGE,
     BUILD,
     APPROVAL,
     ARTIFACT,
@@ -53,6 +54,7 @@ data class AgentRequest(
     val target: ExecutionTarget = ExecutionTarget.AUTO,
     val permission: PermissionMode = PermissionMode.READ_ONLY,
     val image: ImageAttachment? = null,
+    val imageAssetId: String? = null,
     val deepSeekApiKey: String? = null,
     val deepSeekBaseUrl: String = "https://api.deepseek.com",
     val model: String = "deepseek-flash",
@@ -113,6 +115,45 @@ data class PendingPatchApproval(
 
 
 
+
+
+
+enum class ImageAnalysisStatus {
+    IDLE,
+    VALIDATING,
+    READY,
+    ANALYZING,
+    SUCCEEDED,
+    FAILED,
+    UNKNOWN,
+}
+
+data class ImageAnalysisState(
+    val status: ImageAnalysisStatus = ImageAnalysisStatus.IDLE,
+    val assetId: String? = null,
+    val displayName: String? = null,
+    val mediaType: String? = null,
+    val sizeBytes: Long? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val checksum: String? = null,
+    val summary: String? = null,
+    val errorCode: String? = null,
+    val updatedAt: Long = System.currentTimeMillis(),
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("status", status.name)
+        .put("asset_id", AgentRedactor.text(assetId, 160))
+        .put("display_name", AgentRedactor.text(displayName, 200))
+        .put("media_type", AgentRedactor.text(mediaType, 64))
+        .put("size_bytes", sizeBytes)
+        .put("width", width)
+        .put("height", height)
+        .put("checksum", AgentRedactor.text(checksum, 80))
+        .put("summary", AgentRedactor.text(summary, 2_000))
+        .put("error_code", AgentRedactor.text(errorCode, 96))
+        .put("updated_at", updatedAt)
+}
 
 enum class InteractiveSessionStatus {
     IDLE,

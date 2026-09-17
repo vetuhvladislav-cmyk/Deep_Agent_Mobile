@@ -61,6 +61,12 @@ RuntimeSupervisor является внутренним владельцем lif
 
 Runtime provider не получает GitHub, merge/release или credential permission. PTY/interactive provider, когда он включён, вызывается только через Agent Core с canonical workspace scope, allowlisted executable/arguments, bounded timeout и redacted output. Произвольный shell и sh -c не являются скрытым fallback. Текущий interactive adapter допускает только прямой pipe-backed git status/diff/log; это не объявляется полноценным PTY до отдельного ABI/backend решения.
 
+### 2.2 Image Pipeline и visual input
+
+Image Pipeline является внутренним владельцем D1 и вызывается только через AgentBridge. Он копирует выбранный URI в app-private bounded cache, проверяет MIME и file signature, ограничивает byte/pixel budget и создаёт deterministic SHA-256 asset identity. В DeepSeek передаётся только временный data URL для уже проверенного asset; URI источника, raw bytes и data URL не попадают в live/durable journal.
+
+Перед внешней передачей UI показывает user-visible disclosure. Состояние attachment, checksum, размеры, transfer decision и result state публикуются как redacted metadata через AgentBridge. Отмена, недоступный asset или ошибка provider переводят visual state в FAILED/UNKNOWN и не запускают скрытый retry. Отдельный raster-generation provider, OCR, multi-image и screenshot diff пока не входят в закрытый baseline D1.
+
 ## 3. Контракты данных
 
 ### 3.1 WorkspaceIdentity
