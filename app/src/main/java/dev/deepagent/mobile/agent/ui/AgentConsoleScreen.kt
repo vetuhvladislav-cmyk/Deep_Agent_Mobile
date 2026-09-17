@@ -43,6 +43,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import dev.deepagent.mobile.agent.ui.agentControl
+import dev.deepagent.mobile.agent.ui.AgentUiContract
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -247,7 +249,13 @@ fun AgentConsoleScreen(
                     }
                 },
                 navigationIcon = {
-                    TextButton(onClick = onBack) { Text("Назад") }
+                    TextButton(
+                    modifier = Modifier.agentControl(
+                        AgentUiContract.BACK,
+                        "Вернуться назад",
+                    ),
+                    onClick = onBack,
+                ) { Text("Назад") }
                 },
             )
         },
@@ -257,7 +265,8 @@ fun AgentConsoleScreen(
                 .fillMaxSize()
                 .imePadding()
                 .padding(padding)
-                .padding(horizontal = 14.dp, vertical = 8.dp),
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+                .agentControl(AgentUiContract.ROOT, "Консоль Agent Core"),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
@@ -345,7 +354,11 @@ fun AgentConsoleScreen(
                 onValueChange = { task = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 112.dp),
+                    .heightIn(min = 112.dp)
+                    .agentControl(
+                        AgentUiContract.TASK_INPUT,
+                        "Задача агенту",
+                    ),
                 label = { Text("Задача агенту") },
                 placeholder = { Text("Написать код, проанализировать ошибку, собрать APK…") },
                 minLines = 4,
@@ -381,6 +394,10 @@ fun AgentConsoleScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         OutlinedButton(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.IMPORT_ZIP,
+                                "Импортировать ZIP workspace",
+                            ),
                             onClick = {
                                 zipPicker.launch(
                                     arrayOf(
@@ -394,6 +411,10 @@ fun AgentConsoleScreen(
                             Text("Импорт ZIP")
                         }
                         OutlinedButton(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.IMPORT_FOLDER,
+                                "Импортировать папку workspace",
+                            ),
                             onClick = { folderPicker.launch(null) },
                         ) {
                             Text("Импорт папки")
@@ -442,12 +463,20 @@ fun AgentConsoleScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Button(
+                                modifier = Modifier.agentControl(
+                                    AgentUiContract.APPROVE_PATCH,
+                                    "Применить patch после проверки",
+                                ),
                                 enabled = pending.canApply,
                                 onClick = { agent.approvePendingPatch() },
                             ) {
                                 Text("Применить patch")
                             }
                             OutlinedButton(
+                                modifier = Modifier.agentControl(
+                                    AgentUiContract.REJECT_PATCH,
+                                    "Отклонить patch preview",
+                                ),
                                 onClick = { agent.rejectPendingPatch() },
                             ) {
                                 Text("Отклонить")
@@ -504,6 +533,10 @@ fun AgentConsoleScreen(
                             }
                             if (recovery.status == PatchRecoveryStatus.APPLIED) {
                                 Button(
+                                    modifier = Modifier.agentControl(
+                                        AgentUiContract.ROLLBACK_PATCH,
+                                        "Откатить последний подтверждённый patch",
+                                    ),
                                     enabled = state.status != AgentSessionStatus.RUNNING &&
                                         pendingApproval == null,
                                     onClick = {
@@ -624,6 +657,10 @@ fun AgentConsoleScreen(
                                     workspace != null
                                 ) {
                                     OutlinedButton(
+                                        modifier = Modifier.agentControl(
+                                            AgentUiContract.DOWNLOAD_ARTIFACT,
+                                            "Скачать проверенный APK или AAB",
+                                        ),
                                         onClick = {
                                             actionsError = null
                                             scope.launch {
@@ -656,6 +693,10 @@ fun AgentConsoleScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Button(
+                                modifier = Modifier.agentControl(
+                                    AgentUiContract.RUN_ACTIONS,
+                                    "Запустить GitHub Actions явно",
+                                ),
                                 enabled = permission >= PermissionMode.GITHUB_WRITE &&
                                     githubToken.isNotBlank() &&
                                     repository.isNotBlank() &&
@@ -745,6 +786,10 @@ fun AgentConsoleScreen(
                             )
                         }
                         OutlinedButton(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.INSPECT_GIT,
+                                "Проверить состояние Git",
+                            ),
                             onClick = {
                                 gitError = null
                                 scope.launch {
@@ -781,6 +826,10 @@ fun AgentConsoleScreen(
                             singleLine = true,
                         )
                         Button(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.CREATE_BRANCH,
+                                "Создать branch явно",
+                            ),
                             onClick = {
                                 gitError = null
                                 scope.launch {
@@ -818,6 +867,10 @@ fun AgentConsoleScreen(
                             singleLine = true,
                         )
                         Button(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.COMMIT,
+                                "Создать commit явно",
+                            ),
                             onClick = {
                                 gitError = null
                                 scope.launch {
@@ -857,6 +910,10 @@ fun AgentConsoleScreen(
                             )
                         }
                         Button(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.PUSH,
+                                "Отправить branch через push",
+                            ),
                             onClick = {
                                 gitError = null
                                 scope.launch {
@@ -922,6 +979,10 @@ fun AgentConsoleScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Button(
+                                modifier = Modifier.agentControl(
+                                    AgentUiContract.CREATE_PR,
+                                    "Создать Pull Request явно",
+                                ),
                                 onClick = {
                                     gitError = null
                                     scope.launch {
@@ -985,7 +1046,13 @@ fun AgentConsoleScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Box {
-                    OutlinedButton(onClick = { permissionMenuOpen = true }) {
+                    OutlinedButton(
+                        modifier = Modifier.agentControl(
+                            AgentUiContract.PERMISSION_MENU,
+                            "Выбрать permission текущей сессии",
+                        ),
+                        onClick = { permissionMenuOpen = true },
+                    ) {
                         Text(permission.shortLabel())
                     }
                     DropdownMenu(
@@ -1003,7 +1070,13 @@ fun AgentConsoleScreen(
                         }
                     }
                 }
-                OutlinedButton(onClick = { imagePicker.launch("image/*") }) {
+                OutlinedButton(
+                    modifier = Modifier.agentControl(
+                        AgentUiContract.IMAGE_PICKER,
+                        "Добавить изображение к задаче",
+                    ),
+                    onClick = { imagePicker.launch("image/*") },
+                ) {
                     Text(if (image == null) "Добавить изображение" else "Изображение выбрано")
                 }
                 if (image != null) {
@@ -1119,18 +1192,32 @@ fun AgentConsoleScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(
+                    modifier = Modifier.agentControl(
+                        AgentUiContract.SUBMIT,
+                        "Запустить задачу Agent Core",
+                    ),
                     enabled = state.status != AgentSessionStatus.RUNNING && pendingApproval == null,
                     onClick = submitCurrentTask,
                 ) {
                     Text("Запустить")
                 }
                 OutlinedButton(
+                    modifier = Modifier.agentControl(
+                        AgentUiContract.CANCEL,
+                        "Остановить текущую сессию",
+                    ),
                     enabled = state.status == AgentSessionStatus.RUNNING,
                     onClick = { agent.cancel() },
                 ) {
                     Text("Остановить")
                 }
-                TextButton(onClick = { agent.clearEvents() }) {
+                TextButton(
+                    modifier = Modifier.agentControl(
+                        AgentUiContract.CLEAR_EVENTS,
+                        "Очистить live-события",
+                    ),
+                    onClick = { agent.clearEvents() },
+                ) {
                     Text("Очистить")
                 }
                 if (state.status == AgentSessionStatus.RUNNING) {
@@ -1174,7 +1261,12 @@ private fun AgentEventCard(event: AgentEvent) {
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .agentControl(
+                AgentUiContract.event(event.sequence),
+                "Событие Agent Core " + event.sequence,
+            ),
         colors = CardDefaults.cardColors(containerColor = container),
     ) {
         Column(

@@ -144,6 +144,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Redacted audit trail:** scenario ID, screen state, event sequence, failure location и screenshot reference без provider secrets.
 - **Cancellation / timeout:** каждый UI scenario имеет bounded timeout; зависший provider не блокирует UI test lifecycle.
 - **Recovery rule:** потеря Activity не создаёт новую сессию и не повторяет side effect; тест повторно подключается к AgentBridge state.
+- **Результат текущей реализации:** добавлен канонический UI contract с независимыми стабильными test IDs и accessibility semantics для корневого экрана, task/workspace controls, patch approval/rollback, Actions artifact, Git, session lifecycle и event cards; существующие `rememberSaveable`, app-private journal и AgentBridge state сохраняют recovery-safe поведение при Activity recreation, keyboard и system insets.
+- **Ограничение текущей реализации:** capabilityStatus остаётся `planned` до Android 16 instrumentation-проверки основных сценариев, rotation/background/process death, keyboard/insets, accessibility tree и screenshot fixtures; UI-тесты и сборка в этой сессии не запускались.
 - **Exit criterion:** основные user flows воспроизводимы на Android 16, имеют стабильные test IDs и не теряют session state при rotation/background/insets transitions.
 
 ### P2-A — RuntimeSupervisor и headless DSH
