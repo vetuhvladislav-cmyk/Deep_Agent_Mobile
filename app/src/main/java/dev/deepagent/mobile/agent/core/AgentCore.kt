@@ -204,6 +204,7 @@ class AgentCore(context: Context) : AgentBridge {
                 githubToken = null,
             )
             actionsClient.cancelActive()
+            pullRequests.cancelActive()
             activeJob?.cancelAndJoin()
             patchApplyJob?.cancelAndJoin()
             activeJob = null
@@ -357,6 +358,7 @@ class AgentCore(context: Context) : AgentBridge {
         activeJob?.cancel()
         deepSeek.cancelActive()
         actionsClient.cancelActive()
+        pullRequests.cancelActive()
         patchApplyJob?.cancel()
         patchApplyJob = null
         interactiveSession.cancelActive()
@@ -1459,6 +1461,7 @@ class AgentCore(context: Context) : AgentBridge {
         if (closed) return
         activeJob?.cancel()
         actionsClient.cancelActive()
+        pullRequests.cancelActive()
         patchApplyJob?.cancel()
         patchApplyJob = null
         deepSeek.cancelActive()
