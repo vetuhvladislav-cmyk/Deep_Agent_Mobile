@@ -512,22 +512,6 @@ class AgentCore(context: Context) : AgentBridge {
 
     override suspend fun selectWorkspace(workspaceId: String): AgentWorkspaceSnapshot {
         check(!closed) { "AgentCore уже закрыт" }
-        val cached = cachedGitResult(operationId)
-        if (cached != null && cached.sessionId == currentSessionId) {
-            return cached
-        }
-        if (_state.value.status == AgentSessionStatus.UNKNOWN) {
-            val result = GitOperationResult(
-                operation = operation,
-                operationId = operationId,
-                status = GitOperationStatus.UNKNOWN,
-                summary = "Предыдущая операция неизвестна; сначала выполните re-check",
-                errorCode = "GIT_RECHECK_REQUIRED",
-            )
-            val boundResult = result.copy(sessionId = currentSessionId)
-            publishGitResult(boundResult)
-            return boundResult
-        }
         if (
             _state.value.status == AgentSessionStatus.RUNNING ||
             _state.value.status == AgentSessionStatus.WAITING_APPROVAL
