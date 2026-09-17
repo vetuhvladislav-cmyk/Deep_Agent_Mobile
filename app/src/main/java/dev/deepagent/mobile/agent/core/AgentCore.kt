@@ -137,7 +137,9 @@ class AgentCore(context: Context) : AgentBridge {
     private val submitMutex = Mutex()
     private val journalMutex = Mutex()
     private val gitWriteMutex = Mutex()
+    private val actionsRunMutex = Mutex()
     private val gitOperationCache = LinkedHashMap<String, GitOperationResult>()
+    private val actionsOperationCache = LinkedHashMap<String, ActionsOperationState>()
 
     private val _state = MutableStateFlow(AgentSessionState())
     override val state: StateFlow<AgentSessionState> = _state.asStateFlow()
@@ -1007,6 +1009,68 @@ class AgentCore(context: Context) : AgentBridge {
 
 
     override suspend fun runActions(
+        request: ActionsRunRequest,
+    ): ActionsOperationState {
+        actionsRunMutex.lock()
+        try {
+            check(!closed) { "AgentCore уже закрыт" }
+            val boundRequest = request.copy(
+                sessionId = request.sessionId
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: currentSessionId,
+                operationId = request.operationId
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: UUID.randomUUID().toString(),
+            )
+            val operationId = boundRequest.operationId.orEmpty()
+            val cached = cachedActionsResult(operationId)
+            if (cached != null && cached.sessionId == boundRequest.sessionId) {
+                _actionsState.value = cached
+                append(
+                    AgentEventKind.INFO,
+                    "Повтор Actions operation возвращает ранее подтверждённый результат",
+                    cached.toJson().toString(),
+                )
+                return cached
+            }
+            if (
+                _actionsState.value.status == ActionsOperationStatus.UNKNOWN &&
+                _actionsState.value.sessionId == boundRequest.sessionId
+            ) {
+                val blocked = ActionsOperationState(
+                    sessionId = boundRequest.sessionId,
+                    operationId = operationId,
+                    repository = boundRequest.repository,
+                    workflow = boundRequest.workflow,
+                    ref = boundRequest.ref,
+                    status = ActionsOperationStatus.UNKNOWN,
+                    summary = "Предыдущая Actions-операция не подтверждена; сначала выполните re-check",
+                    errorCode = "ACTIONS_RECHECK_REQUIRED",
+                )
+                _actionsState.value = blocked
+                append(
+                    AgentEventKind.ERROR,
+                    blocked.summary.orEmpty(),
+                    blocked.toJson().toString(),
+                )
+                return blocked
+            }
+            val result = runActionsLocked(boundRequest)
+            if (
+                result.status == ActionsOperationStatus.SUCCEEDED ||
+                result.status == ActionsOperationStatus.UNKNOWN
+            ) {
+                cacheActionsResult(result)
+            }
+            return result
+        } finally {
+            actionsRunMutex.unlock()
+        }
+    }
+
+    private suspend fun runActionsLocked(
         request: ActionsRunRequest,
     ): ActionsOperationState {
         check(!closed) { "AgentCore уже закрыт" }
@@ -2588,6 +2652,27 @@ class AgentCore(context: Context) : AgentBridge {
         }
     }
 
+    private fun cachedActionsResult(operationId: String): ActionsOperationState? {
+        return synchronized(actionsOperationCache) {
+            actionsOperationCache[operationId]
+        }
+    }
+
+    private fun cacheActionsResult(result: ActionsOperationState) {
+        val operationId = result.operationId ?: return
+        synchronized(actionsOperationCache) {
+            actionsOperationCache[operationId] = result
+            while (actionsOperationCache.size > MAX_ACTIONS_OPERATION_CACHE) {
+                actionsOperationCache.entries.iterator().let { iterator ->
+                    if (iterator.hasNext()) {
+                        iterator.next()
+                        iterator.remove()
+                    }
+                }
+            }
+        }
+    }
+
     private fun normalizeOperationId(value: String?): String {
         val operationId = value?.trim()?.takeIf { it.isNotBlank() }
             ?: UUID.randomUUID().toString()
@@ -2851,6 +2936,7 @@ class AgentCore(context: Context) : AgentBridge {
         const val MAX_EVENT_DETAIL_CHARS = 12_000
         const val MAX_ERROR_CHARS = 4_000
         const val MAX_GIT_OPERATION_CACHE = 32
+        const val MAX_ACTIONS_OPERATION_CACHE = 32
         const val MAX_BASE_URL_CHARS = 512
         const val DEEPSEEK_API_HOST = "api.deepseek.com"
         val SESSION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
