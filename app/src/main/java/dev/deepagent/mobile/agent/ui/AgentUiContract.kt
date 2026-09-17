@@ -1,8 +1,8 @@
 package dev.deepagent.mobile.agent.ui
 
 import androidx.compose.ui.Modifier
-import java.security.MessageDigest
 import androidx.compose.ui.platform.testTag
+import java.security.MessageDigest
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 
@@ -34,7 +34,7 @@ object AgentUiContract {
     const val SUBMIT = "agent.session.submit"
     const val CANCEL = "agent.session.cancel"
     const val CLEAR_EVENTS = "agent.events.clear"
-    const val EXPORT_JOURNAL = "agent.credentials.export_journal"
+    const val EXPORT_JOURNAL = "agent.journal.export"
     const val CLEAR_CREDENTIALS = "agent.credentials.clear"
 
     fun workspace(id: String): String = "agent.workspace." + id
