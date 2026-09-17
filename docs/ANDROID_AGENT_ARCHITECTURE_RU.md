@@ -81,6 +81,8 @@ Session Journal остаётся владельцем AgentCore/SessionStore: к
 
 Pull Request не создаётся автоматически. Перед ручным PR_CREATE approval Core повторно проверяет выбранный workspace через Git status, требует подтверждённый текущий HEAD SHA и active sessionId, а GitHub response обязан вернуть тот же head SHA. Ошибка сети, mismatch или неполная provenance переводят операцию в UNKNOWN/FAILED и блокируют replay; merge/release остаются отдельными decision gates.
 
+Git, PR и Actions mutation requests несут operation ID, связанный с текущей session. AgentCore сериализует write-вызовы, возвращает сохранённый результат для повторной пары session/operation без нового side effect и блокирует новый Git/Actions side effect после UNKNOWN до re-check. Последний нормализованный Git result входит в versioned SessionStore snapshot; это не заменяет серверную идемпотентность и не разрешает replay после смены session/workspace.
+
 GitHub Actions dispatch имеет обязательную корреляцию `agent_session_id`, `operation_id` и expected commit SHA. Оба идентификатора передаются в workflow inputs и run-name; discovery принимает только run с совпадающими session/operation markers и commit SHA. Artifact download дополнительно связывается с конкретными run ID и source SHA, поэтому concurrent run нельзя выбрать только по branch/ref.
 
 ## 3. Контракты данных
@@ -186,6 +188,8 @@ SessionRecord — durable состояние сессии в app-private storage
 | requestSummary | redacted описание запроса |
 | invocations | состояния вызовов и их correlation IDs |
 | decisions | approval и критические решения без секретов |
+| actionsState | последний подтверждённый или UNKNOWN Actions outcome с operation ID |
+| gitOperationResult | последний нормализованный Git/PR outcome с operation ID |
 | eventCursor | последний durable sequence |
 | updatedAt | время последнего изменения |
 
@@ -273,7 +277,7 @@ Durable event journal:
 
 ### 5.1 Формат durable journal и recovery
 
-Текущая реализация `SessionStore` использует versioned bounded JSON snapshot на сессию: массив событий и состояния сохраняются в `session-<id>.json`, а указатель `latest` обновляется атомарно. Это устойчивый journal-подобный формат для текущего APK, но не append-only JSONL; переход к JSONL потребует отдельной миграции и проверки recovery. События имеют `schemaVersion=1` и bounded redacted `payload`; прежние записи без версии читаются совместимо как версия 1.
+Текущая реализация `SessionStore` использует versioned bounded JSON snapshot v6 на сессию: массив событий, Actions state и последний Git/PR result сохраняются в `session-<id>.json`, а указатель `latest` обновляется атомарно. Это устойчивый journal-подобный формат для текущего APK, но не append-only JSONL; переход к JSONL потребует отдельной миграции и проверки recovery. События имеют `schemaVersion=1` и bounded redacted `payload`; прежние записи без версии читаются совместимо как версия 1. Сохранённый success/UNKNOWN outcome используется только для той же session/operation; незавершённая операция после process death переводится в UNKNOWN и не replay-ится.
 
 Запись выполняется через временный файл с flush/sync и atomic replacement с безопасным fallback. Размер одной записи, число session-файлов, общий retention и число событий ограничены. Восстановление нормализует повреждённые идентификаторы, не запускает повторно write/external actions и публикует неполное состояние вместо молчаливого replay.
 
