@@ -272,7 +272,7 @@ D1–D3 являются утверждёнными post-core этапами. О
 - **Exit criterion:** секреты не попадают в UI events/journal/diff, journal ограничен и экспортируется redacted, каждый commit/PR связан с sessionId и проверяемым SHA, ручное approval работает, а неизвестные внешние операции останавливаются без replay.
 
 - **Результат текущей реализации:** добавлен memory-only EphemeralCredentialVault с bounded TTL и wipe при очистке/закрытии, AgentBridge credential state без значений secrets, санитизация legacy request fields и UI-кнопка очистки; SessionStore получил retention limit (до 12 session-файлов/32 MiB) и SAF export redacted journal; PR flow перед внешним вызовом повторно проверяет Git HEAD, требует sessionId и expected head SHA, сверяет SHA ответа и сохраняет только provenance metadata.
-- **Ограничение текущей реализации:** D3 остаётся planned: Android/provider runtime-проверка, реальный export/recovery сценарий, Keystore decision (baseline остаётся memory-only), Actions/PR integration tests и server-side idempotency требуют отдельного acceptance gate; merge/release и автоматический PR по Actions не добавлялись.
+- **Ограничение текущей реализации:** D3 остаётся planned: Android/provider runtime-проверка, реальный export/recovery сценарий, проверка Keystore-backed preset на этом устройстве, Actions/PR integration tests и server-side idempotency требуют отдельного acceptance gate; runtime vault остаётся memory-only, merge/release и автоматический PR по Actions не добавлялись.
 
 
 
