@@ -15,7 +15,19 @@ enum class PermissionMode {
     LOCAL_WRITE,
     GITHUB_WRITE,
     PR_CREATE,
-    MERGE_RELEASE,
+    MERGE_RELEASE;
+
+    /**
+     * Permission presets are capability bundles, not an ordinal hierarchy.
+     * Local workspace mutation is intentionally independent from GitHub access.
+     */
+    fun allows(required: PermissionMode): Boolean = when (required) {
+        READ_ONLY -> true
+        LOCAL_WRITE -> this == LOCAL_WRITE || this == MERGE_RELEASE
+        GITHUB_WRITE -> this == GITHUB_WRITE || this == PR_CREATE || this == MERGE_RELEASE
+        PR_CREATE -> this == PR_CREATE || this == MERGE_RELEASE
+        MERGE_RELEASE -> this == MERGE_RELEASE
+    }
 }
 
 enum class AgentEventKind {
