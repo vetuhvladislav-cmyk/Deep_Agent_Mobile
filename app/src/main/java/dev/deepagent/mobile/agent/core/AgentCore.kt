@@ -1680,12 +1680,14 @@ class AgentCore(context: Context) : AgentBridge {
             throw IllegalArgumentException("DeepSeek base URL имеет неверный формат")
         }
         require(
-            url.host.isNotBlank() &&
+            url.protocol.equals("https", ignoreCase = true) &&
+                url.host.equals(DEEPSEEK_API_HOST, ignoreCase = true) &&
+                (url.port == -1 || url.port == 443) &&
                 url.userInfo == null &&
                 url.query == null &&
                 url.ref == null
         ) {
-            "DeepSeek base URL не должен содержать credentials, query или fragment"
+            "DeepSeek base URL должен использовать HTTPS и разрешённый host"
         }
     }
 
@@ -2728,6 +2730,7 @@ class AgentCore(context: Context) : AgentBridge {
         const val MAX_EVENT_DETAIL_CHARS = 12_000
         const val MAX_ERROR_CHARS = 4_000
         const val MAX_BASE_URL_CHARS = 512
+        const val DEEPSEEK_API_HOST = "api.deepseek.com"
         val SESSION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
         val OPERATION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
         val SHA_PATTERN = Regex("[A-Fa-f0-9]{40,64}")
