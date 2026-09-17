@@ -30,6 +30,7 @@ permissions:
 jobs:
   build:
     name: Сборка Deep Agent debug APK
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
