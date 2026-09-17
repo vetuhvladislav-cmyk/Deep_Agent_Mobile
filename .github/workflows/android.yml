@@ -36,10 +36,14 @@ jobs:
       - name: Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
+          packages: platform-tools
+
+      - name: Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Кэш Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -91,10 +95,14 @@ jobs:
       - name: Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
+          packages: platform-tools
+
+      - name: Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Кэш Gradle
         uses: gradle/actions/setup-gradle@v4
