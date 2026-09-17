@@ -37,7 +37,7 @@ object WorkspacePathPolicy {
         }
 
         val normalized = requestedPath.trim().replace('\\', '/')
-        require(!normalized.startsWith("/") && !normalized.contains('\\u0000')) {
+        require(!normalized.startsWith("/") && !normalized.contains('\u0000')) {
             "Недопустимый путь"
         }
         require(!isBlockedRelativePath(normalized)) {
