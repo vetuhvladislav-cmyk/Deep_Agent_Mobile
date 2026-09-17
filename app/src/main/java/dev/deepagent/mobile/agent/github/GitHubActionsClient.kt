@@ -208,7 +208,13 @@ class GitHubActionsClient {
                     MIN_POLL_TIMEOUT_MS,
                     MAX_POLL_TIMEOUT_MS,
                 )
-            var run = discoverRun(request, dispatchedAt, deadline)
+            var run = discoverRun(
+                request = request,
+                dispatchedAt = dispatchedAt,
+                deadline = deadline,
+                expectedCommitSha = expectedCommitSha,
+                expectedSessionId = expectedSessionId,
+            )
                 ?: return@withContext publish(
                     current.copy(
                         status = ActionsOperationStatus.UNKNOWN,
@@ -430,6 +436,8 @@ class GitHubActionsClient {
         request: ActionsRunRequest,
         dispatchedAt: Long,
         deadline: Long,
+        expectedCommitSha: String,
+        expectedSessionId: String?,
     ): RunInfo? {
         while (System.currentTimeMillis() < deadline) {
             currentCoroutineContext().ensureActive()
