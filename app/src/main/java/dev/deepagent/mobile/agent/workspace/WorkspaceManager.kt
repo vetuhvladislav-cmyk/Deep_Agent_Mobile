@@ -322,6 +322,7 @@ class WorkspaceManager(context: Context) {
                     zip.closeEntry()
                     continue
                 }
+                budget.claimPath(relative)
 
                 val target = resolveChild(destination, relative)
                 if (entry.isDirectory) {
@@ -382,6 +383,7 @@ class WorkspaceManager(context: Context) {
                     relativeParent + "/" + childName
                 },
             ) ?: continue
+            budget.claimPath(relativeName)
             val target = resolveChild(destination, relativeName)
 
             if (child.isDirectory) {
@@ -575,8 +577,15 @@ class WorkspaceManager(context: Context) {
     }
 
     private class ImportBudget {
+        private val claimedPaths = mutableSetOf<String>()
         private var files = 0
         private var bytes = 0L
+
+        fun claimPath(path: String) {
+            check(claimedPaths.add(path)) {
+                "Workspace import содержит повторяющийся путь"
+            }
+        }
 
         fun beginFile() {
             files += 1
