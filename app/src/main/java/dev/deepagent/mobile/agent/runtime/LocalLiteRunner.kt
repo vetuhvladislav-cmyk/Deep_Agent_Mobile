@@ -2,7 +2,10 @@ package dev.deepagent.mobile.agent.runtime
 
 import android.content.Context
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.Executors
@@ -50,28 +53,38 @@ class LocalLiteRunner(
         val capture = executor.submit<String> {
             captureOutput(process, MAX_OUTPUT_CHARS)
         }
-        val finished = process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        if (!finished) process.destroyForcibly()
-        val output = runCatching {
-            capture.get(CAPTURE_GRACE_SECONDS, TimeUnit.SECONDS)
-        }.getOrElse {
-            process.destroyForcibly()
+        try {
+            val finished = process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            if (!finished) process.destroyForcibly()
+            val output = try {
+                capture.get(CAPTURE_GRACE_SECONDS, TimeUnit.SECONDS)
+            } catch (cancelled: CancellationException) {
+                process.destroyForcibly()
+                capture.cancel(true)
+                throw cancelled
+            } catch (_: Exception) {
+                process.destroyForcibly()
+                capture.cancel(true)
+                ""
+            }
+            currentCoroutineContext().ensureActive()
+
+            if (!finished) {
+                throw IllegalStateException("Local Lite Runner probe timeout")
+            }
+
+            ProbeResult(
+                exitCode = process.exitValue(),
+                stdout = (output + "workspace=" + workspace.path).trim(),
+                stderr = "",
+                workspace = workspace,
+                durationMs = (System.nanoTime() - startedAt) / 1_000_000,
+            )
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
             capture.cancel(true)
-            ""
+            executor.shutdownNow()
         }
-        executor.shutdownNow()
-
-        if (!finished) {
-            throw IllegalStateException("Local Lite Runner probe timeout")
-        }
-
-        ProbeResult(
-            exitCode = process.exitValue(),
-            stdout = (output + "workspace=" + workspace.path).trim(),
-            stderr = "",
-            workspace = workspace,
-            durationMs = (System.nanoTime() - startedAt) / 1_000_000,
-        )
     }
 
     private fun captureOutput(process: Process, maxChars: Int): String {
