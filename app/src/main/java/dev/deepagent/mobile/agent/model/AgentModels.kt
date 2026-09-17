@@ -909,7 +909,7 @@ data class PatchRollbackResult(
 
 internal object AgentRedactor {
     private val urlCredentialPattern = Regex(
-        """(?i)(https?://)[^\\s/@:]+:[^\\s/@]+@""",
+        """(?i)(https?://)[^\s/@:]+:[^\s/@]+@""",
     )
     private val dataUrlPattern = Regex(
         """data:[^;\s]+;base64,[A-Za-z0-9+/=]+""",
