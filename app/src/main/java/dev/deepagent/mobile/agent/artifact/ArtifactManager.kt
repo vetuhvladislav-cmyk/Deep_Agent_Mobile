@@ -131,14 +131,9 @@ class ArtifactManager {
                 source.toPath(),
                 target.toPath(),
                 StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING,
             )
         } catch (_: Exception) {
-            Files.move(
-                source.toPath(),
-                target.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-            )
+            Files.move(source.toPath(), target.toPath())
         }
     }
 

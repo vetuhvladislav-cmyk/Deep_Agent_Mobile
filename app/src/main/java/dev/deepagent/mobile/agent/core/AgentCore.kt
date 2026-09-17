@@ -1490,19 +1490,19 @@ class AgentCore(context: Context) : AgentBridge {
         _actionsState.value = restored.actionsState
             ?: ActionsOperationState(sessionId = restored.sessionId)
         val restoredInteractive = restored.interactiveState
-        _interactiveState.value = if (
-            restoredInteractive?.status == InteractiveSessionStatus.STARTING ||
-            restoredInteractive?.status == InteractiveSessionStatus.RUNNING
-        ) {
-            restoredInteractive.copy(
+        _interactiveState.value = restoredInteractive
+            ?.takeIf {
+                it.status == InteractiveSessionStatus.STARTING ||
+                    it.status == InteractiveSessionStatus.RUNNING
+            }
+            ?.copy(
                 status = InteractiveSessionStatus.UNKNOWN,
                 summary = "Interactive process не подтверждён после восстановления",
                 errorCode = "INTERACTIVE_RECOVERY_REQUIRED",
                 updatedAt = System.currentTimeMillis(),
             )
-        } else {
-            restoredInteractive ?: InteractiveSessionState(sessionId = restored.sessionId)
-        }
+            ?: restoredInteractive
+            ?: InteractiveSessionState(sessionId = restored.sessionId)
         _patchRecovery.value = restored.patchRecovery
         _events.value = restored.events.takeLast(MAX_EVENTS)
 

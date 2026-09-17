@@ -1020,11 +1020,12 @@ class GitHubActionsClient {
         readLimited(input, maxBytes)
 
     private fun requireSafeArchivePath(path: String) {
+        val normalized = path.trimEnd('/')
         if (
-            path.isBlank() ||
-            path.startsWith("/") ||
-            path.contains('\\') ||
-            path.split('/').any { it == ".." || it.isBlank() }
+            normalized.isBlank() ||
+            normalized.startsWith("/") ||
+            normalized.contains('\\') ||
+            normalized.split('/').any { it == ".." || it.isBlank() }
         ) {
             throw ArtifactVerificationException(
                 "Artifact содержит небезопасный путь",
