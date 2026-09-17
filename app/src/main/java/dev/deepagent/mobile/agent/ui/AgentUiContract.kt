@@ -1,6 +1,7 @@
 package dev.deepagent.mobile.agent.ui
 
 import androidx.compose.ui.Modifier
+import java.security.MessageDigest
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -37,7 +38,13 @@ object AgentUiContract {
     const val CLEAR_CREDENTIALS = "agent.credentials.clear"
 
     fun workspace(id: String): String = "agent.workspace." + id
-    fun workspaceEntry(path: String): String = "agent.workspace.entry." + path.hashCode()
+    fun workspaceEntry(path: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(path.toByteArray(Charsets.UTF_8))
+        val stableId = digest.take(8)
+            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+        return "agent.workspace.entry." + stableId
+    }
     fun event(sequence: Long): String = "agent.event." + sequence
 }
 
