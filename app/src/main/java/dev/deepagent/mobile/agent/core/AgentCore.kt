@@ -48,6 +48,8 @@ import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
+import dev.deepagent.mobile.agent.model.ApprovalToken
+import dev.deepagent.mobile.agent.model.ApprovalTokenFactory
 import dev.deepagent.mobile.agent.model.PendingPatchApproval
 import dev.deepagent.mobile.agent.model.PatchRecoveryState
 import dev.deepagent.mobile.agent.model.PatchRecoveryStatus
@@ -96,6 +98,7 @@ private data class PendingPatch(
     val argumentsJson: String,
     val preview: PatchPreview,
     val canApply: Boolean,
+    val approvalToken: ApprovalToken,
     val invocationId: String? = null,
 )
 
@@ -1866,12 +1869,23 @@ class AgentCore(context: Context) : AgentBridge {
                     if (previewResult.ok && preview != null) {
                         val permission = currentRequestSummary?.permission
                             ?: PermissionMode.READ_ONLY
+                        val pendingWorkspaceId = request.workspaceId.orEmpty()
                         val pendingPatch = PendingPatch(
                             sessionId = currentSessionId.orEmpty(),
-                            workspaceId = request.workspaceId.orEmpty(),
+                            workspaceId = pendingWorkspaceId,
                             argumentsJson = call.arguments,
                             preview = preview,
                             canApply = permission.allows(PermissionMode.LOCAL_WRITE),
+                            approvalToken = ApprovalTokenFactory.issue(
+                                operation = ApprovalTokenFactory.APPLY_PATCH_OPERATION,
+                                sessionId = currentSessionId.orEmpty(),
+                                workspaceId = pendingWorkspaceId,
+                                workspaceFingerprint = preview.workspaceFingerprint,
+                                path = preview.path,
+                                oldSha256 = preview.oldSha256,
+                                newSha256 = preview.newSha256,
+                                argumentsJson = call.arguments,
+                            ),
                             invocationId = invocationId,
                         )
                         _pendingPatch.value = pendingPatch
@@ -1949,9 +1963,53 @@ class AgentCore(context: Context) : AgentBridge {
         }
     }
 
-    override fun approvePendingPatch() {
+    override fun approvePendingPatch(approvalToken: String) {
         if (_state.value.status != AgentSessionStatus.WAITING_APPROVAL) return
         val pending = _pendingPatch.value ?: return
+        val expectedToken = pending.approvalToken
+        val now = System.currentTimeMillis()
+        val tokenValid = expectedToken.matches(
+            presentedValue = approvalToken,
+            operation = ApprovalTokenFactory.APPLY_PATCH_OPERATION,
+            sessionId = pending.sessionId,
+            workspaceId = pending.workspaceId,
+            workspaceFingerprint = pending.preview.workspaceFingerprint,
+            path = pending.preview.path,
+            oldSha256 = pending.preview.oldSha256,
+            newSha256 = pending.preview.newSha256,
+            argumentsJson = pending.argumentsJson,
+            now = now,
+        )
+        if (!tokenValid) {
+            val expired = expectedToken.isExpired(now)
+            recordDecision(
+                kind = "PATCH",
+                state = "DENIED",
+                detail = if (expired) {
+                    "Approval token истёк"
+                } else {
+                    "Approval token не совпадает с текущей операцией"
+                },
+            )
+            append(
+                AgentEventKind.ERROR,
+                if (expired) {
+                    "Patch approval истёк; нужен новый preview"
+                } else {
+                    "Patch approval отклонён: token не соответствует текущей операции"
+                },
+            )
+            if (expired) {
+                completeInvocation(
+                    invocationId = pending.invocationId,
+                    state = "UNKNOWN",
+                    summary = "Approval token истёк до применения patch",
+                )
+                clearPendingPatch()
+                markUnknown("Approval token истёк; выполните новый preview перед продолжением")
+            }
+            return
+        }
         if (!pending.canApply) {
             append(
                 AgentEventKind.ERROR,
@@ -2389,6 +2447,8 @@ class AgentCore(context: Context) : AgentBridge {
                 MAX_EVENT_DETAIL_CHARS,
             ).orEmpty(),
             canApply = canApply,
+            approvalToken = approvalToken.value,
+            approvalExpiresAt = approvalToken.expiresAt,
         )
     }
 
