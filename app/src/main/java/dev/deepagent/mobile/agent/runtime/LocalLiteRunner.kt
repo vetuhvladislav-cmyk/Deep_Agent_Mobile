@@ -5,6 +5,7 @@ import dev.deepagent.mobile.agent.workspace.WorkspaceManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -42,25 +43,59 @@ class LocalLiteRunner(
             "local-lite-ready\\n",
         )
             .directory(workspace)
-            .redirectErrorStream(false)
+            .redirectErrorStream(true)
             .start()
 
-        val stdout = process.inputStream.bufferedReader().use { it.readText() } +
-            "workspace=" + workspace.path
-        val stderr = process.errorStream.bufferedReader().use { it.readText() }
-        val finished = process.waitFor(10, TimeUnit.SECONDS)
+        val executor = Executors.newSingleThreadExecutor()
+        val capture = executor.submit<String> {
+            captureOutput(process, MAX_OUTPUT_CHARS)
+        }
+        val finished = process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        if (!finished) process.destroyForcibly()
+        val output = runCatching {
+            capture.get(CAPTURE_GRACE_SECONDS, TimeUnit.SECONDS)
+        }.getOrElse {
+            process.destroyForcibly()
+            capture.cancel(true)
+            ""
+        }
+        executor.shutdownNow()
 
         if (!finished) {
-            process.destroyForcibly()
             throw IllegalStateException("Local Lite Runner probe timeout")
         }
 
         ProbeResult(
             exitCode = process.exitValue(),
-            stdout = stdout.trim(),
-            stderr = stderr.trim(),
+            stdout = (output + "workspace=" + workspace.path).trim(),
+            stderr = "",
             workspace = workspace,
             durationMs = (System.nanoTime() - startedAt) / 1_000_000,
         )
     }
+
+    private fun captureOutput(process: Process, maxChars: Int): String {
+        val output = StringBuilder(maxChars.coerceAtMost(4 * 1024))
+        val buffer = CharArray(4 * 1024)
+        var remaining = maxChars.coerceAtLeast(0)
+        process.inputStream.bufferedReader().use { reader ->
+            while (true) {
+                val count = reader.read(buffer)
+                if (count < 0) break
+                if (remaining > 0) {
+                    val kept = minOf(count, remaining)
+                    output.append(buffer, 0, kept)
+                    remaining -= kept
+                }
+            }
+        }
+        return output.toString()
+    }
+
+    private companion object {
+        const val PROBE_TIMEOUT_SECONDS = 10L
+        const val CAPTURE_GRACE_SECONDS = 2L
+        const val MAX_OUTPUT_CHARS = 8_000
+    }
+
 }
