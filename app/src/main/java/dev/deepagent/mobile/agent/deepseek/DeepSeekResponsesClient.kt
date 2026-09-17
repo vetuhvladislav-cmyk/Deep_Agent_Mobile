@@ -104,154 +104,154 @@ class DeepSeekResponsesClient {
             ),
         ) {
             require(request.apiKey.isNotBlank()) { "DeepSeek API key is empty" }
-        require(request.model.isNotBlank()) { "DeepSeek model is empty" }
+            require(request.model.isNotBlank()) { "DeepSeek model is empty" }
 
-        val endpoint = request.baseUrl.trimEnd('/') + "/responses"
-        val url = URL(endpoint)
-        require(url.protocol.equals("https", ignoreCase = true)) {
-            "DeepSeek endpoint должен использовать HTTPS"
-        }
-        require(
-            url.host.equals(DEEPSEEK_API_HOST, ignoreCase = true) &&
-                (url.port == -1 || url.port == 443) &&
-                url.userInfo == null &&
-                url.query == null &&
-                url.ref == null
-        ) {
-            "DeepSeek endpoint должен использовать разрешённый host без credentials"
-        }
-        val connection = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            instanceFollowRedirects = false
-            doOutput = true
-            connectTimeout = DEEPSEEK_CONNECT_TIMEOUT_MS
-            readTimeout = DEEPSEEK_READ_TIMEOUT_MS
-            useCaches = false
-            setRequestProperty("Authorization", "Bearer " + request.apiKey)
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Accept", "text/event-stream")
-        }
-        val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion {
-            connection.disconnect()
-        }
-
-        var completedResponse: JSONObject? = null
-        var failure: String? = null
-
-        activeConnection = connection
-        try {
-            val body = buildRequestBody(request).toString()
-            connection.outputStream.use { output ->
-                output.write(body.toByteArray(Charsets.UTF_8))
+            val endpoint = request.baseUrl.trimEnd('/') + "/responses"
+            val url = URL(endpoint)
+            require(url.protocol.equals("https", ignoreCase = true)) {
+                "DeepSeek endpoint должен использовать HTTPS"
+            }
+            require(
+                url.host.equals(DEEPSEEK_API_HOST, ignoreCase = true) &&
+                    (url.port == -1 || url.port == 443) &&
+                    url.userInfo == null &&
+                    url.query == null &&
+                    url.ref == null
+            ) {
+                "DeepSeek endpoint должен использовать разрешённый host без credentials"
+            }
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                instanceFollowRedirects = false
+                doOutput = true
+                connectTimeout = DEEPSEEK_CONNECT_TIMEOUT_MS
+                readTimeout = DEEPSEEK_READ_TIMEOUT_MS
+                useCaches = false
+                setRequestProperty("Authorization", "Bearer " + request.apiKey)
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Accept", "text/event-stream")
+            }
+            val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion {
+                connection.disconnect()
             }
 
-            val status = connection.responseCode
-            if (status !in 200..299) {
-                throw IOException("DeepSeek HTTP " + status)
-            }
+            var completedResponse: JSONObject? = null
+            var failure: String? = null
 
-            connection.inputStream.bufferedReader().use { reader ->
-                var eventName: String? = null
-                val data = StringBuilder()
-                var streamChars = 0
-
-                fun dispatchEvent() {
-                    val currentEvent = eventName
-                    val payload = data.toString().trim()
-                    eventName = null
-                    data.clear()
-
-                    if (currentEvent.isNullOrBlank() || payload.isBlank()) return
-
-                    val json = runCatching { JSONObject(payload) }.getOrNull()
-                    when (currentEvent) {
-                        "response.reasoning_text.delta" -> {
-                            json?.optString("delta")
-                                ?.takeIf { it.isNotEmpty() }
-                                ?.let { onEvent(DeepSeekStreamEvent.ReasoningDelta(it)) }
-                        }
-
-                        "response.output_text.delta" -> {
-                            json?.optString("delta")
-                                ?.takeIf { it.isNotEmpty() }
-                                ?.let { onEvent(DeepSeekStreamEvent.OutputDelta(it)) }
-                        }
-
-                        "response.function_call_arguments.delta",
-                        "response.custom_tool_call_input.delta",
-                        -> {
-                            json?.optString("delta")
-                                ?.takeIf { it.isNotEmpty() }
-                                ?.let { onEvent(DeepSeekStreamEvent.ToolArgumentsDelta(it)) }
-                        }
-
-                        "response.completed" -> {
-                            completedResponse = json?.optJSONObject("response") ?: json
-                            onEvent(DeepSeekStreamEvent.Completed(completedResponse))
-                        }
-
-                        "response.incomplete" -> {
-                            failure = "DeepSeek response incomplete"
-                            onEvent(DeepSeekStreamEvent.Failed(failure.orEmpty()))
-                        }
-
-                        "response.failed" -> {
-                            val responseError = json
-                                ?.optJSONObject("response")
-                                ?.optJSONObject("error")
-                                ?.optString("message")
-                            failure = responseError?.takeIf { it.isNotBlank() }
-                                ?: "DeepSeek response failed"
-                            onEvent(DeepSeekStreamEvent.Failed(failure.orEmpty()))
-                        }
-                    }
+            activeConnection = connection
+            try {
+                val body = buildRequestBody(request).toString()
+                connection.outputStream.use { output ->
+                    output.write(body.toByteArray(Charsets.UTF_8))
                 }
 
-                while (true) {
-                    currentCoroutineContext().ensureActive()
-                    val line = readSseLine(reader, MAX_SSE_LINE_CHARS) ?: break
-                    streamChars += line.length + 1
-                    require(streamChars <= MAX_SSE_STREAM_CHARS) {
-                        "DeepSeek SSE response exceeds the limit"
-                    }
-                    when {
-                        line.startsWith("event:") -> {
-                            eventName = line.removePrefix("event:").trim()
-                        }
+                val status = connection.responseCode
+                if (status !in 200..299) {
+                    throw IOException("DeepSeek HTTP " + status)
+                }
 
-                        line.startsWith("data:") -> {
-                            if (data.isNotEmpty()) data.append('\n')
-                            data.append(line.removePrefix("data:").trimStart())
-                            require(data.length <= MAX_SSE_LINE_CHARS) {
-                                "DeepSeek SSE event exceeds the limit"
+                connection.inputStream.bufferedReader().use { reader ->
+                    var eventName: String? = null
+                    val data = StringBuilder()
+                    var streamChars = 0
+
+                    fun dispatchEvent() {
+                        val currentEvent = eventName
+                        val payload = data.toString().trim()
+                        eventName = null
+                        data.clear()
+
+                        if (currentEvent.isNullOrBlank() || payload.isBlank()) return
+
+                        val json = runCatching { JSONObject(payload) }.getOrNull()
+                        when (currentEvent) {
+                            "response.reasoning_text.delta" -> {
+                                json?.optString("delta")
+                                    ?.takeIf { it.isNotEmpty() }
+                                    ?.let { onEvent(DeepSeekStreamEvent.ReasoningDelta(it)) }
+                            }
+
+                            "response.output_text.delta" -> {
+                                json?.optString("delta")
+                                    ?.takeIf { it.isNotEmpty() }
+                                    ?.let { onEvent(DeepSeekStreamEvent.OutputDelta(it)) }
+                            }
+
+                            "response.function_call_arguments.delta",
+                            "response.custom_tool_call_input.delta",
+                            -> {
+                                json?.optString("delta")
+                                    ?.takeIf { it.isNotEmpty() }
+                                    ?.let { onEvent(DeepSeekStreamEvent.ToolArgumentsDelta(it)) }
+                            }
+
+                            "response.completed" -> {
+                                completedResponse = json?.optJSONObject("response") ?: json
+                                onEvent(DeepSeekStreamEvent.Completed(completedResponse))
+                            }
+
+                            "response.incomplete" -> {
+                                failure = "DeepSeek response incomplete"
+                                onEvent(DeepSeekStreamEvent.Failed(failure.orEmpty()))
+                            }
+
+                            "response.failed" -> {
+                                val responseError = json
+                                    ?.optJSONObject("response")
+                                    ?.optJSONObject("error")
+                                    ?.optString("message")
+                                failure = responseError?.takeIf { it.isNotBlank() }
+                                    ?: "DeepSeek response failed"
+                                onEvent(DeepSeekStreamEvent.Failed(failure.orEmpty()))
                             }
                         }
-
-                        line.isBlank() -> dispatchEvent()
                     }
+
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val line = readSseLine(reader, MAX_SSE_LINE_CHARS) ?: break
+                        streamChars += line.length + 1
+                        require(streamChars <= MAX_SSE_STREAM_CHARS) {
+                            "DeepSeek SSE response exceeds the limit"
+                        }
+                        when {
+                            line.startsWith("event:") -> {
+                                eventName = line.removePrefix("event:").trim()
+                            }
+
+                            line.startsWith("data:") -> {
+                                if (data.isNotEmpty()) data.append('\n')
+                                data.append(line.removePrefix("data:").trimStart())
+                                require(data.length <= MAX_SSE_LINE_CHARS) {
+                                    "DeepSeek SSE event exceeds the limit"
+                                }
+                            }
+
+                            line.isBlank() -> dispatchEvent()
+                        }
+                    }
+
+                    dispatchEvent()
                 }
-
-                dispatchEvent()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                failure = error.message ?: "DeepSeek request failed"
+                onEvent(DeepSeekStreamEvent.Failed(failure.orEmpty()))
+            } finally {
+                cancellationHandle?.dispose()
+                connection.disconnect()
+                if (activeConnection === connection) {
+                    activeConnection = null
+                }
             }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            currentCoroutineContext().ensureActive()
-            failure = error.message ?: "DeepSeek request failed"
-            onEvent(DeepSeekStreamEvent.Failed(failure.orEmpty()))
-        } finally {
-            cancellationHandle?.dispose()
-            connection.disconnect()
-            if (activeConnection === connection) {
-                activeConnection = null
-            }
-        }
 
-        DeepSeekRoundResult(
-            response = completedResponse,
-            functionCalls = parseFunctionCalls(completedResponse),
-            failure = failure,
-        )
+            DeepSeekRoundResult(
+                response = completedResponse,
+                functionCalls = parseFunctionCalls(completedResponse),
+                failure = failure,
+            )
         }
     }
 
