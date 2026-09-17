@@ -888,7 +888,10 @@ class AgentCore(context: Context) : AgentBridge {
 
     override suspend fun startRuntime(requestedPermission: PermissionMode): RuntimeState {
         check(!closed) { "AgentCore уже закрыт" }
-        if (_state.value.status == AgentSessionStatus.RUNNING) {
+        if (
+            _state.value.status == AgentSessionStatus.RUNNING ||
+            _state.value.status == AgentSessionStatus.WAITING_APPROVAL
+        ) {
             val busy = RuntimeState(
                 status = RuntimeStatus.FAILED,
                 sessionId = currentSessionId,
