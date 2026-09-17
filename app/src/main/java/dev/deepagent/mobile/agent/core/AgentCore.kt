@@ -2535,7 +2535,8 @@ class AgentCore(context: Context) : AgentBridge {
 
         val previousState = restored.state
         val requiresRecovery = previousState.status == AgentSessionStatus.RUNNING ||
-            previousState.status == AgentSessionStatus.WAITING_APPROVAL
+            previousState.status == AgentSessionStatus.WAITING_APPROVAL ||
+            previousState.recoveryRequired
         val recoveryMessage =
             "Сессия восстановлена после незавершённой операции; требуется re-check"
         if (requiresRecovery) {
@@ -2544,7 +2545,8 @@ class AgentCore(context: Context) : AgentBridge {
                 val invocation = invocationRecords[index]
                 if (
                     invocation.state == "RUNNING" ||
-                    invocation.state == "WAITING_APPROVAL"
+                    invocation.state == "WAITING_APPROVAL" ||
+                    invocation.state == "PENDING"
                 ) {
                     invocationRecords[index] = invocation.copy(
                         state = "UNKNOWN",

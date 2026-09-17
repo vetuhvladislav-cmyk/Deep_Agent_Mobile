@@ -141,6 +141,10 @@ data class SessionInvocationRecord(
             if (!isValidJournalIdentifier(invocationId) || toolName.isBlank()) {
                 return null
             }
+            val rawState = value.optString("state")
+                .ifBlank { "UNKNOWN" }
+                .take(MAX_STATE_CHARS)
+            val legacyPending = rawState == "PENDING"
             return SessionInvocationRecord(
                 invocationId = invocationId,
                 toolName = AgentRedactor.text(toolName, MAX_TOOL_NAME_CHARS).orEmpty(),
@@ -148,15 +152,18 @@ data class SessionInvocationRecord(
                     value.optString("call_id"),
                     MAX_IDENTIFIER_CHARS,
                 )?.takeIf { it.isNotBlank() },
-                state = value.optString("state")
-                    .ifBlank { "UNKNOWN" }
-                    .take(MAX_STATE_CHARS),
+                state = if (legacyPending) "UNKNOWN" else rawState,
                 startedAt = value.optLongOrNull("started_at") ?: 0L,
                 completedAt = value.optLongOrNull("completed_at"),
                 summary = AgentRedactor.text(
                     value.optString("summary"),
                     MAX_SUMMARY_CHARS,
-                )?.takeIf { it.isNotBlank() },
+                )?.takeIf { it.isNotBlank() }
+                    ?: if (legacyPending) {
+                        "Legacy PENDING operation requires recovery"
+                    } else {
+                        null
+                    },
             )
         }
     }
@@ -354,11 +361,19 @@ data class PersistedAgentSession(
             val stateSessionId = stateObject.optString("session_id")
                 .takeIf { it.isNotBlank() }
                 ?: sessionId
+            val rawStateStatus = stateObject.optString("status")
+                .trim()
+                .uppercase()
+            val legacyPending = rawStateStatus == "PENDING"
             val state = AgentSessionState(
-                status = enumOrDefault(
-                    stateObject.optString("status"),
-                    AgentSessionStatus.IDLE,
-                ),
+                status = if (legacyPending) {
+                    AgentSessionStatus.UNKNOWN
+                } else {
+                    enumOrDefault(
+                        rawStateStatus,
+                        AgentSessionStatus.IDLE,
+                    )
+                },
                 target = stateObject.optString("target")
                     .takeIf { it.isNotBlank() }
                     ?.let { enumOrDefault(it, ExecutionTarget.AUTO) },
@@ -371,7 +386,12 @@ data class PersistedAgentSession(
                 lastError = AgentRedactor.text(
                     stateObject.optString("last_error"),
                     MAX_ERROR_CHARS,
-                )?.takeIf { it.isNotBlank() },
+                )?.takeIf { it.isNotBlank() }
+                    ?: if (legacyPending) {
+                        "Legacy PENDING operation requires recovery"
+                    } else {
+                        null
+                    },
                 sessionId = stateSessionId,
                 workspaceId = AgentRedactor.text(
                     stateObject.optString("workspace_id"),
@@ -385,7 +405,7 @@ data class PersistedAgentSession(
                 recoveryRequired = stateObject.optBoolean(
                     "recovery_required",
                     false,
-                ),
+                ) || legacyPending,
                 ledgerHealth = AgentRedactor.text(
                     stateObject.optString("ledger_health"),
                     64,

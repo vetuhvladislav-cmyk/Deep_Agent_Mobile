@@ -70,6 +70,27 @@ class SessionStoreTest {
     }
 
     @Test
+    fun legacyPendingStateBecomesUnknownOnRestore() {
+        val json = sampleSession(
+            status = AgentSessionStatus.RUNNING,
+            updatedAt = 300L,
+        ).toJson()
+        json.getJSONObject("state")
+            .put("status", "PENDING")
+            .put("recovery_required", false)
+        json.getJSONArray("invocations")
+            .getJSONObject(0)
+            .put("state", "PENDING")
+
+        val restored = PersistedAgentSession.fromJson(json)
+
+        assertNotNull(restored)
+        assertEquals(AgentSessionStatus.UNKNOWN, restored?.state?.status)
+        assertTrue(restored?.state?.recoveryRequired == true)
+        assertEquals("UNKNOWN", restored?.invocations?.single()?.state)
+    }
+
+    @Test
     fun invalidPointerAndUnsupportedSnapshotsDoNotReplaceValidLatest() {
         val filesDirectory = temporaryFolder.newFolder("files")
         val valid = sampleSession(
