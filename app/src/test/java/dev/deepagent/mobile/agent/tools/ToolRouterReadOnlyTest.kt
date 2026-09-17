@@ -5,8 +5,6 @@ import android.content.ContextWrapper
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
 import java.io.File
 import kotlinx.coroutines.runBlocking
-import org.json.JSONArray
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -38,19 +36,28 @@ class ToolRouterReadOnlyTest {
         File(workspaceRoot, "README.md").writeText("safe workspace")
         File(workspaceRoot, ".env").writeText("TOKEN=must-not-leak")
 
-        val summary = JSONObject()
-            .put("id", workspaceId)
-            .put("display_name", "Fixture")
-            .put("source_type", "test")
-            .put("root_path", workspaceRoot.absolutePath)
-            .put("file_count", 3)
-            .put("total_bytes", workspaceRoot.walkTopDown().filter { it.isFile }.sumOf { it.length() })
-            .put("imported_at", 1L)
-        JSONObject()
-            .put("version", 2)
-            .put("selected_id", workspaceId)
-            .put("workspaces", JSONArray().put(summary))
-            .also { File(filesDirectory, "agent-workspaces.json").writeText(it.toString()) }
+        val escapedRootPath = workspaceRoot.absolutePath
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        val totalBytes = workspaceRoot.walkTopDown()
+            .filter { it.isFile }
+            .sumOf { it.length() }
+        val index = """
+            {
+              "version": 2,
+              "selected_id": "$workspaceId",
+              "workspaces": [{
+                "id": "$workspaceId",
+                "display_name": "Fixture",
+                "source_type": "test",
+                "root_path": "$escapedRootPath",
+                "file_count": 3,
+                "total_bytes": $totalBytes,
+                "imported_at": 1
+              }]
+            }
+        """.trimIndent()
+        File(filesDirectory, "agent-workspaces.json").writeText(index)
 
         router = ToolRouter(WorkspaceManager(TestContext(filesDirectory)))
     }
@@ -59,7 +66,7 @@ class ToolRouterReadOnlyTest {
     fun exposesBoundedReadOnlyWorkspaceOperations() = runBlocking {
         val listed = router.execute(
             ToolRouter.TOOL_LIST_FILES,
-            JSONObject().put("path", "").put("max_depth", 4).toString(),
+            """{"path":"","max_depth":4}""",
             workspaceId,
         )
         assertTrue(listed.ok)
@@ -68,7 +75,7 @@ class ToolRouterReadOnlyTest {
 
         val read = router.execute(
             ToolRouter.TOOL_READ_FILE,
-            JSONObject().put("path", "src/Main.kt").toString(),
+            """{"path":"src/Main.kt"}""",
             workspaceId,
         )
         assertTrue(read.ok)
@@ -76,7 +83,7 @@ class ToolRouterReadOnlyTest {
 
         val search = router.execute(
             ToolRouter.TOOL_SEARCH_CODE,
-            JSONObject().put("query", "deep agent").toString(),
+            """{"query":"deep agent"}""",
             workspaceId,
         )
         assertTrue(search.ok)
@@ -87,10 +94,7 @@ class ToolRouterReadOnlyTest {
     fun rejectsUnknownArgumentsAndWorkspaceEscapes() = runBlocking {
         val unknown = router.execute(
             ToolRouter.TOOL_READ_FILE,
-            JSONObject()
-                .put("path", "README.md")
-                .put("extra", "reject-me")
-                .toString(),
+            """{"path":"README.md","extra":"reject-me"}""",
             workspaceId,
         )
         assertFalse(unknown.ok)
@@ -98,14 +102,14 @@ class ToolRouterReadOnlyTest {
 
         val escaped = router.execute(
             ToolRouter.TOOL_READ_FILE,
-            JSONObject().put("path", "../outside.txt").toString(),
+            """{"path":"../outside.txt"}""",
             workspaceId,
         )
         assertFalse(escaped.ok)
 
         val sensitive = router.execute(
             ToolRouter.TOOL_READ_FILE,
-            JSONObject().put("path", ".env").toString(),
+            """{"path":".env"}""",
             workspaceId,
         )
         assertFalse(sensitive.ok)
