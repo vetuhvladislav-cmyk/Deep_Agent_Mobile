@@ -29,6 +29,9 @@ data class SessionRequestSummary(
     val repository: String?,
     val workflow: String?,
     val ref: String,
+    val deepSeekBaseUrl: String? = null,
+    val model: String? = null,
+    val imageAssetId: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("task", AgentRedactor.text(task, MAX_TASK_CHARS))
@@ -39,6 +42,9 @@ data class SessionRequestSummary(
         .put("repository", AgentRedactor.text(repository, MAX_IDENTIFIER_CHARS))
         .put("workflow", AgentRedactor.text(workflow, MAX_IDENTIFIER_CHARS))
         .put("ref", AgentRedactor.text(ref, MAX_IDENTIFIER_CHARS))
+        .put("deep_seek_base_url", AgentRedactor.text(deepSeekBaseUrl, MAX_IDENTIFIER_CHARS))
+        .put("model", AgentRedactor.text(model, MAX_IDENTIFIER_CHARS))
+        .put("image_asset_id", AgentRedactor.text(imageAssetId, MAX_IDENTIFIER_CHARS))
 
     companion object {
         const val MAX_TASK_CHARS = 8_000
@@ -75,6 +81,18 @@ data class SessionRequestSummary(
                     value.optString("ref").ifBlank { "main" },
                     MAX_IDENTIFIER_CHARS,
                 ).orEmpty(),
+                deepSeekBaseUrl = AgentRedactor.text(
+                    value.optString("deep_seek_base_url"),
+                    MAX_IDENTIFIER_CHARS,
+                )?.takeIf { it.isNotBlank() },
+                model = AgentRedactor.text(
+                    value.optString("model"),
+                    MAX_IDENTIFIER_CHARS,
+                )?.takeIf { it.isNotBlank() },
+                imageAssetId = AgentRedactor.text(
+                    value.optString("image_asset_id"),
+                    MAX_IDENTIFIER_CHARS,
+                )?.takeIf { it.isNotBlank() },
             )
         }
     }
@@ -269,7 +287,7 @@ data class PersistedAgentSession(
                         item.optString("event_id"),
                         MAX_EVENT_ID_CHARS,
                     )?.takeIf { isValidJournalIdentifier(it) }
-                        ?: UUID.randomUUID().toString()
+                        ?: sessionId + ":restored:" + index
                     add(
                         AgentEvent(
                             kind = enumOrDefault(
