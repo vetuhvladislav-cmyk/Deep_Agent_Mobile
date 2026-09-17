@@ -81,6 +81,8 @@ Session Journal остаётся владельцем AgentCore/SessionStore: к
 
 Pull Request не создаётся автоматически. Перед ручным PR_CREATE approval Core повторно проверяет выбранный workspace через Git status, требует подтверждённый текущий HEAD SHA и active sessionId, а GitHub response обязан вернуть тот же head SHA. Ошибка сети, mismatch или неполная provenance переводят операцию в UNKNOWN/FAILED и блокируют replay; merge/release остаются отдельными decision gates.
 
+GitHub Actions dispatch имеет обязательную корреляцию `agent_session_id`, `operation_id` и expected commit SHA. Оба идентификатора передаются в workflow inputs и run-name; discovery принимает только run с совпадающими session/operation markers и commit SHA. Artifact download дополнительно связывается с конкретными run ID и source SHA, поэтому concurrent run нельзя выбрать только по branch/ref.
+
 ## 3. Контракты данных
 
 ### 3.1 WorkspaceIdentity
