@@ -10,6 +10,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
@@ -694,15 +695,10 @@ class GitHubPullRequestClient {
 
             val status = connection.responseCode
             val responseText = if (status in 200..299) {
-                connection.inputStream
-                    .bufferedReader()
-                    .use { it.readText() }
+                readBounded(connection.inputStream, MAX_RESPONSE_CHARS)
             } else {
-                connection.errorStream
-                    ?.bufferedReader()
-                    ?.use { it.readText() }
-                    .orEmpty()
-            }.take(MAX_RESPONSE_CHARS)
+                readBounded(connection.errorStream, MAX_RESPONSE_CHARS)
+            }
 
             if (status != HTTP_CREATED) {
                 val message = runCatching {
@@ -786,6 +782,22 @@ class GitHubPullRequestClient {
             )
         } finally {
             connection.disconnect()
+        }
+    }
+
+    private fun readBounded(input: InputStream?, maxChars: Int): String {
+        if (input == null) return ""
+        return input.bufferedReader().use { reader ->
+            val buffer = CharArray(4 * 1024)
+            val result = StringBuilder(maxChars.coerceAtMost(buffer.size))
+            var remaining = maxChars.coerceAtLeast(0)
+            while (remaining > 0) {
+                val count = reader.read(buffer, 0, minOf(buffer.size, remaining))
+                if (count < 0) break
+                result.append(buffer, 0, count)
+                remaining -= count
+            }
+            result.toString()
         }
     }
 
