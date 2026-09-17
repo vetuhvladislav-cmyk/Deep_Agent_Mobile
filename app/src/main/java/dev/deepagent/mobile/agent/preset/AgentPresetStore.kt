@@ -146,7 +146,7 @@ class AgentPresetStore(context: Context) {
             localFile.parentFile,
             "." + localFile.name + "." + UUID.randomUUID() + ".tmp",
         )
-        check(temporary.parentFile?.mkdirs() != false) {
+        check(temporary.parentFile?.let { it.mkdirs() || it.isDirectory } == true) {
             "Не удалось создать каталог локальных пресетов"
         }
         try {
