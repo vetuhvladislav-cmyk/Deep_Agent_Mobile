@@ -57,8 +57,15 @@ class SessionStoreTest {
         assertEquals(1, restored?.events?.size)
         assertEquals(1, restored?.invocations?.size)
         assertEquals(1, restored?.decisions?.size)
+        assertEquals(
+            AgentEvent.SCHEMA_VERSION,
+            restored?.events?.single()?.schemaVersion,
+        )
         assertFalse(
             restored?.events?.single()?.detail?.contains("ghp_secret_token_123456") == true,
+        )
+        assertFalse(
+            restored?.events?.single()?.payload?.contains("ghp_secret_token_123456") == true,
         )
     }
 
@@ -94,6 +101,8 @@ class SessionStoreTest {
             message = "read_file completed",
             detail = "Authorization: Bearer ghp_secret_token_123456",
             sessionId = sessionId,
+            schemaVersion = AgentEvent.SCHEMA_VERSION,
+            payload = """{"operation":"read_file","token":"ghp_secret_token_123456"}""",
             eventId = sessionId + ":event-1",
             sequence = 1L,
         )
