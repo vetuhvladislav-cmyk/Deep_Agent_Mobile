@@ -94,6 +94,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.net.URL
+import java.util.LinkedHashMap
 import java.util.UUID
 
 private data class PendingPatch(
@@ -135,6 +136,7 @@ class AgentCore(context: Context) : AgentBridge {
     private val journalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val submitMutex = Mutex()
     private val journalMutex = Mutex()
+    private val gitOperationCache = LinkedHashMap<String, GitOperationResult>()
 
     private val _state = MutableStateFlow(AgentSessionState())
     override val state: StateFlow<AgentSessionState> = _state.asStateFlow()
@@ -477,6 +479,22 @@ class AgentCore(context: Context) : AgentBridge {
 
     override suspend fun selectWorkspace(workspaceId: String): AgentWorkspaceSnapshot {
         check(!closed) { "AgentCore уже закрыт" }
+        val cached = cachedGitResult(operationId)
+        if (cached != null && cached.sessionId == currentSessionId) {
+            return cached
+        }
+        if (_state.value.status == AgentSessionStatus.UNKNOWN) {
+            val result = GitOperationResult(
+                operation = operation,
+                operationId = operationId,
+                status = GitOperationStatus.UNKNOWN,
+                summary = "Предыдущая операция неизвестна; сначала выполните re-check",
+                errorCode = "GIT_RECHECK_REQUIRED",
+            )
+            val boundResult = result.copy(sessionId = currentSessionId)
+            publishGitResult(boundResult)
+            return boundResult
+        }
         if (
             _state.value.status == AgentSessionStatus.RUNNING ||
             _state.value.status == AgentSessionStatus.WAITING_APPROVAL
@@ -575,36 +593,51 @@ class AgentCore(context: Context) : AgentBridge {
     override suspend fun createGitBranch(
         request: GitBranchRequest,
     ): GitOperationResult {
+        val operationId = normalizeOperationId(request.operationId)
         return runGitWrite(
             operation = GitOperation.CREATE_BRANCH,
+            operationId = operationId,
             requiredPermission = PermissionMode.GITHUB_WRITE,
             description = "Создание branch",
         ) {
-            toolRouter.createGitBranch(workspaceIdForActions(), request)
+            toolRouter.createGitBranch(
+                workspaceIdForActions(),
+                request.copy(operationId = operationId),
+            )
         }
     }
 
     override suspend fun commitGit(
         request: GitCommitRequest,
     ): GitOperationResult {
+        val operationId = normalizeOperationId(request.operationId)
         return runGitWrite(
             operation = GitOperation.COMMIT,
+            operationId = operationId,
             requiredPermission = PermissionMode.GITHUB_WRITE,
             description = "Создание commit",
         ) {
-            toolRouter.commitGit(workspaceIdForActions(), request)
+            toolRouter.commitGit(
+                workspaceIdForActions(),
+                request.copy(operationId = operationId),
+            )
         }
     }
 
     override suspend fun pushGit(
         request: GitPushRequest,
     ): GitOperationResult {
+        val operationId = normalizeOperationId(request.operationId)
         return runGitWrite(
             operation = GitOperation.PUSH,
+            operationId = operationId,
             requiredPermission = PermissionMode.GITHUB_WRITE,
             description = "Push branch",
         ) {
-            toolRouter.pushGit(workspaceIdForActions(), request)
+            toolRouter.pushGit(
+                workspaceIdForActions(),
+                request.copy(operationId = operationId),
+            )
         }
     }
 
@@ -618,8 +651,10 @@ class AgentCore(context: Context) : AgentBridge {
         } else {
             readCredential(CredentialKind.GITHUB_TOKEN).orEmpty()
         }
+        val operationId = normalizeOperationId(request.operationId)
         return runGitWrite(
             operation = GitOperation.CREATE_PULL_REQUEST,
+            operationId = operationId,
             requiredPermission = PermissionMode.PR_CREATE,
             description = "Создание Pull Request",
         ) {
@@ -707,6 +742,7 @@ class AgentCore(context: Context) : AgentBridge {
                             val boundRequest = request.copy(
                                 expectedHeadSha = currentHeadSha,
                                 sessionId = sessionId,
+                                operationId = operationId,
                             )
                             when (val result = pullRequests.create(boundRequest, token)) {
                                 is GitHubPullRequestResult.Created -> GitOperationResult(
@@ -2363,6 +2399,7 @@ class AgentCore(context: Context) : AgentBridge {
 
     private suspend fun runGitWrite(
         operation: GitOperation,
+        operationId: String,
         requiredPermission: PermissionMode,
         description: String,
         action: suspend () -> GitOperationResult,
@@ -2374,6 +2411,7 @@ class AgentCore(context: Context) : AgentBridge {
         ) {
             val result = GitOperationResult(
                 operation = operation,
+                operationId = operationId,
                 status = GitOperationStatus.FAILED,
                 summary = "Сначала завершите текущую сессию Agent Core",
                 errorCode = "SESSION_BUSY",
@@ -2394,7 +2432,9 @@ class AgentCore(context: Context) : AgentBridge {
             recordDecision(
                 kind = "GIT",
                 state = "DENIED",
-                detail = operation.name + "; required=" + requiredPermission.name,
+                detail = operation.name +
+                    "; operation_id=" + operationId +
+                    "; required=" + requiredPermission.name,
             )
             val boundResult = result.copy(sessionId = currentSessionId)
             publishGitResult(boundResult)
@@ -2409,10 +2449,11 @@ class AgentCore(context: Context) : AgentBridge {
         append(
             AgentEventKind.APPROVAL,
             "Пользователь подтвердил Git-операцию",
-            "operation=" + operation.name,
+            "operation=" + operation.name + "; operation_id=" + operationId,
         )
         _gitState.value = GitOperationState(
             status = GitOperationStatus.RUNNING,
+            operationId = operationId,
             operation = operation.name,
             summary = description,
             updatedAt = System.currentTimeMillis(),
@@ -2435,7 +2476,14 @@ class AgentCore(context: Context) : AgentBridge {
         }
         val boundResult = result.copy(
             sessionId = result.sessionId ?: currentSessionId,
+            operationId = result.operationId ?: operationId,
         )
+        if (
+            boundResult.status == GitOperationStatus.SUCCEEDED ||
+            boundResult.status == GitOperationStatus.UNKNOWN
+        ) {
+            cacheGitResult(boundResult)
+        }
         publishGitResult(boundResult)
         if (boundResult.status == GitOperationStatus.UNKNOWN) {
             markUnknown(
@@ -2448,6 +2496,7 @@ class AgentCore(context: Context) : AgentBridge {
     private fun publishGitResult(result: GitOperationResult) {
         _gitState.value = GitOperationState(
             status = result.status,
+            operationId = result.operationId,
             sessionId = result.sessionId ?: currentSessionId,
             repository = result.repository,
             base = result.base,
@@ -2474,6 +2523,36 @@ class AgentCore(context: Context) : AgentBridge {
             result.summary,
             result.toJson().toString(),
         )
+    }
+
+    private fun cachedGitResult(operationId: String): GitOperationResult? {
+        return synchronized(gitOperationCache) {
+            gitOperationCache[operationId]
+        }
+    }
+
+    private fun cacheGitResult(result: GitOperationResult) {
+        val operationId = result.operationId ?: return
+        synchronized(gitOperationCache) {
+            gitOperationCache[operationId] = result
+            while (gitOperationCache.size > MAX_GIT_OPERATION_CACHE) {
+                gitOperationCache.entries.iterator().let { iterator ->
+                    if (iterator.hasNext()) {
+                        iterator.next()
+                        iterator.remove()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun normalizeOperationId(value: String?): String {
+        val operationId = value?.trim()?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString()
+        require(OPERATION_ID_PATTERN.matches(operationId)) {
+            "Operation id имеет недопустимый формат"
+        }
+        return operationId
     }
 
     private fun readCredential(kind: CredentialKind): String? {
@@ -2729,6 +2808,7 @@ class AgentCore(context: Context) : AgentBridge {
         const val MAX_EVENT_MESSAGE_CHARS = 8_000
         const val MAX_EVENT_DETAIL_CHARS = 12_000
         const val MAX_ERROR_CHARS = 4_000
+        const val MAX_GIT_OPERATION_CACHE = 32
         const val MAX_BASE_URL_CHARS = 512
         const val DEEPSEEK_API_HOST = "api.deepseek.com"
         val SESSION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
