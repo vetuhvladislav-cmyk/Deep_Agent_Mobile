@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import androidx.documentfile.provider.DocumentFile
 import dev.deepagent.mobile.agent.model.WorkspaceFileEntry
 import dev.deepagent.mobile.agent.model.WorkspaceTreePage
 import kotlinx.coroutines.Dispatchers
@@ -236,21 +237,28 @@ class WorkspaceManager(context: Context) {
         val workspaceId = UUID.randomUUID().toString()
         val temporaryDirectory = File(workspacesDirectory, "." + workspaceId + ".import")
         val finalDirectory = File(workspacesDirectory, workspaceId)
+        val treeSource = isTreeUri(uri)
         val sourceName = displayName
             ?.trim()
             ?.takeIf { it.isNotBlank() }
-            ?: queryDisplayName(resolver, uri)
+            ?: if (treeSource) {
+                DocumentFile.fromTreeUri(appContext, uri)?.name
+            } else {
+                queryDisplayName(resolver, uri)
+            }
             ?: uri.lastPathSegment
             ?: "Imported workspace"
         val budget = ImportBudget()
 
-        workspacesDirectory.mkdirs()
-        check(temporaryDirectory.mkdirs()) {
+        check(workspacesDirectory.mkdirs() || workspacesDirectory.isDirectory) {
+            "Не удалось создать каталог workspace"
+        }
+        check(temporaryDirectory.mkdirs() || temporaryDirectory.isDirectory) {
             "Не удалось создать временную директорию workspace"
         }
 
         try {
-            if (DocumentsContract.isTreeUri(uri)) {
+            if (treeSource) {
                 copyDocumentTree(
                     resolver = resolver,
                     treeUri = uri,
@@ -281,7 +289,7 @@ class WorkspaceManager(context: Context) {
                     .removeSuffix(".zip")
                     .removeSuffix(".ZIP")
                     .ifBlank { "Workspace " + workspaceId.take(8) },
-                sourceType = if (DocumentsContract.isTreeUri(uri)) "folder" else "zip",
+                sourceType = if (treeSource) "folder" else "zip",
                 rootPath = finalDirectory.canonicalPath,
                 fileCount = snapshot.first,
                 totalBytes = snapshot.second,
@@ -323,7 +331,7 @@ class WorkspaceManager(context: Context) {
                         "Не удалось создать директорию архива"
                     }
                 } else {
-                    check(target.parentFile?.mkdirs() != false) {
+                    check(target.parentFile?.let { it.mkdirs() || it.isDirectory } == true) {
                         "Не удалось создать родительскую директорию архива"
                     }
                     budget.beginFile()
@@ -339,76 +347,72 @@ class WorkspaceManager(context: Context) {
     private fun copyDocumentTree(
         resolver: ContentResolver,
         treeUri: Uri,
-        documentId: String,
+        destination: File,
+        budget: ImportBudget,
+    ) {
+        val root = DocumentFile.fromTreeUri(appContext, treeUri)
+            ?: error("Выбранная папка недоступна через Android Storage Access Framework")
+        copyDocumentDirectory(
+            resolver = resolver,
+            directory = root,
+            destination = destination,
+            relativeParent = "",
+            budget = budget,
+        )
+    }
+
+    private fun copyDocumentDirectory(
+        resolver: ContentResolver,
+        directory: DocumentFile,
         destination: File,
         relativeParent: String,
         budget: ImportBudget,
     ) {
-        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
-            treeUri,
-            documentId,
-        )
-        val projection = arrayOf(
-            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-            DocumentsContract.Document.COLUMN_MIME_TYPE,
-        )
-
-        resolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
-            val idIndex = cursor.getColumnIndexOrThrow(
-                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+        val children = runCatching { directory.listFiles() }.getOrElse {
+            error(
+                "Не удалось прочитать выбранную папку: " +
+                    (it.message ?: "провайдер документов вернул ошибку"),
             )
-            val nameIndex = cursor.getColumnIndexOrThrow(
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-            )
-            val mimeIndex = cursor.getColumnIndexOrThrow(
-                DocumentsContract.Document.COLUMN_MIME_TYPE,
-            )
-
-            while (cursor.moveToNext()) {
-                val childId = cursor.getString(idIndex)
-                val childName = cursor.getString(nameIndex).orEmpty()
-                val relativeName = normalizeRelativePath(
-                    if (relativeParent.isBlank()) {
-                        childName
-                    } else {
-                        relativeParent + "/" + childName
-                    },
-                ) ?: continue
-                val target = resolveChild(destination, relativeName)
-                val mimeType = cursor.getString(mimeIndex).orEmpty()
-
-                if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                    check(target.mkdirs() || target.isDirectory) {
-                        "Не удалось создать директорию workspace"
-                    }
-                    copyDocumentTree(
-                        resolver = resolver,
-                        treeUri = treeUri,
-                        documentId = childId,
-                        destination = destination,
-                        relativeParent = relativeName,
-                        budget = budget,
-                    )
+        }
+        for (child in children) {
+            val childName = child.name?.trim().orEmpty()
+            if (childName.isBlank()) continue
+            val relativeName = normalizeRelativePath(
+                if (relativeParent.isBlank()) {
+                    childName
                 } else {
-                    check(target.parentFile?.mkdirs() != false) {
-                        "Не удалось создать родительскую директорию workspace"
-                    }
-                    resolver.openInputStream(
-                        DocumentsContract.buildDocumentUriUsingTree(treeUri, childId),
-                    )?.use { input ->
-                        budget.beginFile()
-                        FileOutputStream(target).use { output ->
-                            copyBounded(
-                                input = BufferedInputStream(input),
-                                output = BufferedOutputStream(output),
-                                budget = budget,
-                            )
-                        }
-                    } ?: error("Не удалось прочитать файл workspace: " + childName)
+                    relativeParent + "/" + childName
+                },
+            ) ?: continue
+            val target = resolveChild(destination, relativeName)
+
+            if (child.isDirectory) {
+                check(target.mkdirs() || target.isDirectory) {
+                    "Не удалось создать директорию workspace"
                 }
+                copyDocumentDirectory(
+                    resolver = resolver,
+                    directory = child,
+                    destination = destination,
+                    relativeParent = relativeName,
+                    budget = budget,
+                )
+            } else {
+                check(target.parentFile?.let { it.mkdirs() || it.isDirectory } == true) {
+                    "Не удалось создать родительскую директорию workspace"
+                }
+                resolver.openInputStream(child.uri)?.use { input ->
+                    budget.beginFile()
+                    FileOutputStream(target).use { output ->
+                        copyBounded(
+                            input = BufferedInputStream(input),
+                            output = BufferedOutputStream(output),
+                            budget = budget,
+                        )
+                    }
+                } ?: error("Не удалось прочитать файл workspace: " + childName)
             }
-        } ?: error("Провайдер документов не вернул содержимое директории")
+        }
     }
 
     private fun copyBounded(
@@ -458,6 +462,11 @@ class WorkspaceManager(context: Context) {
             }
         }
         return files to bytes
+    }
+
+    private fun isTreeUri(uri: Uri): Boolean {
+        return runCatching { DocumentsContract.isTreeUri(uri) }
+            .getOrDefault(uri.pathSegments.contains("tree"))
     }
 
     private fun queryDisplayName(resolver: ContentResolver, uri: Uri): String? {
