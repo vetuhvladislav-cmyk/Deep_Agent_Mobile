@@ -3,6 +3,9 @@ package dev.deepagent.mobile.agent.runtime
 import dev.deepagent.mobile.agent.model.RuntimeState
 import dev.deepagent.mobile.agent.model.RuntimeStatus
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
@@ -119,6 +122,9 @@ class RuntimeSupervisor(
     private val provider: HeadlessRuntimeProvider = LoopbackHeadlessRuntimeProvider(),
 ) {
     private val mutex = Mutex()
+    private val closeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile
+    private var closeRequested = false
     private val _state = MutableStateFlow(RuntimeState())
     val state: StateFlow<RuntimeState> = _state.asStateFlow()
 
@@ -342,10 +348,40 @@ class RuntimeSupervisor(
     }
 
     fun close() {
-        _state.value = RuntimeState(
-            status = RuntimeStatus.EMPTY,
-            summary = "Runtime supervisor закрыт",
-        )
+        if (closeRequested) return
+        closeRequested = true
+        closeScope.launch {
+            mutex.withLock {
+                if (_state.value.status == RuntimeStatus.EMPTY) return@withLock
+                publish(
+                    _state.value.copy(
+                        status = RuntimeStatus.STOPPING,
+                        summary = "Закрытие runtime supervisor",
+                        errorCode = null,
+                    ),
+                )
+                val stopped = runCatching {
+                    withTimeout(STOP_TIMEOUT_MS) { provider.stop() }
+                }.getOrNull()
+                if (stopped?.ok == true) {
+                    publish(
+                        RuntimeState(
+                            status = RuntimeStatus.EMPTY,
+                            sessionId = _state.value.sessionId,
+                            summary = "Runtime supervisor закрыт после подтверждённой остановки",
+                        ),
+                    )
+                } else {
+                    publish(
+                        _state.value.copy(
+                            status = RuntimeStatus.FAILED,
+                            summary = "Runtime stop при закрытии не подтверждён",
+                            errorCode = "RUNTIME_CLOSE_UNKNOWN",
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     private suspend fun rollback(
@@ -365,13 +401,41 @@ class RuntimeSupervisor(
                 errorCode = errorCode,
             ),
         )
-        try {
+        val stopped = try {
             withTimeout(STOP_TIMEOUT_MS) { provider.stop() }
-        } catch (_: TimeoutCancellationException) {
-            // The supervisor still moves to EMPTY; a later start must perform
-            // a fresh install/start/probe sequence instead of trusting state.
+        } catch (timeout: TimeoutCancellationException) {
+            return RuntimeState(
+                status = RuntimeStatus.UNKNOWN,
+                sessionId = sessionId,
+                version = manifest.version,
+                abi = manifest.abi,
+                checksum = manifest.checksum,
+                summary = "Rollback не подтверждён: stop runtime превысил timeout",
+                errorCode = "RUNTIME_ROLLBACK_STOP_TIMEOUT",
+            ).also { _state.value = it }
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (error: Exception) {
+            return RuntimeState(
+                status = RuntimeStatus.UNKNOWN,
+                sessionId = sessionId,
+                version = manifest.version,
+                abi = manifest.abi,
+                checksum = manifest.checksum,
+                summary = "Rollback не подтверждён: stop runtime завершился с ошибкой",
+                errorCode = "RUNTIME_ROLLBACK_STOP_UNKNOWN",
+            ).also { _state.value = it }
+        }
+        if (!stopped.ok) {
+            return RuntimeState(
+                status = RuntimeStatus.FAILED,
+                sessionId = sessionId,
+                version = manifest.version,
+                abi = manifest.abi,
+                checksum = manifest.checksum,
+                summary = "Rollback не подтверждён: runtime не остановлен",
+                errorCode = stopped.errorCode ?: "RUNTIME_ROLLBACK_STOP_FAILED",
+            ).also { _state.value = it }
         }
         return RuntimeState(
             status = RuntimeStatus.EMPTY,
