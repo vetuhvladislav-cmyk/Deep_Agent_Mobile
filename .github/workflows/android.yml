@@ -1,3 +1,10 @@
+name: Deep Agent Mobile
+run-name: "Deep Agent Mobile / ${{ inputs.agent_session_id || 'manual' }}"
+
+concurrency:
+  group: deep-agent-mobile-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
     inputs:
@@ -66,7 +73,6 @@ jobs:
             > app/build/outputs/apk/debug/deep-agent-provenance.json
 
       - name: Артефакт
-        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: deep-agent-mobile-debug-apk
@@ -79,42 +85,53 @@ jobs:
 
   release:
     permissions:
+      actions: read
       contents: write
+    timeout-minutes: 5
     name: Публикация Deep Agent APK
     needs: build
     if: inputs.publish_release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
-
-      - name: Android SDK packages
+      - name: Проверить параметры релиза
         shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          AGENT_SESSION_ID: ${{ inputs.agent_session_id }}
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9.-]+)?$ ]] || {
+            echo "Недопустимый release tag" >&2
+            exit 1
+          }
+          if [[ -n "$AGENT_SESSION_ID" ]]; then
+            [[ "$AGENT_SESSION_ID" =~ ^[A-Za-z0-9._:-]{1,160}$ ]] || {
+              echo "Недопустимый agent session id" >&2
+              exit 1
+            }
+          fi
 
-      - name: Кэш Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Загрузить проверенный build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deep-agent-mobile-debug-apk
+          path: dist/input
 
-      - name: Сборка APK
-        run: ./gradlew --no-daemon assembleDebug
-
-      - name: Переименовать APK
+      - name: Подготовить release files
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
+          set -euo pipefail
+          apk="$(find dist/input -type f -name '*.apk' -print -quit)"
+          test -n "$apk"
+          test -f "$apk.sha256"
+          provenance="$(find dist/input -type f -name 'deep-agent-provenance.json' -print -quit)"
+          test -n "$provenance"
           mkdir -p dist
-          cp app/build/outputs/apk/debug/*.apk "dist/deep-agent-mobile-${{ inputs.release_tag }}-test.apk"
+          cp "$apk" "dist/deep-agent-mobile-${RELEASE_TAG}-test.apk"
+          cp "$apk.sha256" "dist/deep-agent-mobile-${RELEASE_TAG}-test.apk.sha256"
+          cp "$provenance" "dist/deep-agent-provenance.json"
 
       - name: Публикация релиза
         uses: softprops/action-gh-release@v2
@@ -123,5 +140,5 @@ jobs:
           files: dist/*.apk
           generate_release_notes: true
           body: |
-            Установочный APK Deep Agent Mobile ${{ inputs.release_tag }}-test.
+            Публикуется тот же APK и sidecar provenance, которые прошли build job.
             Сборка отладочная и предназначена для тестирования на Android.
