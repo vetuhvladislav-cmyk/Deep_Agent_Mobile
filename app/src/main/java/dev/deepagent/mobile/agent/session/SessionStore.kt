@@ -445,6 +445,52 @@ class SessionStore(context: Context) {
         }
         writeAtomically(file, payload)
         writeAtomically(latestPointer, session.sessionId)
+        pruneLocked(session.sessionId)
+    }
+
+    private fun pruneLocked(protectedSessionId: String) {
+        val files = directory.listFiles()
+            ?.asSequence()
+            ?.filter { file ->
+                file.isFile &&
+                    file.name.startsWith("session-") &&
+                    file.name.endsWith(".json") &&
+                    file.name
+                        .removePrefix("session-")
+                        .removeSuffix(".json")
+                        .let(::isValidJournalIdentifier)
+            }
+            ?.sortedWith(
+                compareByDescending<File> { it.lastModified() }
+                    .thenByDescending { it.name },
+            )
+            ?.toList()
+            .orEmpty()
+        val protectedName = fileFor(protectedSessionId).name
+        val keep = linkedSetOf<String>()
+        var keepCount = 0
+        var keepBytes = 0L
+
+        files.firstOrNull { it.name == protectedName }?.let { file ->
+            keep += file.name
+            keepCount += 1
+            keepBytes += file.length()
+        }
+        files.forEach { file ->
+            if (file.name in keep) return@forEach
+            if (
+                keepCount >= MAX_SESSION_FILES ||
+                keepBytes + file.length() > MAX_TOTAL_JOURNAL_BYTES
+            ) {
+                return@forEach
+            }
+            keep += file.name
+            keepCount += 1
+            keepBytes += file.length()
+        }
+        files.filterNot { it.name in keep }.forEach { file ->
+            runCatching { file.delete() }
+        }
     }
 
     private fun readPointerLocked(): String? {
@@ -509,9 +555,11 @@ class SessionStore(context: Context) {
         }
     }
 
-    private companion object {
+    companion object {
         const val MAX_JOURNAL_BYTES = 4L * 1024L * 1024L
         const val MAX_POINTER_BYTES = 256L
+        const val MAX_SESSION_FILES = 12
+        const val MAX_TOTAL_JOURNAL_BYTES = 32L * 1024L * 1024L
     }
 }
 

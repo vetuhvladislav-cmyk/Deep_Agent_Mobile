@@ -92,6 +92,38 @@ data class AgentSessionState(
 )
 
     
+data class CredentialState(
+    val deepSeekConfigured: Boolean = false,
+    val githubConfigured: Boolean = false,
+    val updatedAt: Long = System.currentTimeMillis(),
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("deep_seek_configured", deepSeekConfigured)
+        .put("github_configured", githubConfigured)
+        .put("updated_at", updatedAt)
+}
+
+enum class JournalExportStatus {
+    EXPORTED,
+    FAILED,
+    UNKNOWN,
+}
+
+data class JournalExportResult(
+    val sessionId: String? = null,
+    val status: JournalExportStatus,
+    val bytes: Long = 0L,
+    val summary: String,
+    val errorCode: String? = null,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("session_id", AgentRedactor.text(sessionId, 160))
+        .put("status", status.name)
+        .put("bytes", bytes)
+        .put("summary", AgentRedactor.text(summary, 2_000))
+        .put("error_code", AgentRedactor.text(errorCode, 96))
+}
+
 data class AgentWorkspaceSnapshot(
     val id: String,
     val displayName: String,
@@ -414,7 +446,7 @@ enum class ActionsOperationStatus {
 }
 
 data class ActionsRunRequest(
-    val token: String,
+    val token: String = "",
     val repository: String,
     val workflow: String,
     val ref: String = "main",
@@ -692,7 +724,7 @@ data class ActionsOperationState(
 }
 
 data class ActionsArtifactRequest(
-    val token: String,
+    val token: String = "",
     val repository: String,
     val runId: Long,
     val artifactId: Long,

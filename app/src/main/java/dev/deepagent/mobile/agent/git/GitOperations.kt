@@ -34,6 +34,9 @@ enum class GitOperationStatus {
 data class GitOperationState(
     val status: GitOperationStatus = GitOperationStatus.IDLE,
     val sessionId: String? = null,
+    val repository: String? = null,
+    val base: String? = null,
+    val expectedHeadSha: String? = null,
     val operation: String? = null,
     val summary: String? = null,
     val branch: String? = null,
@@ -49,6 +52,9 @@ data class GitOperationState(
 data class GitOperationResult(
     val operation: GitOperation,
     val sessionId: String? = null,
+    val repository: String? = null,
+    val base: String? = null,
+    val expectedHeadSha: String? = null,
     val status: GitOperationStatus,
     val summary: String,
     val content: String = "",
@@ -64,6 +70,9 @@ data class GitOperationResult(
     fun toJson(): JSONObject = JSONObject()
         .put("operation", operation.name)
         .put("session_id", AgentRedactor.text(sessionId, MAX_IDENTIFIER_CHARS))
+        .put("repository", AgentRedactor.text(repository, MAX_IDENTIFIER_CHARS))
+        .put("base", AgentRedactor.text(base, MAX_IDENTIFIER_CHARS))
+        .put("expected_head_sha", AgentRedactor.text(expectedHeadSha, MAX_IDENTIFIER_CHARS))
         .put("status", status.name)
         .put("summary", AgentRedactor.text(summary, MAX_SUMMARY_CHARS))
         .put("content", AgentRedactor.text(content, MAX_CONTENT_CHARS))
@@ -114,6 +123,8 @@ data class GitPullRequestRequest(
     val title: String,
     val body: String = "",
     val draft: Boolean = true,
+    val expectedHeadSha: String? = null,
+    val sessionId: String? = null,
 )
 
 sealed interface GitHubPullRequestResult {
@@ -744,7 +755,20 @@ class GitHubPullRequestClient {
             }
             val headSha = response.optJSONObject("head")
                 ?.optString("sha")
+                ?.trim()
                 ?.takeIf { it.isNotBlank() }
+            if (!SHA_PATTERN.matches(headSha.orEmpty())) {
+                return@withContext GitHubPullRequestResult.Failed(
+                    "GitHub PR response не содержит подтверждённый head SHA",
+                    "GITHUB_PR_UNKNOWN",
+                )
+            }
+            if (!headSha.equals(validated.expectedHeadSha, ignoreCase = true)) {
+                return@withContext GitHubPullRequestResult.Failed(
+                    "GitHub PR создан, но head SHA не совпал с ожидаемым; повтор запрещён до re-check",
+                    "GITHUB_PR_UNKNOWN",
+                )
+            }
             GitHubPullRequestResult.Created(
                 number = number,
                 url = url,
@@ -786,12 +810,22 @@ class GitHubPullRequestClient {
         require(body.length <= MAX_BODY_CHARS) {
             "PR body превышает лимит"
         }
+        val expectedHeadSha = request.expectedHeadSha?.trim().orEmpty()
+        require(SHA_PATTERN.matches(expectedHeadSha)) {
+            "Для PR нужен подтверждённый expected head SHA"
+        }
+        val sessionId = request.sessionId?.trim().orEmpty()
+        require(SESSION_ID_PATTERN.matches(sessionId)) {
+            "Для PR нужен session ID"
+        }
         return request.copy(
             repository = repository,
             head = head,
             base = base,
             title = title,
             body = body,
+            expectedHeadSha = expectedHeadSha,
+            sessionId = sessionId,
         )
     }
 
@@ -832,5 +866,7 @@ class GitHubPullRequestClient {
         const val MAX_TITLE_CHARS = 240
         const val MAX_BODY_CHARS = 16_000
         val REPOSITORY_PART_PATTERN = Regex("[A-Za-z0-9_.-]{1,100}")
+        val SHA_PATTERN = Regex("[A-Fa-f0-9]{40,64}")
+        val SESSION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
     }
 }

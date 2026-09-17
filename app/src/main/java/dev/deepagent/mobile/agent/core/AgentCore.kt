@@ -9,6 +9,11 @@ import dev.deepagent.mobile.agent.deepseek.DeepSeekStreamEvent
 import dev.deepagent.mobile.agent.deepseek.DeepSeekToolDefinition
 import dev.deepagent.mobile.agent.github.GitHubActionsClient
 import dev.deepagent.mobile.agent.image.ImageAnalysisPipeline
+import dev.deepagent.mobile.agent.credential.CredentialKind
+import dev.deepagent.mobile.agent.credential.EphemeralCredentialVault
+import dev.deepagent.mobile.agent.model.CredentialState
+import dev.deepagent.mobile.agent.model.JournalExportResult
+import dev.deepagent.mobile.agent.model.JournalExportStatus
 import dev.deepagent.mobile.agent.model.WorkspaceCatalogState
 import dev.deepagent.mobile.agent.model.WorkspaceCatalogStatus
 import dev.deepagent.mobile.agent.model.WorkspaceRulesMetadata
@@ -78,6 +83,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
@@ -112,7 +118,8 @@ class AgentCore(context: Context) : AgentBridge {
     private val actionsClient = GitHubActionsClient()
     private val artifactManager = ArtifactManager()
     private val imagePipeline = ImageAnalysisPipeline(appContext)
-      private val pullRequests = GitHubPullRequestClient()
+    private val credentialVault = EphemeralCredentialVault()
+    private val pullRequests = GitHubPullRequestClient()
     private val sessionStore = SessionStore(appContext)
     private val coreScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val journalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -166,6 +173,9 @@ class AgentCore(context: Context) : AgentBridge {
     override val workspaceCatalog: StateFlow<WorkspaceCatalogState> =
         _workspaceCatalog.asStateFlow()
 
+    private val _credentialState = MutableStateFlow(CredentialState())
+    override val credentials: StateFlow<CredentialState> = _credentialState.asStateFlow()
+
     private var activeJob: Job? = null
     private var patchApplyJob: Job? = null
     private var currentSessionId: String? = null
@@ -186,12 +196,25 @@ class AgentCore(context: Context) : AgentBridge {
 
     override suspend fun submit(request: AgentRequest) {
         check(!closed) { "AgentCore уже закрыт" }
+        if (
+            !request.deepSeekApiKey.isNullOrBlank() ||
+            !request.githubToken.isNullOrBlank()
+        ) {
+            configureCredentials(
+                deepSeekApiKey = request.deepSeekApiKey,
+                githubToken = request.githubToken,
+            )
+        }
+        val sanitizedRequest = request.copy(
+            deepSeekApiKey = null,
+            githubToken = null,
+        )
         activeJob?.cancel()
         patchApplyJob?.cancel()
         patchApplyJob = null
 
         val job = coreScope.launch {
-            execute(request)
+            execute(sanitizedRequest)
         }
         activeJob = job
 
@@ -201,6 +224,128 @@ class AgentCore(context: Context) : AgentBridge {
             if (activeJob === job) activeJob = null
         }
     }
+
+    override fun configureCredentials(
+        deepSeekApiKey: String?,
+        githubToken: String?,
+    ): CredentialState {
+        check(!closed) { "AgentCore уже закрыт" }
+        val next = credentialVault.replace(deepSeekApiKey, githubToken)
+        _credentialState.value = next
+        if (currentSessionId != null) {
+            append(
+                AgentEventKind.INFO,
+                "Временные credentials обновлены",
+                next.toJson().toString(),
+            )
+        }
+        return next
+    }
+
+    override fun clearCredentials() {
+        if (closed) return
+        val next = credentialVault.clearAll()
+        _credentialState.value = next
+        if (currentSessionId != null) {
+            append(
+                AgentEventKind.INFO,
+                "Временные credentials очищены",
+                next.toJson().toString(),
+            )
+        }
+    }
+
+    override suspend fun exportJournal(destinationUri: String): JournalExportResult =
+        withContext(Dispatchers.IO) {
+            if (closed) {
+                return@withContext JournalExportResult(
+                    sessionId = currentSessionId,
+                    status = JournalExportStatus.FAILED,
+                    summary = "AgentCore уже закрыт",
+                    errorCode = "AGENT_CORE_CLOSED",
+                )
+            }
+            val normalizedUri = destinationUri.trim()
+            if (normalizedUri.isBlank()) {
+                return@withContext JournalExportResult(
+                    sessionId = currentSessionId,
+                    status = JournalExportStatus.FAILED,
+                    summary = "URI для экспорта журнала не задан",
+                    errorCode = "JOURNAL_DESTINATION_INVALID",
+                )
+            }
+            val uri = runCatching { Uri.parse(normalizedUri) }.getOrNull()
+            if (uri == null || uri.scheme.isNullOrBlank()) {
+                return@withContext JournalExportResult(
+                    sessionId = currentSessionId,
+                    status = JournalExportStatus.FAILED,
+                    summary = "URI для экспорта журнала недействителен",
+                    errorCode = "JOURNAL_DESTINATION_INVALID",
+                )
+            }
+            try {
+                val snapshot = journalMutex.withLock {
+                    buildPersistedSnapshot()?.also { sessionStore.save(it) }
+                        ?: sessionStore.loadLatest()
+                } ?: return@withContext JournalExportResult(
+                    sessionId = currentSessionId,
+                    status = JournalExportStatus.FAILED,
+                    summary = "Нет журнала для экспорта",
+                    errorCode = "JOURNAL_EMPTY",
+                )
+                val payload = snapshot.toJson().toString(2)
+                val bytes = payload.toByteArray(Charsets.UTF_8)
+                if (bytes.size.toLong() > SessionStore.MAX_JOURNAL_BYTES) {
+                    return@withContext JournalExportResult(
+                        sessionId = snapshot.sessionId,
+                        status = JournalExportStatus.FAILED,
+                        summary = "Журнал превышает лимит экспорта",
+                        errorCode = "JOURNAL_TOO_LARGE",
+                    )
+                }
+                val output = appContext.contentResolver.openOutputStream(uri)
+                    ?: return@withContext JournalExportResult(
+                        sessionId = snapshot.sessionId,
+                        status = JournalExportStatus.FAILED,
+                        summary = "Не удалось открыть файл экспорта",
+                        errorCode = "JOURNAL_EXPORT_OPEN_FAILED",
+                    )
+                output.use {
+                    it.write(bytes)
+                    it.flush()
+                }
+                val result = JournalExportResult(
+                    sessionId = snapshot.sessionId,
+                    status = JournalExportStatus.EXPORTED,
+                    bytes = bytes.size.toLong(),
+                    summary = "Redacted journal экспортирован",
+                )
+                if (!closed) {
+                    append(
+                        AgentEventKind.INFO,
+                        "Redacted journal экспортирован",
+                        "bytes=" + bytes.size,
+                    )
+                }
+                result
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val summary = AgentRedactor.text(
+                    error.message ?: "Не удалось экспортировать journal",
+                    MAX_ERROR_CHARS,
+                ).orEmpty()
+                if (!closed) {
+                    append(AgentEventKind.ERROR, summary)
+                }
+                JournalExportResult(
+                    sessionId = currentSessionId,
+                    status = JournalExportStatus.UNKNOWN,
+                    summary = summary,
+                    errorCode = "JOURNAL_EXPORT_UNKNOWN",
+                )
+            }
+        }
 
     override fun cancel() {
         activeJob?.cancel()
@@ -445,32 +590,136 @@ class AgentCore(context: Context) : AgentBridge {
         request: GitPullRequestRequest,
         githubToken: String,
     ): GitOperationResult {
+        val explicitToken = githubToken.trim()
+        val token = if (explicitToken.isNotBlank()) {
+            explicitToken
+        } else {
+            readCredential(CredentialKind.GITHUB_TOKEN).orEmpty()
+        }
         return runGitWrite(
             operation = GitOperation.CREATE_PULL_REQUEST,
             requiredPermission = PermissionMode.PR_CREATE,
             description = "Создание Pull Request",
         ) {
-            when (val result = pullRequests.create(request, githubToken)) {
-                is GitHubPullRequestResult.Created -> GitOperationResult(
+            val sessionId = currentSessionId?.trim()
+            val requestedSessionId = request.sessionId
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+            val requestedExpectedSha = request.expectedHeadSha
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+
+            when {
+                sessionId.isNullOrBlank() -> GitOperationResult(
                     operation = GitOperation.CREATE_PULL_REQUEST,
-                    status = GitOperationStatus.SUCCEEDED,
-                    summary = "Pull Request создан: #" + result.number,
-                    branch = result.head,
-                    headSha = result.headSha,
-                    pullRequestNumber = result.number,
-                    pullRequestUrl = result.url,
+                    sessionId = sessionId,
+                    repository = request.repository,
+                    base = request.base,
+                    status = GitOperationStatus.FAILED,
+                    summary = "Для PR нужна активная session ID",
+                    errorCode = "SESSION_REQUIRED",
                 )
 
-                is GitHubPullRequestResult.Failed -> GitOperationResult(
+                requestedSessionId != null && requestedSessionId != sessionId -> GitOperationResult(
                     operation = GitOperation.CREATE_PULL_REQUEST,
-                    status = if (result.errorCode == "GITHUB_PR_UNKNOWN") {
-                        GitOperationStatus.UNKNOWN
-                    } else {
-                        GitOperationStatus.FAILED
-                    },
-                    summary = result.message,
-                    errorCode = result.errorCode,
+                    sessionId = sessionId,
+                    repository = request.repository,
+                    base = request.base,
+                    status = GitOperationStatus.FAILED,
+                    summary = "PR session ID не совпадает с текущей сессией",
+                    errorCode = "SESSION_MISMATCH",
                 )
+
+                token.isBlank() -> GitOperationResult(
+                    operation = GitOperation.CREATE_PULL_REQUEST,
+                    sessionId = sessionId,
+                    repository = request.repository,
+                    base = request.base,
+                    status = GitOperationStatus.FAILED,
+                    summary = "GitHub token не задан",
+                    errorCode = "GITHUB_TOKEN_MISSING",
+                )
+
+                else -> {
+                    val preflight = toolRouter.inspectGit(workspaceIdForActions())
+                    val currentHeadSha = preflight.headSha?.trim()
+                    when {
+                        preflight.status == GitOperationStatus.UNKNOWN -> GitOperationResult(
+                            operation = GitOperation.CREATE_PULL_REQUEST,
+                            sessionId = sessionId,
+                            repository = request.repository,
+                            base = request.base,
+                            status = GitOperationStatus.UNKNOWN,
+                            summary = "Текущий Git HEAD не подтверждён; PR остановлен",
+                            errorCode = "GIT_HEAD_UNKNOWN",
+                        )
+
+                        preflight.status != GitOperationStatus.SUCCEEDED ||
+                            !SHA_PATTERN.matches(currentHeadSha.orEmpty()) -> GitOperationResult(
+                            operation = GitOperation.CREATE_PULL_REQUEST,
+                            sessionId = sessionId,
+                            repository = request.repository,
+                            base = request.base,
+                            status = GitOperationStatus.FAILED,
+                            summary = "Для PR нужен подтверждённый текущий Git HEAD",
+                            errorCode = "GIT_HEAD_REQUIRED",
+                        )
+
+                        requestedExpectedSha != null &&
+                            !requestedExpectedSha.equals(
+                                currentHeadSha,
+                                ignoreCase = true,
+                            ) -> GitOperationResult(
+                            operation = GitOperation.CREATE_PULL_REQUEST,
+                            sessionId = sessionId,
+                            repository = request.repository,
+                            base = request.base,
+                            expectedHeadSha = currentHeadSha,
+                            headSha = currentHeadSha,
+                            status = GitOperationStatus.FAILED,
+                            summary = "Git HEAD изменился; сначала выполните re-check",
+                            errorCode = "GIT_HEAD_CHANGED_RECHECK_REQUIRED",
+                        )
+
+                        else -> {
+                            val boundRequest = request.copy(
+                                expectedHeadSha = currentHeadSha,
+                                sessionId = sessionId,
+                            )
+                            when (val result = pullRequests.create(boundRequest, token)) {
+                                is GitHubPullRequestResult.Created -> GitOperationResult(
+                                    operation = GitOperation.CREATE_PULL_REQUEST,
+                                    sessionId = boundRequest.sessionId,
+                                    repository = boundRequest.repository,
+                                    base = boundRequest.base,
+                                    expectedHeadSha = boundRequest.expectedHeadSha,
+                                    status = GitOperationStatus.SUCCEEDED,
+                                    summary = "Pull Request создан: #" + result.number,
+                                    branch = result.head,
+                                    headSha = result.headSha,
+                                    pullRequestNumber = result.number,
+                                    pullRequestUrl = result.url,
+                                )
+
+                                is GitHubPullRequestResult.Failed -> GitOperationResult(
+                                    operation = GitOperation.CREATE_PULL_REQUEST,
+                                    sessionId = boundRequest.sessionId,
+                                    repository = boundRequest.repository,
+                                    base = boundRequest.base,
+                                    expectedHeadSha = boundRequest.expectedHeadSha,
+                                    headSha = currentHeadSha,
+                                    status = if (result.errorCode == "GITHUB_PR_UNKNOWN") {
+                                        GitOperationStatus.UNKNOWN
+                                    } else {
+                                        GitOperationStatus.FAILED
+                                    },
+                                    summary = result.message,
+                                    errorCode = result.errorCode,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -741,8 +990,11 @@ class AgentCore(context: Context) : AgentBridge {
             "Пользователь подтвердил запуск GitHub Actions",
             request.toAuditJson().toString(),
         )
+        val actionToken = request.token.trim().takeIf { it.isNotBlank() }
+            ?: readCredential(CredentialKind.GITHUB_TOKEN).orEmpty()
         val result = runActionsInternal(
             request.copy(
+                token = actionToken,
                 sessionId = request.sessionId ?: currentSessionId,
             ),
         )
@@ -836,7 +1088,11 @@ class AgentCore(context: Context) : AgentBridge {
             "artifact_id=" + request.artifactId,
         )
 
-        val download = actionsClient.downloadAndVerifyArtifact(request)
+        val artifactToken = request.token.trim().takeIf { it.isNotBlank() }
+            ?: readCredential(CredentialKind.GITHUB_TOKEN).orEmpty()
+        val download = actionsClient.downloadAndVerifyArtifact(
+            request.copy(token = artifactToken),
+        )
         val result = when (download) {
             is ArtifactDownloadResult.Verified -> {
                 val saved = artifactManager.save(
@@ -1135,6 +1391,7 @@ class AgentCore(context: Context) : AgentBridge {
         interactiveSession.close()
         runtimeSupervisor.close()
         imagePipeline.clear()
+        _credentialState.value = credentialVault.clearAll()
         coreScope.cancel()
         closed = true
         persistOnClose()
@@ -1195,6 +1452,8 @@ class AgentCore(context: Context) : AgentBridge {
             task = task,
             workspaceId = workspaceId,
             sessionId = sessionId,
+            deepSeekApiKey = null,
+            githubToken = null,
         )
 
         try {
@@ -1269,7 +1528,7 @@ class AgentCore(context: Context) : AgentBridge {
 
         val result = runActionsInternal(
             ActionsRunRequest(
-                token = request.githubToken.orEmpty(),
+                token = readCredential(CredentialKind.GITHUB_TOKEN).orEmpty(),
                 repository = request.repository.orEmpty(),
                 workflow = request.workflow.orEmpty(),
                 ref = request.ref,
@@ -1292,7 +1551,7 @@ class AgentCore(context: Context) : AgentBridge {
     }
 
     private suspend fun runDeepSeekAgent(request: AgentRequest) {
-        val apiKey = request.deepSeekApiKey?.trim().orEmpty()
+        val apiKey = readCredential(CredentialKind.DEEPSEEK_API_KEY).orEmpty()
         if (apiKey.isBlank()) {
             append(
                 AgentEventKind.OUTPUT,
@@ -1906,6 +2165,9 @@ class AgentCore(context: Context) : AgentBridge {
         _gitState.value = GitOperationState(
             status = result.status,
             sessionId = result.sessionId ?: currentSessionId,
+            repository = result.repository,
+            base = result.base,
+            expectedHeadSha = result.expectedHeadSha,
             operation = result.operation.name,
             summary = result.summary,
             branch = result.branch,
@@ -1928,6 +2190,12 @@ class AgentCore(context: Context) : AgentBridge {
             result.summary,
             result.toJson().toString(),
         )
+    }
+
+    private fun readCredential(kind: CredentialKind): String? {
+        val value = credentialVault.read(kind)
+        _credentialState.value = credentialVault.state()
+        return value
     }
 
     private fun workspaceIdForActions(): String? {
@@ -2169,5 +2437,6 @@ class AgentCore(context: Context) : AgentBridge {
         const val MAX_EVENT_MESSAGE_CHARS = 8_000
         const val MAX_EVENT_DETAIL_CHARS = 12_000
         const val MAX_ERROR_CHARS = 4_000
+        val SHA_PATTERN = Regex("[A-Fa-f0-9]{40,64}")
     }
 }

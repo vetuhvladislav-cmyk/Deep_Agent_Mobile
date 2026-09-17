@@ -8,6 +8,8 @@ import dev.deepagent.mobile.agent.model.ActionsArtifactSaveResult
 import dev.deepagent.mobile.agent.model.ActionsOperationState
 import dev.deepagent.mobile.agent.model.ActionsRunRequest
 import dev.deepagent.mobile.agent.model.AgentEvent
+import dev.deepagent.mobile.agent.model.CredentialState
+import dev.deepagent.mobile.agent.model.JournalExportResult
 import dev.deepagent.mobile.agent.model.ImageAnalysisState
 import dev.deepagent.mobile.agent.model.WorkspaceCatalogState
 import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
@@ -43,8 +45,18 @@ interface AgentBridge {
     val interactive: StateFlow<InteractiveSessionState>
     val image: StateFlow<ImageAnalysisState>
     val workspaceCatalog: StateFlow<WorkspaceCatalogState>
+    val credentials: StateFlow<CredentialState>
 
     suspend fun submit(request: AgentRequest)
+
+    fun configureCredentials(
+        deepSeekApiKey: String?,
+        githubToken: String?,
+    ): CredentialState
+
+    fun clearCredentials()
+
+    suspend fun exportJournal(destinationUri: String): JournalExportResult
 
     suspend fun importWorkspace(
         uri: String,

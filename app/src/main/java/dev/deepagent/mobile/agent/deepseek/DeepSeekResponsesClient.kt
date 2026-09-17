@@ -99,15 +99,7 @@ class DeepSeekResponsesClient {
 
             val status = connection.responseCode
             if (status !in 200..299) {
-                val errorBody = connection.errorStream
-                    ?.bufferedReader()
-                    ?.use { it.readText() }
-                    ?.take(2_000)
-                    .orEmpty()
-                throw IOException(
-                    "DeepSeek HTTP " + status +
-                        if (errorBody.isBlank()) "" else ": " + errorBody,
-                )
+                throw IOException("DeepSeek HTTP " + status)
             }
 
             connection.inputStream.bufferedReader().use { reader ->

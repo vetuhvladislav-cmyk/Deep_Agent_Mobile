@@ -1,5 +1,6 @@
 package dev.deepagent.mobile.agent.ui
 
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -62,6 +63,7 @@ import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentSessionStatus
 import dev.deepagent.mobile.agent.model.ExecutionTarget
 import dev.deepagent.mobile.agent.model.ImageAnalysisStatus
+import dev.deepagent.mobile.agent.model.JournalExportStatus
 import dev.deepagent.mobile.agent.model.WorkspaceCatalogStatus
 import dev.deepagent.mobile.agent.model.PermissionMode
 import dev.deepagent.mobile.agent.model.PatchRecoveryStatus
@@ -118,6 +120,8 @@ fun AgentConsoleScreen(
     var gitError by remember { mutableStateOf<String?>(null) }
     var patchRecoveryError by remember { mutableStateOf<String?>(null) }
     var actionsError by remember { mutableStateOf<String?>(null) }
+    var journalExportMessage by remember { mutableStateOf<String?>(null) }
+    var journalExportError by remember { mutableStateOf<String?>(null) }
     var gitBranch by rememberSaveable { mutableStateOf("agent/task") }
     var gitStartPoint by rememberSaveable { mutableStateOf("HEAD") }
     var commitPaths by rememberSaveable { mutableStateOf("") }
@@ -138,6 +142,7 @@ fun AgentConsoleScreen(
     val interactiveState by agent.interactive.collectAsState()
     val imageState by agent.image.collectAsState()
     val workspaceCatalog by agent.workspaceCatalog.collectAsState()
+    val credentials by agent.credentials.collectAsState()
 
     DisposableEffect(agent) {
         onDispose { agent.close() }
@@ -158,6 +163,28 @@ fun AgentConsoleScreen(
                 }
                 .onFailure {
                     localError = it.message ?: "Не удалось подготовить изображение"
+                }
+        }
+    }
+
+    val journalExportPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching { agent.exportJournal(uri.toString()) }
+                .onSuccess { result ->
+                    if (result.status == JournalExportStatus.EXPORTED) {
+                        journalExportError = null
+                        journalExportMessage = result.summary + " · " + result.bytes + " bytes"
+                    } else {
+                        journalExportMessage = null
+                        journalExportError = result.summary
+                    }
+                }
+                .onFailure {
+                    journalExportMessage = null
+                    journalExportError = it.message ?: "Не удалось экспортировать journal"
                 }
         }
     }
@@ -197,6 +224,10 @@ fun AgentConsoleScreen(
         scope.launch {
             runCatching {
                 require(task.isNotBlank()) { "Задача не может быть пустой" }
+                agent.configureCredentials(
+                    deepSeekApiKey = deepSeekKey,
+                    githubToken = githubToken,
+                )
                 agent.submit(
                     AgentRequest(
                         task = task,
@@ -205,10 +236,8 @@ fun AgentConsoleScreen(
                         imageAssetId = imageState.assetId.takeIf {
                             imageState.status == ImageAnalysisStatus.READY
                         },
-                        deepSeekApiKey = deepSeekKey,
                         deepSeekBaseUrl = deepSeekBaseUrl,
                         model = model,
-                        githubToken = githubToken,
                         repository = repository,
                         workflow = workflow,
                         ref = ref,
@@ -300,25 +329,73 @@ fun AgentConsoleScreen(
                         style = MaterialTheme.typography.labelSmall,
                     )
                     Text(
-                        text = "DeepSeek: " + if (deepSeekKey.isBlank()) {
-                            "ключ не задан · offline prototype"
+                        text = "DeepSeek: " + if (credentials.deepSeekConfigured) {
+                            "ключ в памяти · TTL · " + model
                         } else {
-                            "ключ задан · " + model
+                            "ключ не загружен · offline prototype"
                         },
                         style = MaterialTheme.typography.labelSmall,
                     )
                     Text(
-                        text = "GitHub Actions: " + if (
-                            githubToken.isNotBlank() &&
-                            repository.isNotBlank() &&
-                            workflow.isNotBlank()
-                        ) {
-                            "конфигурация заполнена"
+                        text = "GitHub token: " + if (credentials.githubConfigured) {
+                            "в памяти · TTL"
                         } else {
-                            "не настроен"
-                        },
+                            "не загружен"
+                        } +
+                            " · Actions: " + if (
+                                repository.isNotBlank() &&
+                                workflow.isNotBlank()
+                            ) {
+                                "конфигурация заполнена"
+                            } else {
+                                "не настроен"
+                            },
                         style = MaterialTheme.typography.labelSmall,
                     )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.EXPORT_JOURNAL,
+                                "Экспортировать redacted journal",
+                            ),
+                            onClick = {
+                                journalExportMessage = null
+                                journalExportError = null
+                                journalExportPicker.launch("agent-session-journal.json")
+                            },
+                        ) {
+                            Text("Экспорт journal")
+                        }
+                        TextButton(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.CLEAR_CREDENTIALS,
+                                "Очистить credentials из памяти",
+                            ),
+                            onClick = {
+                                agent.clearCredentials()
+                                deepSeekKey = ""
+                                githubToken = ""
+                            },
+                        ) {
+                            Text("Очистить credentials")
+                        }
+                    }
+                    journalExportMessage?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    journalExportError?.let {
+                        Text(
+                            text = it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
                     if (state.recoveryRequired) {
                         Text(
                             text = "Recovery требуется: side effect не повторяется автоматически.",
@@ -980,9 +1057,13 @@ fun AgentConsoleScreen(
                                         onClick = {
                                             actionsError = null
                                             scope.launch {
+                                                agent.configureCredentials(
+                                                    deepSeekApiKey = deepSeekKey,
+                                                    githubToken = githubToken,
+                                                )
                                                 val result = agent.saveVerifiedArtifact(
                                                     ActionsArtifactRequest(
-                                                        token = githubToken,
+                                                        token = "",
                                                         repository = repository,
                                                         runId = runId,
                                                         artifactId = artifact.id,
@@ -1023,8 +1104,12 @@ fun AgentConsoleScreen(
                                     actionsError = null
                                     scope.launch {
                                         agent.runActions(
+                                            agent.configureCredentials(
+                                                deepSeekApiKey = deepSeekKey,
+                                                githubToken = githubToken,
+                                            )
                                             ActionsRunRequest(
-                                                token = githubToken,
+                                                token = "",
                                                 repository = repository,
                                                 workflow = workflow,
                                                 ref = ref,
@@ -1303,6 +1388,10 @@ fun AgentConsoleScreen(
                                     gitError = null
                                     scope.launch {
                                         runCatching {
+                                            agent.configureCredentials(
+                                                deepSeekApiKey = deepSeekKey,
+                                                githubToken = githubToken,
+                                            )
                                             agent.createPullRequest(
                                                 request = GitPullRequestRequest(
                                                     repository = repository,
@@ -1311,8 +1400,10 @@ fun AgentConsoleScreen(
                                                     title = pullRequestTitle,
                                                     body = pullRequestBody,
                                                     draft = pullRequestDraft,
+                                                     expectedHeadSha = gitState.headSha,
+                                                     sessionId = state.sessionId,
                                                 ),
-                                                githubToken = githubToken,
+                                                githubToken = "",
                                             )
                                         }.onFailure { error ->
                                             gitError = error.message
