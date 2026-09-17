@@ -2,6 +2,7 @@ package dev.deepagent.mobile.agent.git
 
 import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
+import dev.deepagent.mobile.agent.workspace.WorkspacePathPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -419,39 +420,15 @@ class GitRepositoryClient(
             require(!value.startsWith("/") && !value.contains('\u0000')) {
                 "Недопустимый commit path"
             }
-            require(!containsSymbolicLink(root, value)) {
-                "Commit path содержит symbolic link"
-            }
-            val target = File(root, value).canonicalFile
-            val rootPath = root.canonicalFile.path
-            require(
-                target.path != rootPath &&
-                    target.path.startsWith(rootPath + File.separator),
-            ) {
-                "Commit path выходит за границы workspace"
-            }
-            require(!isSensitiveFile(target)) {
-                "Commit чувствительного файла запрещён"
-            }
+            WorkspacePathPolicy.resolve(
+                root = root,
+                requestedPath = value,
+                requireExisting = false,
+            )
             value
         }.distinct()
         require(normalized.isNotEmpty()) { "Для commit нужен хотя бы один path" }
         return normalized
-    }
-
-    private fun containsSymbolicLink(root: File, relativePath: String): Boolean {
-        var cursor = root.canonicalFile.toPath()
-        relativePath.split('/').forEach { part ->
-            when (part) {
-                "", "." -> Unit
-                ".." -> cursor = cursor.parent ?: cursor
-                else -> {
-                    cursor = cursor.resolve(part)
-                    if (Files.isSymbolicLink(cursor)) return true
-                }
-            }
-        }
-        return false
     }
 
     private fun validateRef(value: String, label: String): String {
@@ -626,19 +603,8 @@ class GitRepositoryClient(
         )
     }
 
-    private fun isSensitiveFile(file: File): Boolean {
-        val name = file.name.lowercase()
-        return name == ".env" ||
-            name.startsWith(".env.") ||
-            name.endsWith(".pem") ||
-            name.endsWith(".key") ||
-            name.endsWith(".p12") ||
-            name.endsWith(".jks") ||
-            name == "google-services.json" ||
-            name.contains("credential") ||
-            name.contains("secret") ||
-            name == "id_rsa"
-    }
+    private fun isSensitiveFile(file: File): Boolean =
+        WorkspacePathPolicy.isSensitiveFile(file)
 
     private fun safeText(value: String?, maxChars: Int): String {
         val withoutUrlCredentials = value.orEmpty().replace(URL_CREDENTIAL_PATTERN) { match ->
