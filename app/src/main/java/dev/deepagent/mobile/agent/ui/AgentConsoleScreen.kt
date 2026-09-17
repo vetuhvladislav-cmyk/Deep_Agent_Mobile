@@ -2026,6 +2026,21 @@ private fun parseCommitPaths(value: String): List<String> = value
     .map { it.trim() }
     .filter { it.isNotBlank() }
 
+private fun readUtf8Limited(input: InputStream, maxChars: Int = 64 * 1024): String {
+    val reader = input.reader(Charsets.UTF_8)
+    val buffer = CharArray(4 * 1024)
+    val result = StringBuilder()
+    while (true) {
+        val count = reader.read(buffer)
+        if (count < 0) break
+        if (result.length + count > maxChars) {
+            error("Файл пресета превышает допустимый размер")
+        }
+        result.append(buffer, 0, count)
+    }
+    return result.toString()
+}
+
 private fun formatImageBytes(bytes: Long): String {
     if (bytes < 1024L) return bytes.toString() + " Б"
     if (bytes < 1024L * 1024L) {
