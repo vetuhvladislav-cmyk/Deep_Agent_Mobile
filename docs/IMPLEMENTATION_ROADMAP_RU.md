@@ -159,6 +159,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Redacted audit trail:** bundle version, ABI, checksum, lifecycle states, heartbeat, exit code и error class; environment secrets redacted.
 - **Cancellation / timeout:** install/start/stop/readiness/heartbeat имеют bounded timeout; cancellation удаляет только неполный temporary state.
 - **Recovery rule:** failed or incompatible bundle не становится active; supervisor выполняет rollback к последней подтверждённой версии или возвращает EMPTY.
+- **Результат текущей реализации:** добавлен внутренний RuntimeSupervisor с mutex-serial lifecycle EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY, ветками FAILED/ROLLBACK, bounded timeout/cancellation, manifest/checksum/ABI state и loopback provider за AgentBridge; Local Lite probe больше не использует shell.
+- **Ограничение текущей реализации:** capabilityStatus остаётся `planned`: loopback provider не является реальным ARM64 DSH bundle; DP-02 остаётся open, поэтому installation/readiness/crash/restart нужно проверить на согласованном runtime manifest и Android 16 device; build и runtime-тесты в этой сессии не запускались.
 - **Exit criterion:** runtime запускается внутри одного APK, readiness подтверждается, отказ не повреждает workspace и UI продолжает работать через AgentBridge.
 
 ### P2-B — PTY и интерактивные команды

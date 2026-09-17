@@ -45,7 +45,7 @@ DeepSeek и GitHub Actions являются внешними сервисами,
 | Agent Core | orchestration layer | lifecycle сессии, target binding, маршрутизация, permission gate и нормализация результатов | владеет orchestration |
 | Permission Policy | policy layer | проверка уровня разрешения, scope, approval и запрет self-escalation | вызывается через Agent Core |
 | DeepSeek provider | model provider | Responses API, streaming, reasoning, tool rounds и image input | не владеет UI state |
-| Local Lite Runtime | local execution layer | ограниченные локальные операции и readiness/health probe | не является UI API |
+| Local Lite Runtime | local execution layer | ограниченные локальные операции, RuntimeSupervisor lifecycle и readiness/health probe | не является UI API |
 | Workspace Manager | workspace layer | источники workspace, canonical paths, identity, fingerprint и checkpoints | не принимает решения о permission |
 | ToolRouter | tool layer | allowlisted typed tools, input/output validation, limits и error normalization | не выполняет произвольный shell |
 | GitHub Connector | Git provider | repository read, branch, commit, push и Pull Request | только через Core и permission gate |
@@ -54,6 +54,12 @@ DeepSeek и GitHub Actions являются внешними сервисами,
 | Artifact Manager | artifact layer | provenance, fingerprint, checksum и локальное размещение артефактов | публикует результат через AgentBridge |
 
 Владелец capability отвечает за его контракт, нормализацию ошибок, cancellation, timeout, redaction и связь с sessionId. Один capability не может молча передавать владение другому слою.
+
+### 2.1 RuntimeSupervisor и headless execution boundary
+
+RuntimeSupervisor является внутренним владельцем lifecycle локального headless runtime. Разрешённая последовательность — EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY; ошибки проходят через FAILED/ROLLBACK, а активным становится только runtime с подтверждённым manifest, ABI, checksum и readiness probe. Loopback provider допустим как безопасный reference adapter, пока DP-02 не выберет и не проверит подписанный ARM64 bundle.
+
+Runtime provider не получает GitHub, merge/release или credential permission. PTY/interactive provider, когда он включён, вызывается только через Agent Core с canonical workspace scope, allowlisted executable/arguments, bounded timeout и redacted output. Произвольный shell и sh -c не являются скрытым fallback.
 
 ## 3. Контракты данных
 

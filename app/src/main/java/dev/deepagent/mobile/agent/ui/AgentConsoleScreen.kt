@@ -69,6 +69,7 @@ import dev.deepagent.mobile.agent.model.ImageAttachment
 import dev.deepagent.mobile.agent.model.PermissionMode
 import dev.deepagent.mobile.agent.model.PatchRecoveryStatus
 import dev.deepagent.mobile.agent.model.PatchRollbackStatus
+import dev.deepagent.mobile.agent.model.RuntimeStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -139,6 +140,7 @@ fun AgentConsoleScreen(
     val gitState by agent.git.collectAsState()
     val patchRecovery by agent.patchRecovery.collectAsState()
     val actionsState by agent.actions.collectAsState()
+    val runtimeState by agent.runtime.collectAsState()
 
     LaunchedEffect(imageUri) {
         val persistedUri = imageUri ?: return@LaunchedEffect
@@ -579,6 +581,91 @@ fun AgentConsoleScreen(
                 }
 
 
+
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "P2-A RuntimeSupervisor",
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Состояние: " + runtimeState.status.name +
+                            " · " + (runtimeState.version ?: "bundle не выбран"),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    runtimeState.summary?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (
+                                runtimeState.status == RuntimeStatus.FAILED ||
+                                runtimeState.status == RuntimeStatus.ROLLBACK
+                            ) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                    runtimeState.heartbeatAt?.let {
+                        Text(
+                            text = "Последний readiness probe: " + it,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Button(
+                            modifier = Modifier.agentControl(
+                                "agent.runtime.start",
+                                "Запустить внутренний runtime",
+                            ),
+                            enabled = runtimeState.status == RuntimeStatus.EMPTY &&
+                                permission >= PermissionMode.LOCAL_WRITE &&
+                                state.status != AgentSessionStatus.RUNNING &&
+                                pendingApproval == null,
+                            onClick = {
+                                scope.launch {
+                                    agent.startRuntime()
+                                }
+                            },
+                        ) {
+                            Text("Запустить runtime")
+                        }
+                        OutlinedButton(
+                            modifier = Modifier.agentControl(
+                                "agent.runtime.stop",
+                                "Остановить внутренний runtime",
+                            ),
+                            enabled = runtimeState.status != RuntimeStatus.EMPTY &&
+                                state.status != AgentSessionStatus.RUNNING,
+                            onClick = {
+                                scope.launch {
+                                    agent.stopRuntime()
+                                }
+                            },
+                        ) {
+                            Text("Остановить")
+                        }
+                    }
+                    Text(
+                        text = "Loopback adapter работает внутри одного APK; Termux, DSH APK и внешний shell не используются.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
             if (
                 actionsState.status != ActionsOperationStatus.IDLE ||

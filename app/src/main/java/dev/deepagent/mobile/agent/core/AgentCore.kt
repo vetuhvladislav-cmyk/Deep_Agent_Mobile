@@ -28,6 +28,8 @@ import dev.deepagent.mobile.agent.model.ActionsArtifactSaveStatus
 import dev.deepagent.mobile.agent.model.ActionsOperationState
 import dev.deepagent.mobile.agent.model.ActionsOperationStatus
 import dev.deepagent.mobile.agent.model.ActionsRunRequest
+import dev.deepagent.mobile.agent.model.RuntimeState
+import dev.deepagent.mobile.agent.model.RuntimeStatus
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
@@ -45,6 +47,7 @@ import dev.deepagent.mobile.agent.model.PermissionMode
 import dev.deepagent.mobile.agent.patch.PatchPreview
 import dev.deepagent.mobile.agent.protocol.AgentBridge
 import dev.deepagent.mobile.agent.runtime.LocalLiteRunner
+import dev.deepagent.mobile.agent.runtime.RuntimeSupervisor
 import dev.deepagent.mobile.agent.session.PersistedAgentSession
 import dev.deepagent.mobile.agent.session.SessionDecisionRecord
 import dev.deepagent.mobile.agent.session.SessionInvocationRecord
@@ -92,6 +95,7 @@ class AgentCore(context: Context) : AgentBridge {
     private val appContext = context.applicationContext
     private val workspaceManager = WorkspaceManager(appContext)
     private val localRunner = LocalLiteRunner(appContext, workspaceManager)
+    private val runtimeSupervisor = RuntimeSupervisor()
     private val toolRouter = ToolRouter(workspaceManager)
     private val deepSeek = DeepSeekResponsesClient()
     private val actionsClient = GitHubActionsClient()
@@ -128,6 +132,9 @@ class AgentCore(context: Context) : AgentBridge {
     private val _actionsState = MutableStateFlow(ActionsOperationState())
     override val actions: StateFlow<ActionsOperationState> =
         _actionsState.asStateFlow()
+
+    private val _runtimeState = MutableStateFlow(RuntimeState())
+    override val runtime: StateFlow<RuntimeState> = _runtimeState.asStateFlow()
 
     private var activeJob: Job? = null
     private var patchApplyJob: Job? = null
@@ -280,6 +287,77 @@ class AgentCore(context: Context) : AgentBridge {
             }
         }
     }
+
+
+    override suspend fun startRuntime(): RuntimeState {
+        check(!closed) { "AgentCore уже закрыт" }
+        if (_state.value.status == AgentSessionStatus.RUNNING) {
+            val busy = RuntimeState(
+                status = RuntimeStatus.FAILED,
+                sessionId = currentSessionId,
+                summary = "Сначала завершите текущую сессию Agent Core",
+                errorCode = "SESSION_BUSY",
+            )
+            _runtimeState.value = busy
+            append(AgentEventKind.ERROR, busy.summary.orEmpty(), busy.toJson().toString())
+            return busy
+        }
+        val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
+        if (permission < PermissionMode.LOCAL_WRITE) {
+            val denied = RuntimeState(
+                status = RuntimeStatus.FAILED,
+                sessionId = currentSessionId,
+                summary = "Для установки runtime нужен permission LOCAL_WRITE",
+                errorCode = "PERMISSION_REQUIRED",
+            )
+            _runtimeState.value = denied
+            recordDecision(
+                kind = "RUNTIME",
+                state = "DENIED",
+                detail = "required=" + PermissionMode.LOCAL_WRITE.name,
+            )
+            append(AgentEventKind.ERROR, denied.summary.orEmpty(), denied.toJson().toString())
+            return denied
+        }
+        recordDecision(
+            kind = "RUNTIME",
+            state = "APPROVED",
+            detail = "runtime start; user_action=true",
+        )
+        append(
+            AgentEventKind.APPROVAL,
+            "Пользователь подтвердил запуск runtime",
+        )
+        val result = runtimeSupervisor.start(currentSessionId)
+        _runtimeState.value = result
+        append(
+            if (result.status == RuntimeStatus.READY) {
+                AgentEventKind.BUILD
+            } else {
+                AgentEventKind.ERROR
+            },
+            result.summary ?: "Runtime обновил состояние",
+            result.toJson().toString(),
+        )
+        return result
+    }
+
+    override suspend fun stopRuntime(): RuntimeState {
+        check(!closed) { "AgentCore уже закрыт" }
+        val result = runtimeSupervisor.stop(currentSessionId)
+        _runtimeState.value = result
+        append(
+            if (result.status == RuntimeStatus.EMPTY) {
+                AgentEventKind.TOOL
+            } else {
+                AgentEventKind.ERROR
+            },
+            result.summary ?: "Runtime обновил состояние",
+            result.toJson().toString(),
+        )
+        return result
+    }
+
 
 
     override suspend fun runActions(
@@ -725,6 +803,7 @@ class AgentCore(context: Context) : AgentBridge {
         activeJob?.cancel()
         patchApplyJob?.cancel()
         patchApplyJob = null
+        runtimeSupervisor.close()
         coreScope.cancel()
         closed = true
         persistOnClose()

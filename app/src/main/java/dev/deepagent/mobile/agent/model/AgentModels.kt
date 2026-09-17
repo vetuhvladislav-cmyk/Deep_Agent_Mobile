@@ -112,6 +112,40 @@ data class PendingPatchApproval(
 
 
 
+
+enum class RuntimeStatus {
+    EMPTY,
+    INSTALLING,
+    STARTING,
+    READY,
+    STOPPING,
+    FAILED,
+    ROLLBACK,
+}
+
+data class RuntimeState(
+    val status: RuntimeStatus = RuntimeStatus.EMPTY,
+    val sessionId: String? = null,
+    val version: String? = null,
+    val abi: String? = null,
+    val checksum: String? = null,
+    val heartbeatAt: Long? = null,
+    val summary: String? = null,
+    val errorCode: String? = null,
+    val updatedAt: Long = System.currentTimeMillis(),
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("status", status.name)
+        .put("session_id", AgentRedactor.text(sessionId, 160))
+        .put("version", AgentRedactor.text(version, 96))
+        .put("abi", AgentRedactor.text(abi, 96))
+        .put("checksum", AgentRedactor.text(checksum, 80))
+        .put("heartbeat_at", heartbeatAt)
+        .put("summary", AgentRedactor.text(summary, 2_000))
+        .put("error_code", AgentRedactor.text(errorCode, 96))
+        .put("updated_at", updatedAt)
+}
+
 enum class ActionsOperationStatus {
     IDLE,
     DISPATCHING,

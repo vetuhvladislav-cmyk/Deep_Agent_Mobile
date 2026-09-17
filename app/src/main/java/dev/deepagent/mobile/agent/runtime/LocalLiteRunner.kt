@@ -38,17 +38,15 @@ class LocalLiteRunner(
         val startedAt = System.nanoTime()
 
         val process = ProcessBuilder(
-            "/system/bin/sh",
-            "-c",
-            "printf 'local-lite-ready\\n'; pwd; printf 'workspace=%s\\n' \"" +
-                workspace.path.replace("\"", "") +
-                "\"",
+            "/system/bin/printf",
+            "local-lite-ready\\n",
         )
             .directory(workspace)
             .redirectErrorStream(false)
             .start()
 
-        val stdout = process.inputStream.bufferedReader().use { it.readText() }
+        val stdout = process.inputStream.bufferedReader().use { it.readText() } +
+            "workspace=" + workspace.path
         val stderr = process.errorStream.bufferedReader().use { it.readText() }
         val finished = process.waitFor(10, TimeUnit.SECONDS)
 
