@@ -9,6 +9,7 @@ import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.model.AgentSessionState
 import dev.deepagent.mobile.agent.model.AgentSessionStatus
+import dev.deepagent.mobile.agent.git.GitOperationResult
 import dev.deepagent.mobile.agent.model.ExecutionTarget
 import dev.deepagent.mobile.agent.model.PermissionMode
 import dev.deepagent.mobile.agent.model.PatchRecoveryState
@@ -210,6 +211,7 @@ data class PersistedAgentSession(
     val recoveryReason: String? = null,
     val patchRecovery: PatchRecoveryState? = null,
     val actionsState: ActionsOperationState? = null,
+    val gitOperationResult: GitOperationResult? = null,
     val interactiveState: InteractiveSessionState? = null,
   ) {
     fun toJson(): JSONObject = JSONObject()
@@ -258,19 +260,20 @@ data class PersistedAgentSession(
         .put("recovery_reason", AgentRedactor.text(recoveryReason, MAX_ERROR_CHARS))
         .put("patch_recovery", patchRecovery?.toJson())
         .put("actions_state", actionsState?.toJson())
+        .put("git_operation_result", gitOperationResult?.toJson())
         .put("interactive_state", interactiveState?.toJson())
         .put("event_cursor", eventCursor)
         .put("updated_at", updatedAt)
 
     companion object {
-        const val VERSION = 5
+        const val VERSION = 6
         const val MAX_EVENTS = 500
         const val MAX_INVOCATIONS = 500
         const val MAX_DECISIONS = 200
         const val MAX_ERROR_CHARS = 4_000
         const val MAX_EVENT_ID_CHARS = 160
         const val MAX_EVENT_MESSAGE_CHARS = 1_000
-        val SUPPORTED_VERSIONS = setOf(1, 2, 3, 4, 5)
+        val SUPPORTED_VERSIONS = setOf(1, 2, 3, 4, 5, 6)
         const val MAX_EVENT_DETAIL_CHARS = 4_000
 
         fun fromJson(value: JSONObject): PersistedAgentSession? {
@@ -397,6 +400,8 @@ data class PersistedAgentSession(
                     ?.let(PatchRecoveryState::fromJson),
                 actionsState = value.optJSONObject("actions_state")
                     ?.let(ActionsOperationState::fromJson),
+                gitOperationResult = value.optJSONObject("git_operation_result")
+                    ?.let(GitOperationResult::fromJson),
                 interactiveState = value.optJSONObject("interactive_state")
                     ?.let(InteractiveSessionState::fromJson),
             )
