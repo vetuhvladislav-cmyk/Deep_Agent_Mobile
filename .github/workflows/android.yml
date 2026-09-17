@@ -66,6 +66,7 @@ jobs:
             > app/build/outputs/apk/debug/deep-agent-provenance.json
 
       - name: Артефакт
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: deep-agent-mobile-debug-apk
