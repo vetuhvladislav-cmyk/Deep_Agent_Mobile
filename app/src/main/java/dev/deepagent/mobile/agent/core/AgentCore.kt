@@ -286,11 +286,14 @@ class AgentCore(context: Context) : AgentBridge {
                 errorCode = "PATCH_ROLLBACK_RECHECK_REQUIRED",
             )
         }
-        if (_state.value.status == AgentSessionStatus.RUNNING) {
+        if (
+            _state.value.status == AgentSessionStatus.RUNNING ||
+            _state.value.status == AgentSessionStatus.WAITING_APPROVAL
+        ) {
             return recordPatchRollbackFailure(
                 operationId = recovery.operationId,
                 path = recovery.path,
-                summary = "Сначала завершите текущую сессию Agent Core",
+                summary = "Сначала завершите текущую сессию или pending approval",
                 errorCode = "SESSION_BUSY",
             )
         }

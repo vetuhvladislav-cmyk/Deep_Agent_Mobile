@@ -498,7 +498,8 @@ fun AgentConsoleScreen(
                             }
                             if (recovery.status == PatchRecoveryStatus.APPLIED) {
                                 Button(
-                                    enabled = state.status != AgentSessionStatus.RUNNING,
+                                    enabled = state.status != AgentSessionStatus.RUNNING &&
+                                        pendingApproval == null,
                                     onClick = {
                                         patchRecoveryError = null
                                         scope.launch {
