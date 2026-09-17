@@ -122,7 +122,7 @@ class GitHubActionsClient {
             workflow = request.workflow,
             ref = request.ref,
         )
-        val expectedCommitSha = request.expectedCommitSha?.trim()
+        val expectedCommitSha = request.expectedCommitSha?.trim().orEmpty()
         val sourceValidation = when {
             validation != null -> validation
             expectedCommitSha.isNullOrBlank() ||
