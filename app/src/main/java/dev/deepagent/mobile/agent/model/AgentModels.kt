@@ -158,6 +158,8 @@ data class PendingPatchApproval(
     val newSha256: String,
     val unifiedDiff: String,
     val canApply: Boolean,
+    val approvalToken: String = "",
+    val approvalExpiresAt: Long = 0L,
 )
 
 
