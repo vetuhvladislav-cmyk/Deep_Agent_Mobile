@@ -112,6 +112,7 @@ class GitHubActionsClient {
     ): ActionsOperationState = withContext(Dispatchers.IO) {
         val baseState = ActionsOperationState(
             sessionId = request.sessionId,
+            operationId = request.operationId,
             repository = request.repository.trim().takeIf { it.isNotBlank() },
             workflow = request.workflow.trim().takeIf { it.isNotBlank() },
             ref = request.ref.trim().takeIf { it.isNotBlank() },
@@ -123,37 +124,42 @@ class GitHubActionsClient {
             ref = request.ref,
         )
         val expectedCommitSha = request.expectedCommitSha?.trim().orEmpty()
+        val expectedSessionId = request.sessionId?.trim()
+            ?.takeIf { it.isNotBlank() }
+        val expectedOperationId = request.operationId?.trim()
+            ?.takeIf { it.isNotBlank() }
         val sourceValidation = when {
             validation != null -> validation
-            expectedCommitSha.isNullOrBlank() ||
+            expectedCommitSha.isBlank() ||
                 !SHA_PATTERN.matches(expectedCommitSha) ->
                 "Для Actions нужен ожидаемый commit SHA"
+            expectedSessionId.isNullOrBlank() ->
+                "Для Actions нужен обязательный agent_session_id"
+            !SESSION_ID_PATTERN.matches(expectedSessionId) ->
+                "Session correlation id имеет недопустимый формат"
+            expectedOperationId.isNullOrBlank() ->
+                "Для Actions нужен обязательный operation_id"
+            !OPERATION_ID_PATTERN.matches(expectedOperationId) ->
+                "Operation correlation id имеет недопустимый формат"
             else -> null
         }
         if (sourceValidation != null) {
             val failed = baseState.copy(
                 status = ActionsOperationStatus.FAILED,
                 summary = sourceValidation,
-                errorCode = if (validation != null) {
-                    "ACTIONS_INVALID_ARGUMENTS"
-                } else {
-                    "ACTIONS_SOURCE_SHA_REQUIRED"
+                errorCode = when {
+                    validation != null -> "ACTIONS_INVALID_ARGUMENTS"
+                    expectedCommitSha.isBlank() ||
+                        !SHA_PATTERN.matches(expectedCommitSha) ->
+                        "ACTIONS_SOURCE_SHA_REQUIRED"
+                    expectedSessionId.isNullOrBlank() ->
+                        "ACTIONS_SESSION_ID_REQUIRED"
+                    !SESSION_ID_PATTERN.matches(expectedSessionId) ->
+                        "ACTIONS_SESSION_ID_INVALID"
+                    expectedOperationId.isNullOrBlank() ->
+                        "ACTIONS_OPERATION_ID_REQUIRED"
+                    else -> "ACTIONS_OPERATION_ID_INVALID"
                 },
-            )
-            onState(failed)
-            return@withContext failed
-        }
-
-        val expectedSessionId = request.sessionId?.trim()
-            ?.takeIf { it.isNotBlank() }
-        if (
-            expectedSessionId != null &&
-            !SESSION_ID_PATTERN.matches(expectedSessionId)
-        ) {
-            val failed = baseState.copy(
-                status = ActionsOperationStatus.FAILED,
-                summary = "Session correlation id имеет недопустимый формат",
-                errorCode = "ACTIONS_SESSION_ID_INVALID",
             )
             onState(failed)
             return@withContext failed
@@ -190,7 +196,8 @@ class GitHubActionsClient {
                 body = dispatchBody(
                     request.ref.trim(),
                     request.inputs + mapOf(
-                        "agent_session_id" to (request.sessionId ?: "unknown"),
+                        "agent_session_id" to expectedSessionId.orEmpty(),
+                        "operation_id" to expectedOperationId.orEmpty(),
                     ),
                 ),
             )
@@ -222,6 +229,7 @@ class GitHubActionsClient {
                 deadline = deadline,
                 expectedCommitSha = expectedCommitSha,
                 expectedSessionId = expectedSessionId,
+                expectedOperationId = expectedOperationId,
             )
                 ?: return@withContext publish(
                     current.copy(
@@ -475,6 +483,7 @@ class GitHubActionsClient {
         deadline: Long,
         expectedCommitSha: String,
         expectedSessionId: String?,
+        expectedOperationId: String?,
     ): RunInfo? {
         while (System.currentTimeMillis() < deadline) {
             currentCoroutineContext().ensureActive()
@@ -498,10 +507,10 @@ class GitHubActionsClient {
                 .filter { run ->
                     run.createdAt >= dispatchedAt - DISCOVERY_SKEW_MS &&
                         run.headSha.equals(expectedCommitSha, ignoreCase = true) &&
-                        (
-                            expectedSessionId == null ||
-                                run.displayName.contains(expectedSessionId)
-                        )
+                        expectedSessionId != null &&
+                            expectedOperationId != null &&
+                            run.displayName.contains(expectedSessionId) &&
+                            run.displayName.contains(expectedOperationId)
                 }
                 .minByOrNull { abs(it.createdAt - dispatchedAt) }
             if (candidate != null) return candidate
@@ -1242,6 +1251,7 @@ class GitHubActionsClient {
         const val MAX_ERROR_CHARS = 4_000
         const val MAX_REDIRECTS = 4
         private val SESSION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
+        private val OPERATION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
         private val REPOSITORY_PART_PATTERN = Regex("[A-Za-z0-9_.-]{1,100}")
         private val WORKFLOW_PART_PATTERN = Regex("[A-Za-z0-9._-]{1,100}")
         private val SHA_PATTERN = Regex("[A-Fa-f0-9]{40,64}")
