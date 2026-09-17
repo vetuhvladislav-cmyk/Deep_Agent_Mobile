@@ -100,10 +100,108 @@ data class GitOperationResult(
         )
         .put("truncated", truncated)
 
-    private companion object {
+    fun toState(fallbackSessionId: String? = null): GitOperationState {
+        return GitOperationState(
+            status = status,
+            sessionId = sessionId ?: fallbackSessionId,
+            operationId = operationId,
+            repository = repository,
+            base = base,
+            expectedHeadSha = expectedHeadSha,
+            operation = operation.name,
+            summary = summary,
+            branch = branch,
+            headSha = headSha,
+            workspaceFingerprintBefore = workspaceFingerprintBefore,
+            workspaceFingerprintAfter = workspaceFingerprintAfter,
+            errorCode = errorCode,
+            pullRequestNumber = pullRequestNumber,
+            pullRequestUrl = pullRequestUrl,
+            updatedAt = System.currentTimeMillis(),
+        )
+    }
+
+    companion object {
         const val MAX_SUMMARY_CHARS = 2_000
         const val MAX_CONTENT_CHARS = 64_000
         const val MAX_IDENTIFIER_CHARS = 200
+
+        fun fromJson(value: JSONObject): GitOperationResult? {
+            val operation = runCatching {
+                GitOperation.valueOf(value.optString("operation"))
+            }.getOrNull() ?: return null
+            val status = runCatching {
+                GitOperationStatus.valueOf(value.optString("status"))
+            }.getOrNull() ?: return null
+            val operationId = safeText(
+                value.optString("operation_id"),
+                MAX_IDENTIFIER_CHARS,
+            )
+            if (
+                operation != GitOperation.STATUS &&
+                !OPERATION_ID_PATTERN.matches(operationId.orEmpty())
+            ) {
+                return null
+            }
+            return GitOperationResult(
+                operation = operation,
+                sessionId = safeText(
+                    value.optString("session_id"),
+                    MAX_IDENTIFIER_CHARS,
+                ),
+                operationId = operationId,
+                repository = safeText(
+                    value.optString("repository"),
+                    MAX_IDENTIFIER_CHARS,
+                ),
+                base = safeText(
+                    value.optString("base"),
+                    MAX_IDENTIFIER_CHARS,
+                ),
+                expectedHeadSha = safeText(
+                    value.optString("expected_head_sha"),
+                    MAX_IDENTIFIER_CHARS,
+                ),
+                status = status,
+                summary = safeText(value.optString("summary"), MAX_SUMMARY_CHARS)
+                    .orEmpty(),
+                content = safeText(value.optString("content"), MAX_CONTENT_CHARS)
+                    .orEmpty(),
+                errorCode = safeText(value.optString("error_code"), MAX_IDENTIFIER_CHARS),
+                branch = safeText(value.optString("branch"), MAX_IDENTIFIER_CHARS),
+                headSha = safeText(value.optString("head_sha"), MAX_IDENTIFIER_CHARS),
+                workspaceFingerprintBefore = safeText(
+                    value.optString("workspace_fingerprint_before"),
+                    MAX_IDENTIFIER_CHARS,
+                ),
+                workspaceFingerprintAfter = safeText(
+                    value.optString("workspace_fingerprint_after"),
+                    MAX_IDENTIFIER_CHARS,
+                ),
+                pullRequestNumber = optionalInt(value, "pull_request_number"),
+                pullRequestUrl = safeText(
+                    value.optString("pull_request_url"),
+                    MAX_IDENTIFIER_CHARS,
+                ),
+                truncated = value.optBoolean("truncated", false),
+            )
+        }
+
+        private fun safeText(value: String?, maxChars: Int): String? {
+            return AgentRedactor.text(value, maxChars)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() && it != "null" }
+        }
+
+        private fun optionalInt(value: JSONObject, key: String): Int? {
+            return if (value.has(key) && !value.isNull(key)) {
+                value.optInt(key).takeIf { it > 0 }
+            } else {
+                null
+            }
+        }
+
+        private val OPERATION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
     }
 }
 
