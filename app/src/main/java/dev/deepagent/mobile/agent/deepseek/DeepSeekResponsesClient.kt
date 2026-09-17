@@ -2,8 +2,10 @@ package dev.deepagent.mobile.agent.deepseek
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -14,6 +16,7 @@ import java.net.URL
 
 private const val DEEPSEEK_CONNECT_TIMEOUT_MS = 20_000
 private const val DEEPSEEK_READ_TIMEOUT_MS = 120_000
+private const val DEEPSEEK_MIN_TIMEOUT_MS = 1_000L
 private const val MAX_SSE_LINE_CHARS = 512 * 1024
 private const val MAX_SSE_STREAM_CHARS = 8 * 1024 * 1024
 
@@ -50,6 +53,7 @@ data class DeepSeekRequest(
     val projectRules: String? = null,
     val reasoningEffort: String = "high",
     val maxOutputTokens: Int = 4096,
+    val timeoutMs: Long = DEEPSEEK_READ_TIMEOUT_MS.toLong(),
     val inputItems: List<JSONObject> = emptyList(),
     val tools: List<DeepSeekToolDefinition> = emptyList(),
 )
@@ -92,7 +96,13 @@ class DeepSeekResponsesClient {
         request: DeepSeekRequest,
         onEvent: (DeepSeekStreamEvent) -> Unit,
     ): DeepSeekRoundResult = withContext(Dispatchers.IO) {
-        require(request.apiKey.isNotBlank()) { "DeepSeek API key is empty" }
+        withTimeout(
+            request.timeoutMs.coerceIn(
+                DEEPSEEK_MIN_TIMEOUT_MS,
+                DEEPSEEK_READ_TIMEOUT_MS.toLong(),
+            ),
+        ) {
+            require(request.apiKey.isNotBlank()) { "DeepSeek API key is empty" }
         require(request.model.isNotBlank()) { "DeepSeek model is empty" }
 
         val endpoint = request.baseUrl.trimEnd('/') + "/responses"
@@ -115,6 +125,9 @@ class DeepSeekResponsesClient {
             setRequestProperty("Authorization", "Bearer " + request.apiKey)
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "text/event-stream")
+        }
+        val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion {
+            connection.disconnect()
         }
 
         var completedResponse: JSONObject? = null
@@ -222,6 +235,7 @@ class DeepSeekResponsesClient {
             failure = error.message ?: "DeepSeek request failed"
             onEvent(DeepSeekStreamEvent.Failed(failure.orEmpty()))
         } finally {
+            cancellationHandle?.dispose()
             connection.disconnect()
             if (activeConnection === connection) {
                 activeConnection = null
@@ -233,6 +247,7 @@ class DeepSeekResponsesClient {
             functionCalls = parseFunctionCalls(completedResponse),
             failure = failure,
         )
+        }
     }
 
     private fun readSseLine(reader: BufferedReader, maxChars: Int): String? {
