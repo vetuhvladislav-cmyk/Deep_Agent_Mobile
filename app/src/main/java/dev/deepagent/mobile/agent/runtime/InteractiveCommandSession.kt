@@ -6,6 +6,7 @@ import dev.deepagent.mobile.agent.model.InteractiveSessionStatus
 import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.model.PermissionMode
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
+import dev.deepagent.mobile.agent.workspace.WorkspacePathPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -14,7 +15,6 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
-import java.nio.file.Files
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
@@ -74,11 +74,20 @@ class InteractiveCommandSession(
         }
 
         val cwd = workspaceManager.resolveRoot(request.workspaceId)
-            ?.let { File(it, request.cwd.replace('\\', '/')).canonicalFile }
+            ?.let { root ->
+                runCatching {
+                    WorkspacePathPolicy.resolve(
+                        root = root,
+                        requestedPath = request.cwd,
+                        requireExisting = true,
+                    )
+                }.getOrNull()
+            }
+            ?.takeIf { it.isDirectory }
             ?: return@withContext publish(
                 base.copy(
                     status = InteractiveSessionStatus.FAILED,
-                    summary = "Workspace не выбран или недоступен",
+                    summary = "Workspace cwd недоступен или запрещён политикой",
                     errorCode = "INTERACTIVE_WORKSPACE_UNAVAILABLE",
                 ),
                 onState,
@@ -324,42 +333,24 @@ class InteractiveCommandSession(
         if (request.cwd.isBlank() || request.cwd.contains('\u0000')) {
             return "cwd имеет недопустимый формат"
         }
-        val normalizedCwd = request.cwd.replace('\\', '/')
-        if (containsSymbolicLink(root, normalizedCwd)) {
-            return "cwd содержит symbolic link"
-        }
-        val cwd = File(root, normalizedCwd).canonicalFile
-        if (
-            cwd.path != root.canonicalPath &&
-            !cwd.path.startsWith(root.canonicalPath + File.separator)
-        ) {
-            return "cwd выходит за границы workspace"
-        }
-        if (!cwd.isDirectory || Files.isSymbolicLink(cwd.toPath())) {
+        val cwd = runCatching {
+            WorkspacePathPolicy.resolve(
+                root = root,
+                requestedPath = request.cwd,
+                requireExisting = true,
+            )
+        }.getOrNull() ?: return "cwd не проходит workspace path policy"
+        if (!cwd.isDirectory) {
             return "cwd не является безопасной директорией"
         }
         return null
     }
 
-    private fun containsSymbolicLink(root: File, relativePath: String): Boolean {
-        var cursor = root.canonicalFile.toPath()
-        relativePath.split('/').forEach { part ->
-            when (part) {
-                "", "." -> Unit
-                ".." -> cursor = cursor.parent ?: cursor
-                else -> {
-                    cursor = cursor.resolve(part)
-                    if (Files.isSymbolicLink(cursor)) return true
-                }
-            }
-        }
-        return false
-    }
-
     private fun isSafeRelativePath(value: String): Boolean {
         val normalized = value.replace('\\', '/')
         return !normalized.startsWith("/") &&
-            normalized.split('/').none { it.isBlank() || it == "." || it == ".." }
+            normalized.split('/').none { it.isBlank() || it == "." || it == ".." } &&
+            !WorkspacePathPolicy.isBlockedRelativePath(normalized)
     }
 
     private fun publish(
@@ -401,12 +392,13 @@ class InteractiveCommandSession(
                 val count = stream.read(buffer)
                 if (count < 0) break
                 val remaining = maxChars - output.size()
-                if (remaining <= 0) {
+                if (remaining > 0) {
+                    val copied = minOf(count, remaining)
+                    output.write(buffer, 0, copied)
+                    if (copied < count) truncated = true
+                } else {
                     truncated = true
-                    break
                 }
-                output.write(buffer, 0, minOf(count, remaining))
-                if (count > remaining) truncated = true
             }
         }
         return CapturedOutput(
@@ -422,9 +414,8 @@ class InteractiveCommandSession(
         runCatching {
             process.outputStream.close()
             process.destroy()
-            if (!process.waitFor(TERMINATE_GRACE_MS, TimeUnit.MILLISECONDS)) {
+            if (process.isAlive) {
                 process.destroyForcibly()
-                process.waitFor(TERMINATE_GRACE_MS, TimeUnit.MILLISECONDS)
             }
         }
     }
