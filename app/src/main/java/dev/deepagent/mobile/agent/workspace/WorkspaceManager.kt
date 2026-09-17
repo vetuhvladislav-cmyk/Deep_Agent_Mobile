@@ -556,7 +556,11 @@ class WorkspaceManager(context: Context) {
             "." + indexFile.name + "." + UUID.randomUUID() + ".tmp",
         )
         try {
-            temporary.writeText(payload.toString(), Charsets.UTF_8)
+            FileOutputStream(temporary).use { output ->
+                output.write(payload.toString().toByteArray(Charsets.UTF_8))
+                output.flush()
+                output.fd.sync()
+            }
             try {
                 Files.move(
                     temporary.toPath(),
