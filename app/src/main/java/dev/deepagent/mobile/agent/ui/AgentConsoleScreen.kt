@@ -217,8 +217,7 @@ fun AgentConsoleScreen(
     }
 
     fun persistReadPermission(uri: Uri) {
-        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
-            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
         runCatching {
             context.contentResolver.takePersistableUriPermission(uri, flags)
         }
@@ -285,6 +284,7 @@ fun AgentConsoleScreen(
         contract = ActivityResultContracts.OpenDocumentTree(),
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
+        persistReadPermission(uri)
         scope.launch {
             runCatching {
                 agent.importWorkspace(uri.toString())
