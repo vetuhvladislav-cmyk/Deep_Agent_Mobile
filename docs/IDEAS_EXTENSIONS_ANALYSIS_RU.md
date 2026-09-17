@@ -4,6 +4,47 @@
 
 Принятые расширения D1–D3 перенесены в [IMPLEMENTATION_ROADMAP_RU.md](./IMPLEMENTATION_ROADMAP_RU.md). Архитектурные границы и контракты находятся в [ANDROID_AGENT_ARCHITECTURE_RU.md](./ANDROID_AGENT_ARCHITECTURE_RU.md).
 
+## Собственный приоритетный список
+
+Этот список — практический порядок работы после статического аудита. Он не создаёт новый источник статусов и не переводит capability в `available`.
+
+### P0 — сначала закрыть надёжность
+
+1. **Единый contract/build surface.** Синхронизировать AgentBridge, модели, UI contract, manifest/Gradle и документацию; acceptance начинается с компилируемого минимального APK.
+2. **Fail-closed execution boundary.** Одна политика путей и аргументов для workspace, ToolRouter, Patch Engine и Git; запрет symlink escape, чувствительных файлов и неявного shell.
+3. **Cancellation и recovery.** Отмена должна доходить до provider/network/process/runtime; неподтверждённая остановка становится `UNKNOWN` или `FAILED`, а не успешным результатом и не replay.
+4. **Provenance внешних действий.** Каждая Actions/PR/artifact операция связывается с `sessionId`, repository, ref и ожидаемым SHA; повторная попытка сначала проверяет существующий run.
+5. **Negative-path regression suite.** Fake providers и fixtures для path escape, permission, timeout, ZIP/checksum, journal recovery, process death и отсутствия Git.
+
+### P1 — затем масштабировать полезность
+
+6. **Provider/model registry.** Единый типизированный контракт для base URL, модели, capability и восстановления настроек без разъезда между UI, Core и journal.
+7. **Ясный формат journal.** Сохранить bounded JSON snapshots как осознанный текущий формат либо отдельно спроектировать append-only JSONL; не смешивать эти обещания в документации.
+8. **Capability и policy registry.** Каждая native, MCP и dynamic capability получает owner, version, scope, permission, redaction и rollback; DSL остаётся ограниченным и без native-кода.
+9. **Фоновое выполнение.** Scheduler, WorkManager и foreground service вводятся после модели idempotency, quotas, уведомлений и восстановления после process death.
+10. **Доверие к артефактам.** После checksum/source SHA добавить подпись или attestation, если APK/AAB будет распространяться за пределы локального инженерного сценария.
+
+### P2 — только после подтверждённой базы
+
+11. **Voice, vision и accessibility.** Сначала матрица устройств, latency/accuracy benchmarks и privacy threat model; затем отдельные capability adapters.
+12. **MCP/CapApp/OS-level.** Сначала стабильный ABI, discovery и consent boundary; fork Android, LSPosed и системный launcher — отдельный продуктовый трек, не скрытая зависимость APK.
+13. **Remote/multi-device/decentralized.** Добавлять после threat model, device-specific permission isolation, transport authentication и понятной деградации offline режима.
+
+### Как отбирать идеи из большого списка
+
+Список из 300 пунктов полезен как карта возможностей, но смешивает текущие функции, альтернативные архитектуры, маркетинговые утверждения и взаимоисключающие варианты. До включения в roadmap идея должна иметь владельца, data-flow, permission gate, failure/rollback semantics и проверяемый acceptance criterion.
+
+Особенно требуют разведения:
+
+- единый APK против обязательного Termux, DSH APK, второй оболочки, AOSP fork и LSPosed takeover;
+- native UI против WebView/DOM skills;
+- allowlist, fail-closed и per-call HITL против trust mode, one-click autonomy и постоянного разрешения на commit-действия;
+- ограниченный DSL против произвольного scripting, Python meta-tooling и dev tools;
+- on-device privacy против remote inference, Telegram/HTTP tunnels и multi-device control;
+- разные заявления о MCP (120+ tools, 57 tools, SSE и Streamable HTTP) — нужен один канонический transport/tool inventory.
+
+Числа вроде «$0.01 за действие», «<1 s» и «95% дешевле» не считаются capability до появления воспроизводимого benchmark с устройством, моделью, набором задач и baseline.
+
 ## Решения по направлениям, не включённым в базовый план
 
 - отдельный raster-generation provider — deferred; D1 использует существующий DeepSeek provider для анализа;
