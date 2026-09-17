@@ -2,7 +2,6 @@ package dev.deepagent.mobile.agent.core
 
 import android.content.Context
 import android.net.Uri
-import dev.deepagent.mobile.agent.deepseek.DeepSeekImage
 import dev.deepagent.mobile.agent.deepseek.DeepSeekRequest
 import dev.deepagent.mobile.agent.deepseek.DeepSeekResponsesClient
 import dev.deepagent.mobile.agent.deepseek.DeepSeekStreamEvent
@@ -1485,6 +1484,9 @@ class AgentCore(context: Context) : AgentBridge {
             repository = request.repository,
             workflow = request.workflow,
             ref = request.ref,
+            deepSeekBaseUrl = request.deepSeekBaseUrl,
+            model = request.model,
+            imageAssetId = request.imageAssetId,
         )
         _state.value = AgentSessionState(
             status = AgentSessionStatus.RUNNING,
