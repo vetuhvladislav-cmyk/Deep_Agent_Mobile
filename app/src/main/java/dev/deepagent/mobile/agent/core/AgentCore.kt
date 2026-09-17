@@ -87,6 +87,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
+import java.net.URL
 import java.util.UUID
 
 private data class PendingPatch(
@@ -1581,6 +1582,29 @@ class AgentCore(context: Context) : AgentBridge {
         require(request.image == null) {
             "Raw image attachment отключён; используйте AgentBridge.prepareImage"
         }
+        validateDeepSeekBaseUrl(request.deepSeekBaseUrl)
+    }
+
+    private fun validateDeepSeekBaseUrl(value: String) {
+        val normalized = value.trim()
+        require(
+            normalized.isNotBlank() &&
+                normalized.length <= MAX_BASE_URL_CHARS &&
+                normalized.none { it.isWhitespace() }
+        ) {
+            "DeepSeek base URL пустой или имеет недопустимый формат"
+        }
+        val url = runCatching { URL(normalized) }.getOrElse {
+            throw IllegalArgumentException("DeepSeek base URL имеет неверный формат")
+        }
+        require(
+            url.host.isNotBlank() &&
+                url.userInfo == null &&
+                url.query == null &&
+                url.ref == null
+        ) {
+            "DeepSeek base URL не должен содержать credentials, query или fragment"
+        }
     }
 
     private suspend fun executeLocal(request: AgentRequest) {
@@ -2529,6 +2553,7 @@ class AgentCore(context: Context) : AgentBridge {
         const val MAX_EVENT_MESSAGE_CHARS = 8_000
         const val MAX_EVENT_DETAIL_CHARS = 12_000
         const val MAX_ERROR_CHARS = 4_000
+        const val MAX_BASE_URL_CHARS = 512
         val SESSION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
         val SHA_PATTERN = Regex("[A-Fa-f0-9]{40,64}")
     }
