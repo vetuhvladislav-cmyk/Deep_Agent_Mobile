@@ -935,6 +935,7 @@ class ToolRouter(
         const val DEFAULT_READ_BYTES = 512 * 1024
         const val MAX_READ_BYTES = 2 * 1024 * 1024
         const val MAX_PROJECT_RULE_BYTES = 16 * 1024
+        const val MAX_PATCH_CHARS = 2 * 1024 * 1024
         const val DEFAULT_MAX_RESULTS = 50
         const val MAX_RESULTS_LIMIT = 200
         const val DEFAULT_SEARCH_FILE_BYTES = 512 * 1024
