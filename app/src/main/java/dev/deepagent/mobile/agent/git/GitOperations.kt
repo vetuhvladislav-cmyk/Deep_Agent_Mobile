@@ -37,7 +37,8 @@ enum class GitOperationStatus {
 data class GitOperationState(
     val status: GitOperationStatus = GitOperationStatus.IDLE,
     val sessionId: String? = null,
-    val repository: String? = null,
+    val operationId: String? = null,
+        val repository: String? = null,
     val base: String? = null,
     val expectedHeadSha: String? = null,
     val operation: String? = null,
@@ -55,6 +56,7 @@ data class GitOperationState(
 data class GitOperationResult(
     val operation: GitOperation,
     val sessionId: String? = null,
+    val operationId: String? = null,
     val repository: String? = null,
     val base: String? = null,
     val expectedHeadSha: String? = null,
@@ -72,6 +74,7 @@ data class GitOperationResult(
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("operation", operation.name)
+        .put("operation_id", AgentRedactor.text(operationId, MAX_IDENTIFIER_CHARS))
         .put("session_id", AgentRedactor.text(sessionId, MAX_IDENTIFIER_CHARS))
         .put("repository", AgentRedactor.text(repository, MAX_IDENTIFIER_CHARS))
         .put("base", AgentRedactor.text(base, MAX_IDENTIFIER_CHARS))
@@ -107,16 +110,19 @@ data class GitOperationResult(
 data class GitBranchRequest(
     val name: String,
     val startPoint: String? = null,
+    val operationId: String? = null,
 )
 
 data class GitCommitRequest(
     val paths: List<String>,
     val message: String,
+    val operationId: String? = null,
 )
 
 data class GitPushRequest(
     val remote: String = "origin",
     val branch: String,
+    val operationId: String? = null,
 )
 
 data class GitPullRequestRequest(
@@ -128,6 +134,7 @@ data class GitPullRequestRequest(
     val draft: Boolean = true,
     val expectedHeadSha: String? = null,
     val sessionId: String? = null,
+    val operationId: String? = null,
 )
 
 sealed interface GitHubPullRequestResult {
@@ -218,12 +225,13 @@ class GitRepositoryClient(
         workspaceId: String?,
         request: GitBranchRequest,
     ): GitOperationResult = withContext(Dispatchers.IO) {
+        val operationId = validateOperationId(request.operationId)
         val root = requireGitWorkspace(workspaceId)
             ?: return@withContext unavailable(
                 GitOperation.CREATE_BRANCH,
                 "Workspace не выбран или недоступен",
                 "WORKSPACE_UNAVAILABLE",
-            )
+            ).copy(operationId = operationId)
         val branch = validateRef(request.name, "branch")
         val startPoint = request.startPoint
             ?.trim()
@@ -234,7 +242,7 @@ class GitRepositoryClient(
                 GitOperation.CREATE_BRANCH,
                 "Workspace fingerprint недоступен; требуется re-check",
                 "WORKSPACE_RECHECK_REQUIRED",
-            )
+            ).copy(operationId = operationId)
 
         val args = mutableListOf("checkout", "-b", branch)
         startPoint?.let(args::add)
@@ -267,12 +275,13 @@ class GitRepositoryClient(
         workspaceId: String?,
         request: GitCommitRequest,
     ): GitOperationResult = withContext(Dispatchers.IO) {
+        val operationId = validateOperationId(request.operationId)
         val root = requireGitWorkspace(workspaceId)
             ?: return@withContext unavailable(
                 GitOperation.COMMIT,
                 "Workspace не выбран или недоступен",
                 "WORKSPACE_UNAVAILABLE",
-            )
+            ).copy(operationId = operationId)
         val paths = validatePaths(root, request.paths)
         val message = request.message.trim()
         require(message.isNotBlank()) { "Commit message не может быть пустым" }
@@ -284,13 +293,14 @@ class GitRepositoryClient(
                 GitOperation.COMMIT,
                 "Workspace fingerprint недоступен; требуется re-check",
                 "WORKSPACE_RECHECK_REQUIRED",
-            )
+            ).copy(operationId = operationId)
 
         val addCommand = runGit(root, listOf("add", "--") + paths)
         if (addCommand.startError != null || addCommand.timedOut || addCommand.exitCode != 0) {
             val after = captureFingerprint(workspaceId)
             return@withContext GitOperationResult(
                 operation = GitOperation.COMMIT,
+                operationId = operationId,
                 status = GitOperationStatus.UNKNOWN,
                 summary = "Индекс Git изменён или не подтверждён; commit требует re-check",
                 content = safeText(
@@ -342,12 +352,13 @@ class GitRepositoryClient(
         workspaceId: String?,
         request: GitPushRequest,
     ): GitOperationResult = withContext(Dispatchers.IO) {
+        val operationId = validateOperationId(request.operationId)
         val root = requireGitWorkspace(workspaceId)
             ?: return@withContext unavailable(
                 GitOperation.PUSH,
                 "Workspace не выбран или недоступен",
                 "WORKSPACE_UNAVAILABLE",
-            )
+            ).copy(operationId = operationId)
         val remote = validateRemote(request.remote)
         val branch = validateRef(request.branch, "branch")
         val before = captureFingerprint(workspaceId)
@@ -355,7 +366,7 @@ class GitRepositoryClient(
                 GitOperation.PUSH,
                 "Workspace fingerprint недоступен; требуется re-check",
                 "WORKSPACE_RECHECK_REQUIRED",
-            )
+            ).copy(operationId = operationId)
 
         val command = runGit(
             root,
@@ -411,6 +422,14 @@ class GitRepositoryClient(
     private fun isGitRepository(root: File): Boolean {
         val metadata = File(root, ".git")
         return metadata.isDirectory && !Files.isSymbolicLink(metadata.toPath())
+    }
+
+    private fun validateOperationId(value: String?): String {
+        val operationId = value?.trim().orEmpty()
+        require(OPERATION_ID_PATTERN.matches(operationId)) {
+            "Для Git operation нужен корректный operation id"
+        }
+        return operationId
     }
 
     private fun validatePaths(root: File, paths: List<String>): List<String> {
@@ -637,6 +656,7 @@ class GitRepositoryClient(
         const val MAX_COMMIT_MESSAGE_CHARS = 2_000
         const val MAX_IDENTIFIER_CHARS = 200
         const val GIT_TIMEOUT_SECONDS = 8L
+        val OPERATION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
         val URL_CREDENTIAL_PATTERN = Regex(
             "(?i)(https?://)[^\\s/@:]+:[^\\s/@]+@",
         )
@@ -837,6 +857,10 @@ class GitHubPullRequestClient {
         require(SESSION_ID_PATTERN.matches(sessionId)) {
             "Для PR нужен session ID"
         }
+        val operationId = request.operationId?.trim().orEmpty()
+        require(OPERATION_ID_PATTERN.matches(operationId)) {
+            "Для PR нужен operation id"
+        }
         return request.copy(
             repository = repository,
             head = head,
@@ -845,6 +869,7 @@ class GitHubPullRequestClient {
             body = body,
             expectedHeadSha = expectedHeadSha,
             sessionId = sessionId,
+            operationId = operationId,
         )
     }
 
@@ -887,5 +912,6 @@ class GitHubPullRequestClient {
         val REPOSITORY_PART_PATTERN = Regex("[A-Za-z0-9_.-]{1,100}")
         val SHA_PATTERN = Regex("[A-Fa-f0-9]{40,64}")
         val SESSION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
+        val OPERATION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
     }
 }
