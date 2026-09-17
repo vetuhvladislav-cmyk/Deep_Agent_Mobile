@@ -318,6 +318,15 @@ data class PersistedAgentSession(
                                 item.optString("invocation_id"),
                                 SessionRequestSummary.MAX_IDENTIFIER_CHARS,
                             )?.takeIf { it.isNotBlank() },
+                            schemaVersion = item.optInt(
+                                "schema_version",
+                                AgentEvent.SCHEMA_VERSION,
+                            ).takeIf { it in 1..AgentEvent.SCHEMA_VERSION }
+                                ?: AgentEvent.SCHEMA_VERSION,
+                            payload = AgentRedactor.text(
+                                item.optString("payload"),
+                                AgentEvent.MAX_PAYLOAD_CHARS,
+                            )?.takeIf { it.isNotBlank() },
                         ),
                     )
                 }
@@ -593,6 +602,8 @@ private fun AgentEvent.toJournalJson(): JSONObject = JSONObject()
     .put("session_id", sessionId)
     .put("workspace_id", workspaceId)
     .put("invocation_id", invocationId)
+    .put("schema_version", schemaVersion)
+    .put("payload", AgentRedactor.text(payload, AgentEvent.MAX_PAYLOAD_CHARS))
 
 private fun JSONObject.optLongOrNull(key: String): Long? {
     if (!has(key) || isNull(key)) return null
