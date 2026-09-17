@@ -21,7 +21,7 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Card
@@ -1686,7 +1686,7 @@ fun AgentConsoleScreen(
                     onClick = { agent.cancel() },
                 ) {
                     Icon(
-                        imageVector = Icons.Outlined.Stop,
+                        imageVector = Icons.Outlined.Close,
                         contentDescription = null,
                     )
                     Spacer(Modifier.width(6.dp))
