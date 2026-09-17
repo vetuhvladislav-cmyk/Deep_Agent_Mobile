@@ -49,6 +49,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.deepagent.mobile.agent.model.ActionsArtifactRequest
+import dev.deepagent.mobile.agent.model.ActionsArtifactSaveStatus
+import dev.deepagent.mobile.agent.model.ActionsOperationStatus
+import dev.deepagent.mobile.agent.model.ActionsRunRequest
 import dev.deepagent.mobile.agent.git.GitBranchRequest
 import dev.deepagent.mobile.agent.git.GitCommitRequest
 import dev.deepagent.mobile.agent.git.GitPullRequestRequest
@@ -116,6 +120,7 @@ fun AgentConsoleScreen(
     var workspaceError by remember { mutableStateOf<String?>(null) }
     var gitError by remember { mutableStateOf<String?>(null) }
     var patchRecoveryError by remember { mutableStateOf<String?>(null) }
+    var actionsError by remember { mutableStateOf<String?>(null) }
     var gitBranch by rememberSaveable { mutableStateOf("agent/task") }
     var gitStartPoint by rememberSaveable { mutableStateOf("HEAD") }
     var commitPaths by rememberSaveable { mutableStateOf("") }
@@ -131,6 +136,7 @@ fun AgentConsoleScreen(
     val pendingApproval by agent.pendingApproval.collectAsState()
     val gitState by agent.git.collectAsState()
     val patchRecovery by agent.patchRecovery.collectAsState()
+    val actionsState by agent.actions.collectAsState()
 
     LaunchedEffect(imageUri) {
         val persistedUri = imageUri ?: return@LaunchedEffect
@@ -539,6 +545,158 @@ fun AgentConsoleScreen(
                     }
                 }
 
+
+
+            if (
+                actionsState.status != ActionsOperationStatus.IDLE ||
+                target == ExecutionTarget.REMOTE_ACTIONS
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = "P1-B GitHub Actions",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Состояние: " + actionsState.status.name +
+                                " · run: " +
+                                (actionsState.runNumber?.toString()
+                                    ?: actionsState.runId?.toString()
+                                    ?: "нет"),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        actionsState.headSha?.let {
+                            Text(
+                                text = "Source SHA: " + it,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        actionsState.failedStep?.let {
+                            Text(
+                                text = "Ошибка шага: " + it,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        actionsState.summary?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        actionsState.redactedLogs
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let {
+                                Text(
+                                    text = it.take(6_000),
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                    lineHeight = 13.sp,
+                                )
+                            }
+                        actionsState.artifacts.forEach { artifact ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = artifact.name + " · " +
+                                        artifact.sizeBytes + " bytes" +
+                                        if (artifact.verified) " · сохранён" else "",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                                val runId = actionsState.runId
+                                val sourceSha = actionsState.headSha
+                                if (
+                                    !artifact.verified &&
+                                    actionsState.status == ActionsOperationStatus.SUCCEEDED &&
+                                    runId != null &&
+                                    sourceSha != null &&
+                                    workspace != null
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            actionsError = null
+                                            scope.launch {
+                                                val result = agent.saveVerifiedArtifact(
+                                                    ActionsArtifactRequest(
+                                                        token = githubToken,
+                                                        repository = repository,
+                                                        runId = runId,
+                                                        artifactId = artifact.id,
+                                                        expectedCommitSha = sourceSha,
+                                                        workspaceId = workspace.id,
+                                                    ),
+                                                )
+                                                if (
+                                                    result.status !=
+                                                        ActionsArtifactSaveStatus.VERIFIED_SAVED
+                                                ) {
+                                                    actionsError = result.summary
+                                                }
+                                            }
+                                        },
+                                    ) {
+                                        Text("Скачать")
+                                    }
+                                }
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(
+                                enabled = permission >= PermissionMode.GITHUB_WRITE &&
+                                    githubToken.isNotBlank() &&
+                                    repository.isNotBlank() &&
+                                    workflow.isNotBlank() &&
+                                    state.status != AgentSessionStatus.RUNNING &&
+                                    pendingApproval == null,
+                                onClick = {
+                                    actionsError = null
+                                    scope.launch {
+                                        agent.runActions(
+                                            ActionsRunRequest(
+                                                token = githubToken,
+                                                repository = repository,
+                                                workflow = workflow,
+                                                ref = ref,
+                                                sessionId = actionsState.sessionId
+                                                    ?: state.sessionId,
+                                            ),
+                                        )
+                                    }
+                                },
+                            ) {
+                                Text("Запустить Actions")
+                            }
+                        }
+                        actionsError?.let {
+                            Text(
+                                text = it,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Text(
+                            text = "Dispatch/retry выполняется только явной кнопкой и требует GITHUB_WRITE. " +
+                                "Artifact сохраняется после проверки source SHA, sidecar checksum и provenance.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                    }
+                }
+            }
 
             if (workspace != null) {
                 Card(

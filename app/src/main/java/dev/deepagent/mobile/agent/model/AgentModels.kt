@@ -1,6 +1,7 @@
 package dev.deepagent.mobile.agent.model
 
 import java.util.UUID
+import org.json.JSONArray
 import org.json.JSONObject
 
 enum class ExecutionTarget {
@@ -108,6 +109,348 @@ data class PendingPatchApproval(
     val unifiedDiff: String,
     val canApply: Boolean,
 )
+
+
+
+enum class ActionsOperationStatus {
+    IDLE,
+    DISPATCHING,
+    DISCOVERING_RUN,
+    RUNNING,
+    SUCCEEDED,
+    FAILED,
+    CANCELLED,
+    UNKNOWN,
+}
+
+data class ActionsRunRequest(
+    val token: String,
+    val repository: String,
+    val workflow: String,
+    val ref: String = "main",
+    val sessionId: String? = null,
+    val expectedCommitSha: String? = null,
+    val inputs: Map<String, String> = emptyMap(),
+    val pollTimeoutMs: Long = 5 * 60 * 1_000L,
+    val pollIntervalMs: Long = 1_500L,
+) {
+    fun toAuditJson(): JSONObject = JSONObject()
+        .put("repository", AgentRedactor.text(repository, 160))
+        .put("workflow", AgentRedactor.text(workflow, 160))
+        .put("ref", AgentRedactor.text(ref, 160))
+        .put("session_id", AgentRedactor.text(sessionId, 160))
+        .put("expected_commit_sha", AgentRedactor.text(expectedCommitSha, 80))
+        .put(
+            "inputs",
+            JSONObject().apply {
+                inputs.entries
+                    .sortedBy { it.key }
+                    .take(16)
+                    .forEach { (key, value) ->
+                        put(
+                            AgentRedactor.text(key, 96) ?: "input",
+                            AgentRedactor.text(value, 1_000),
+                        )
+                    }
+            },
+        )
+}
+
+data class ActionsStepState(
+    val name: String,
+    val status: String,
+    val conclusion: String? = null,
+    val number: Int = 0,
+    val durationMs: Long? = null,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("name", AgentRedactor.text(name, 200))
+        .put("status", AgentRedactor.text(status, 64))
+        .put("conclusion", AgentRedactor.text(conclusion, 64))
+        .put("number", number)
+        .put("duration_ms", durationMs)
+}
+
+data class ActionsJobState(
+    val id: Long,
+    val name: String,
+    val status: String,
+    val conclusion: String? = null,
+    val durationMs: Long? = null,
+    val steps: List<ActionsStepState> = emptyList(),
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("id", id)
+        .put("name", AgentRedactor.text(name, 200))
+        .put("status", AgentRedactor.text(status, 64))
+        .put("conclusion", AgentRedactor.text(conclusion, 64))
+        .put("duration_ms", durationMs)
+        .put(
+            "steps",
+            JSONArray().apply {
+                steps.take(MAX_STEPS).forEach { put(it.toJson()) }
+            },
+        )
+
+    private companion object {
+        const val MAX_STEPS = 64
+    }
+}
+
+data class ActionsArtifactState(
+    val id: Long,
+    val name: String,
+    val sizeBytes: Long,
+    val contentType: String? = null,
+    val expired: Boolean = false,
+    val archiveDigest: String? = null,
+    val sourceSha: String? = null,
+    val checksum: String? = null,
+    val verified: Boolean = false,
+    val savedPath: String? = null,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("id", id)
+        .put("name", AgentRedactor.text(name, 200))
+        .put("size_bytes", sizeBytes)
+        .put("content_type", AgentRedactor.text(contentType, 160))
+        .put("expired", expired)
+        .put("archive_digest", AgentRedactor.text(archiveDigest, 160))
+        .put("source_sha", AgentRedactor.text(sourceSha, 80))
+        .put("checksum", AgentRedactor.text(checksum, 80))
+        .put("verified", verified)
+        .put("saved_path", AgentRedactor.text(savedPath, 260))
+}
+
+data class ActionsOperationState(
+    val sessionId: String? = null,
+    val repository: String? = null,
+    val workflow: String? = null,
+    val ref: String? = null,
+    val status: ActionsOperationStatus = ActionsOperationStatus.IDLE,
+    val runId: Long? = null,
+    val runNumber: Int? = null,
+    val headSha: String? = null,
+    val conclusion: String? = null,
+    val failedStep: String? = null,
+    val jobs: List<ActionsJobState> = emptyList(),
+    val artifacts: List<ActionsArtifactState> = emptyList(),
+    val redactedLogs: String? = null,
+    val summary: String? = null,
+    val errorCode: String? = null,
+    val updatedAt: Long = System.currentTimeMillis(),
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("session_id", AgentRedactor.text(sessionId, 160))
+        .put("repository", AgentRedactor.text(repository, 160))
+        .put("workflow", AgentRedactor.text(workflow, 160))
+        .put("ref", AgentRedactor.text(ref, 160))
+        .put("status", status.name)
+        .put("run_id", runId)
+        .put("run_number", runNumber)
+        .put("head_sha", AgentRedactor.text(headSha, 80))
+        .put("conclusion", AgentRedactor.text(conclusion, 64))
+        .put("failed_step", AgentRedactor.text(failedStep, 320))
+        .put(
+            "jobs",
+            JSONArray().apply {
+                jobs.take(MAX_JOBS).forEach { put(it.toJson()) }
+            },
+        )
+        .put(
+            "artifacts",
+            JSONArray().apply {
+                artifacts.take(MAX_ARTIFACTS).forEach { put(it.toJson()) }
+            },
+        )
+        .put("redacted_logs", AgentRedactor.text(redactedLogs, MAX_LOG_CHARS))
+        .put("summary", AgentRedactor.text(summary, MAX_SUMMARY_CHARS))
+        .put("error_code", AgentRedactor.text(errorCode, 96))
+        .put("updated_at", updatedAt)
+
+    companion object {
+        private const val MAX_JOBS = 32
+        private const val MAX_ARTIFACTS = 32
+        private const val MAX_STEPS = 64
+        private const val MAX_LOG_CHARS = 32_000
+        private const val MAX_SUMMARY_CHARS = 2_000
+        private val SHA_PATTERN = Regex("[A-Fa-f0-9]{40,64}")
+
+        fun fromJson(value: JSONObject): ActionsOperationState {
+            val status = runCatching {
+                ActionsOperationStatus.valueOf(value.optString("status"))
+            }.getOrDefault(ActionsOperationStatus.UNKNOWN)
+            val jobs = buildList {
+                val array = value.optJSONArray("jobs") ?: JSONArray()
+                for (index in 0 until array.length().coerceAtMost(MAX_JOBS)) {
+                    val item = array.optJSONObject(index) ?: continue
+                    val id = item.optLong("id", 0L)
+                    if (id <= 0L) continue
+                    val steps = buildList {
+                        val stepsArray = item.optJSONArray("steps") ?: JSONArray()
+                        for (stepIndex in 0 until stepsArray.length()
+                            .coerceAtMost(MAX_STEPS)
+                        ) {
+                            val step = stepsArray.optJSONObject(stepIndex) ?: continue
+                            val name = safeText(step.optString("name"), 200)
+                                ?: continue
+                            add(
+                                ActionsStepState(
+                                    name = name,
+                                    status = safeText(
+                                        step.optString("status"),
+                                        64,
+                                    ).orEmpty(),
+                                    conclusion = safeText(
+                                        step.optString("conclusion"),
+                                        64,
+                                    ),
+                                    number = step.optInt("number", 0),
+                                    durationMs = optionalLong(step, "duration_ms"),
+                                ),
+                            )
+                        }
+                    }
+                    add(
+                        ActionsJobState(
+                            id = id,
+                            name = safeText(item.optString("name"), 200).orEmpty(),
+                            status = safeText(item.optString("status"), 64).orEmpty(),
+                            conclusion = safeText(item.optString("conclusion"), 64),
+                            durationMs = optionalLong(item, "duration_ms"),
+                            steps = steps,
+                        ),
+                    )
+                }
+            }
+            val artifacts = buildList {
+                val array = value.optJSONArray("artifacts") ?: JSONArray()
+                for (index in 0 until array.length().coerceAtMost(MAX_ARTIFACTS)) {
+                    val item = array.optJSONObject(index) ?: continue
+                    val id = item.optLong("id", 0L)
+                    if (id <= 0L) continue
+                    val name = safeText(item.optString("name"), 200)
+                        ?: continue
+                    add(
+                        ActionsArtifactState(
+                            id = id,
+                            name = name,
+                            sizeBytes = item.optLong("size_bytes", 0L)
+                                .coerceAtLeast(0L),
+                            contentType = safeText(
+                                item.optString("content_type"),
+                                160,
+                            ),
+                            expired = item.optBoolean("expired", false),
+                            archiveDigest = safeText(
+                                item.optString("archive_digest"),
+                                160,
+                            ),
+                            sourceSha = safeSha(item.optString("source_sha")),
+                            checksum = safeSha(item.optString("checksum")),
+                            verified = item.optBoolean("verified", false),
+                            savedPath = safeText(
+                                item.optString("saved_path"),
+                                260,
+                            ),
+                        ),
+                    )
+                }
+            }
+            return ActionsOperationState(
+                sessionId = safeText(value.optString("session_id"), 160),
+                repository = safeText(value.optString("repository"), 160),
+                workflow = safeText(value.optString("workflow"), 160),
+                ref = safeText(value.optString("ref"), 160),
+                status = status,
+                runId = optionalLong(value, "run_id"),
+                runNumber = value.optInt("run_number", 0).takeIf { it > 0 },
+                headSha = safeSha(value.optString("head_sha")),
+                conclusion = safeText(value.optString("conclusion"), 64),
+                failedStep = safeText(value.optString("failed_step"), 320),
+                jobs = jobs,
+                artifacts = artifacts,
+                redactedLogs = safeText(
+                    value.optString("redacted_logs"),
+                    MAX_LOG_CHARS,
+                ),
+                summary = safeText(value.optString("summary"), MAX_SUMMARY_CHARS),
+                errorCode = safeText(value.optString("error_code"), 96),
+                updatedAt = value.optLong(
+                    "updated_at",
+                    System.currentTimeMillis(),
+                ),
+            )
+        }
+
+        private fun optionalLong(value: JSONObject, key: String): Long? {
+            if (!value.has(key) || value.isNull(key)) return null
+            return value.optLong(key, Long.MIN_VALUE)
+                .takeUnless { it == Long.MIN_VALUE || it <= 0L }
+        }
+
+        private fun safeText(value: String?, maxChars: Int): String? {
+            return AgentRedactor.text(value, maxChars)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() && it != "null" }
+        }
+
+        private fun safeSha(value: String?): String? {
+            return safeText(value, 80)?.takeIf { SHA_PATTERN.matches(it) }
+        }
+    }
+}
+
+data class ActionsArtifactRequest(
+    val token: String,
+    val repository: String,
+    val runId: Long,
+    val artifactId: Long,
+    val expectedCommitSha: String,
+    val workspaceId: String? = null,
+    val outputName: String? = null,
+)
+
+enum class ActionsArtifactSaveStatus {
+    VERIFIED_SAVED,
+    FAILED,
+    UNKNOWN,
+}
+
+data class ActionsArtifactSaveResult(
+    val sessionId: String? = null,
+    val workspaceId: String? = null,
+    val artifactId: Long? = null,
+    val fileName: String? = null,
+    val relativePath: String? = null,
+    val status: ActionsArtifactSaveStatus,
+    val summary: String,
+    val sourceSha: String? = null,
+    val checksum: String? = null,
+    val workspaceFingerprintBefore: String? = null,
+    val workspaceFingerprintAfter: String? = null,
+    val errorCode: String? = null,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("session_id", AgentRedactor.text(sessionId, 160))
+        .put("workspace_id", AgentRedactor.text(workspaceId, 160))
+        .put("artifact_id", artifactId)
+        .put("file_name", AgentRedactor.text(fileName, 200))
+        .put("relative_path", AgentRedactor.text(relativePath, 260))
+        .put("status", status.name)
+        .put("summary", AgentRedactor.text(summary, 2_000))
+        .put("source_sha", AgentRedactor.text(sourceSha, 80))
+        .put("checksum", AgentRedactor.text(checksum, 80))
+        .put(
+            "workspace_fingerprint_before",
+            AgentRedactor.text(workspaceFingerprintBefore, 80),
+        )
+        .put(
+            "workspace_fingerprint_after",
+            AgentRedactor.text(workspaceFingerprintAfter, 80),
+        )
+        .put("error_code", AgentRedactor.text(errorCode, 96))
+}
 
 
 enum class PatchRecoveryStatus {

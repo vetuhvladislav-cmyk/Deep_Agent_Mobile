@@ -10,6 +10,7 @@ import dev.deepagent.mobile.agent.deepseek.DeepSeekToolDefinition
 import dev.deepagent.mobile.agent.github.GitHubActionsClient
 import dev.deepagent.mobile.agent.github.GitHubActionsRequest
 import dev.deepagent.mobile.agent.github.GitHubActionsResult
+import dev.deepagent.mobile.agent.github.ArtifactDownloadResult
 import dev.deepagent.mobile.agent.git.GitBranchRequest
 import dev.deepagent.mobile.agent.git.GitCommitRequest
 import dev.deepagent.mobile.agent.git.GitHubPullRequestClient
@@ -20,6 +21,13 @@ import dev.deepagent.mobile.agent.git.GitOperationState
 import dev.deepagent.mobile.agent.git.GitOperationStatus
 import dev.deepagent.mobile.agent.git.GitPullRequestRequest
 import dev.deepagent.mobile.agent.git.GitPushRequest
+import dev.deepagent.mobile.agent.artifact.ArtifactManager
+import dev.deepagent.mobile.agent.model.ActionsArtifactRequest
+import dev.deepagent.mobile.agent.model.ActionsArtifactSaveResult
+import dev.deepagent.mobile.agent.model.ActionsArtifactSaveStatus
+import dev.deepagent.mobile.agent.model.ActionsOperationState
+import dev.deepagent.mobile.agent.model.ActionsOperationStatus
+import dev.deepagent.mobile.agent.model.ActionsRunRequest
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
@@ -86,8 +94,9 @@ class AgentCore(context: Context) : AgentBridge {
     private val localRunner = LocalLiteRunner(appContext, workspaceManager)
     private val toolRouter = ToolRouter(workspaceManager)
     private val deepSeek = DeepSeekResponsesClient()
-    private val actions = GitHubActionsClient()
-    private val pullRequests = GitHubPullRequestClient()
+    private val actionsClient = GitHubActionsClient()
+    private val artifactManager = ArtifactManager()
+      private val pullRequests = GitHubPullRequestClient()
     private val sessionStore = SessionStore(appContext)
     private val coreScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val journalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -115,6 +124,10 @@ class AgentCore(context: Context) : AgentBridge {
     private val _patchRecovery = MutableStateFlow<PatchRecoveryState?>(null)
     override val patchRecovery: StateFlow<PatchRecoveryState?> =
         _patchRecovery.asStateFlow()
+
+    private val _actionsState = MutableStateFlow(ActionsOperationState())
+    override val actions: StateFlow<ActionsOperationState> =
+        _actionsState.asStateFlow()
 
     private var activeJob: Job? = null
     private var patchApplyJob: Job? = null
@@ -267,6 +280,295 @@ class AgentCore(context: Context) : AgentBridge {
             }
         }
     }
+
+
+    override suspend fun runActions(
+        request: ActionsRunRequest,
+    ): ActionsOperationState {
+        check(!closed) { "AgentCore уже закрыт" }
+        if (
+            _state.value.status == AgentSessionStatus.RUNNING ||
+            _state.value.status == AgentSessionStatus.WAITING_APPROVAL
+        ) {
+            val busy = ActionsOperationState(
+                sessionId = currentSessionId,
+                repository = request.repository,
+                workflow = request.workflow,
+                ref = request.ref,
+                status = ActionsOperationStatus.FAILED,
+                summary = "Сначала завершите текущую сессию Agent Core",
+                errorCode = "SESSION_BUSY",
+            )
+            _actionsState.value = busy
+            append(AgentEventKind.ERROR, busy.summary.orEmpty(), busy.toJson().toString())
+            return busy
+        }
+        val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
+        if (permission < PermissionMode.GITHUB_WRITE) {
+            val denied = ActionsOperationState(
+                sessionId = currentSessionId,
+                repository = request.repository,
+                workflow = request.workflow,
+                ref = request.ref,
+                status = ActionsOperationStatus.FAILED,
+                summary = "Для workflow dispatch нужен permission GITHUB_WRITE",
+                errorCode = "PERMISSION_REQUIRED",
+            )
+            _actionsState.value = denied
+            recordDecision(
+                kind = "ACTIONS",
+                state = "DENIED",
+                detail = "required=" + PermissionMode.GITHUB_WRITE.name,
+            )
+            append(AgentEventKind.ERROR, denied.summary.orEmpty(), denied.toJson().toString())
+            return denied
+        }
+
+        recordDecision(
+            kind = "ACTIONS",
+            state = "APPROVED",
+            detail = "workflow dispatch; user_action=true",
+        )
+        append(
+            AgentEventKind.APPROVAL,
+            "Пользователь подтвердил запуск GitHub Actions",
+            request.toAuditJson().toString(),
+        )
+        val result = runActionsInternal(
+            request.copy(
+                sessionId = request.sessionId ?: currentSessionId,
+            ),
+        )
+        when (result.status) {
+            ActionsOperationStatus.UNKNOWN -> markUnknown(
+                (result.summary ?: "Actions завершился без подтверждённого результата") +
+                    "; повтор запрещён до re-check",
+            )
+            ActionsOperationStatus.FAILED -> fail(
+                result.summary ?: "Actions завершился с ошибкой",
+            )
+            else -> Unit
+        }
+        return result
+    }
+
+    override suspend fun saveVerifiedArtifact(
+        request: ActionsArtifactRequest,
+    ): ActionsArtifactSaveResult {
+        check(!closed) { "AgentCore уже закрыт" }
+        if (
+            _state.value.status == AgentSessionStatus.RUNNING ||
+            _state.value.status == AgentSessionStatus.WAITING_APPROVAL
+        ) {
+            return artifactSaveFailure(
+                request,
+                "Сначала завершите текущую сессию Agent Core",
+                "SESSION_BUSY",
+            )
+        }
+        val actionState = _actionsState.value
+        if (
+            actionState.status != ActionsOperationStatus.SUCCEEDED ||
+            actionState.runId != request.runId ||
+            actionState.headSha.isNullOrBlank() ||
+            !actionState.headSha.equals(request.expectedCommitSha, ignoreCase = true)
+        ) {
+            return artifactSaveFailure(
+                request,
+                "Artifact не связан с последним подтверждённым Actions run",
+                "ARTIFACT_PROVENANCE_REQUIRED",
+            )
+        }
+        val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
+        if (permission < PermissionMode.LOCAL_WRITE) {
+            recordDecision(
+                kind = "ARTIFACT",
+                state = "DENIED",
+                detail = "required=" + PermissionMode.LOCAL_WRITE.name,
+            )
+            return artifactSaveFailure(
+                request,
+                "Для сохранения artifact нужен permission LOCAL_WRITE",
+                "PERMISSION_REQUIRED",
+            )
+        }
+        val workspaceId = request.workspaceId ?: workspaceManager.current.value?.id
+        val root = workspaceManager.resolveRoot(workspaceId)
+            ?: return artifactSaveFailure(
+                request,
+                "Workspace не выбран или недоступен",
+                "WORKSPACE_UNAVAILABLE",
+            )
+        if (
+            currentRequestSummary?.workspaceId != null &&
+            currentRequestSummary?.workspaceId != workspaceId
+        ) {
+            return artifactSaveFailure(
+                request,
+                "Artifact workspace не совпадает с текущей сессией",
+                "WORKSPACE_MISMATCH",
+            )
+        }
+        val before = workspaceManager.captureIdentity(workspaceId)?.treeSha256
+        if (before == null) {
+            return artifactSaveFailure(
+                request,
+                "Workspace fingerprint перед сохранением недоступен",
+                "WORKSPACE_RECHECK_REQUIRED",
+            )
+        }
+
+        recordDecision(
+            kind = "ARTIFACT",
+            state = "APPROVED",
+            detail = "artifact_id=" + request.artifactId,
+        )
+        append(
+            AgentEventKind.APPROVAL,
+            "Пользователь подтвердил сохранение проверенного artifact",
+            "artifact_id=" + request.artifactId,
+        )
+
+        val download = actionsClient.downloadAndVerifyArtifact(request)
+        val result = when (download) {
+            is ArtifactDownloadResult.Verified -> {
+                val saved = artifactManager.save(
+                    workspaceRoot = root,
+                    artifact = download.artifact,
+                    requestedName = request.outputName,
+                )
+                saved.copy(
+                    sessionId = currentSessionId,
+                    workspaceId = workspaceId,
+                    workspaceFingerprintBefore = before,
+                    workspaceFingerprintAfter =
+                        workspaceManager.captureIdentity(workspaceId)?.treeSha256,
+                )
+            }
+            is ArtifactDownloadResult.Failed -> ActionsArtifactSaveResult(
+                sessionId = currentSessionId,
+                workspaceId = workspaceId,
+                artifactId = request.artifactId,
+                status = ActionsArtifactSaveStatus.FAILED,
+                summary = download.message,
+                errorCode = download.errorCode,
+            )
+            is ArtifactDownloadResult.Unknown -> ActionsArtifactSaveResult(
+                sessionId = currentSessionId,
+                workspaceId = workspaceId,
+                artifactId = request.artifactId,
+                status = ActionsArtifactSaveStatus.UNKNOWN,
+                summary = download.message,
+                errorCode = download.errorCode,
+            )
+        }
+
+        val finalResult = if (
+            result.status == ActionsArtifactSaveStatus.VERIFIED_SAVED &&
+            result.workspaceFingerprintAfter == null
+        ) {
+            result.copy(
+                status = ActionsArtifactSaveStatus.UNKNOWN,
+                summary = "Artifact сохранён, но fingerprint после записи не подтверждён",
+                errorCode = "ARTIFACT_SAVE_RECHECK_REQUIRED",
+            )
+        } else {
+            result
+        }
+        if (finalResult.status == ActionsArtifactSaveStatus.VERIFIED_SAVED) {
+            _actionsState.value = _actionsState.value.copy(
+                artifacts = _actionsState.value.artifacts.map { artifact ->
+                    if (artifact.id == request.artifactId) {
+                        artifact.copy(
+                            verified = true,
+                            sourceSha = finalResult.sourceSha,
+                            checksum = finalResult.checksum,
+                            savedPath = finalResult.relativePath,
+                        )
+                    } else {
+                        artifact
+                    }
+                },
+                updatedAt = System.currentTimeMillis(),
+            )
+            append(
+                AgentEventKind.ARTIFACT,
+                finalResult.summary,
+                finalResult.toJson().toString(),
+            )
+        } else {
+            append(
+                AgentEventKind.ERROR,
+                finalResult.summary,
+                finalResult.toJson().toString(),
+            )
+            if (finalResult.status == ActionsArtifactSaveStatus.UNKNOWN) {
+                markUnknown(
+                    finalResult.summary +
+                        "; повторное скачивание запрещено до re-check",
+                )
+            }
+        }
+        persistAsync()
+        return finalResult
+    }
+
+    private suspend fun runActionsInternal(
+        request: ActionsRunRequest,
+    ): ActionsOperationState {
+        val sessionId = request.sessionId ?: currentSessionId
+        val initial = ActionsOperationState(
+            sessionId = sessionId,
+            repository = request.repository.trim(),
+            workflow = request.workflow.trim(),
+            ref = request.ref.trim(),
+            status = ActionsOperationStatus.DISPATCHING,
+            summary = "GitHub Actions запускается",
+        )
+        _actionsState.value = initial
+        persistAsync()
+        append(
+            AgentEventKind.BUILD,
+            "GitHub Actions workflow dispatch",
+            request.toAuditJson().toString(),
+        )
+        val result = actionsClient.observe(
+            request.copy(sessionId = sessionId),
+        ) { update ->
+            _actionsState.value = update.copy(sessionId = sessionId)
+            persistAsync()
+        }.copy(sessionId = sessionId)
+        _actionsState.value = result
+        append(
+            if (result.status == ActionsOperationStatus.SUCCEEDED) {
+                AgentEventKind.BUILD
+            } else {
+                AgentEventKind.ERROR
+            },
+            result.summary ?: "GitHub Actions обновил состояние",
+            result.toJson().toString(),
+        )
+        persistAsync()
+        return result
+    }
+
+    private fun artifactSaveFailure(
+        request: ActionsArtifactRequest,
+        summary: String,
+        errorCode: String,
+    ): ActionsArtifactSaveResult {
+        val result = ActionsArtifactSaveResult(
+            sessionId = currentSessionId,
+            workspaceId = request.workspaceId,
+            artifactId = request.artifactId,
+            status = ActionsArtifactSaveStatus.FAILED,
+            summary = summary,
+            errorCode = errorCode,
+        )
+        append(AgentEventKind.ERROR, summary, result.toJson().toString())
+        return result
+    }
+
 
 
     override suspend fun rollbackLastPatch(): PatchRollbackResult {
@@ -441,6 +743,7 @@ class AgentCore(context: Context) : AgentBridge {
         val startedAt = System.currentTimeMillis()
         currentSessionId = sessionId
         _gitState.value = GitOperationState(sessionId = sessionId)
+        _actionsState.value = ActionsOperationState(sessionId = sessionId)
         eventSequence = 0L
         invocationRecords.clear()
         decisionRecords.clear()
@@ -550,38 +853,27 @@ class AgentCore(context: Context) : AgentBridge {
             return
         }
 
-        append(
-            AgentEventKind.BUILD,
-            "Запуск удалённой сборки GitHub Actions",
-            (request.repository ?: "repository не задан") + " / " +
-                (request.workflow ?: "workflow не задан") + " @ " + request.ref,
-        )
-
-        val result = actions.dispatch(
-            GitHubActionsRequest(
+        val result = runActionsInternal(
+            ActionsRunRequest(
                 token = request.githubToken.orEmpty(),
                 repository = request.repository.orEmpty(),
                 workflow = request.workflow.orEmpty(),
                 ref = request.ref,
-                inputs = mapOf("agent_task" to request.task.take(2_000)),
+                sessionId = currentSessionId,
             ),
         )
-
-        when (result) {
-            GitHubActionsResult.Dispatched -> {
-                append(
-                    AgentEventKind.BUILD,
-                    "GitHub Actions workflow поставлен в очередь",
-                )
-            }
-
-            is GitHubActionsResult.NotConfigured -> {
-                fail(result.message)
-            }
-
-            is GitHubActionsResult.Failed -> {
-                fail(result.message)
-            }
+        when (result.status) {
+            ActionsOperationStatus.SUCCEEDED -> Unit
+            ActionsOperationStatus.FAILED -> fail(
+                result.summary ?: "GitHub Actions завершился с ошибкой",
+            )
+            ActionsOperationStatus.UNKNOWN -> markUnknown(
+                (result.summary ?: "GitHub Actions завершился без подтверждения") +
+                    "; повтор запрещён до re-check",
+            )
+            else -> markUnknown(
+                "GitHub Actions не вернул конечное состояние; требуется re-check",
+            )
         }
     }
 
@@ -962,6 +1254,8 @@ class AgentCore(context: Context) : AgentBridge {
         )
         _state.value = recoveredState
         _gitState.value = GitOperationState(sessionId = restored.sessionId)
+        _actionsState.value = restored.actionsState
+            ?: ActionsOperationState(sessionId = restored.sessionId)
         _patchRecovery.value = restored.patchRecovery
         _events.value = restored.events.takeLast(MAX_EVENTS)
 
@@ -993,7 +1287,8 @@ class AgentCore(context: Context) : AgentBridge {
             decisions = decisionRecords.toList(),
             recoveryReason = recoveryReason,
             patchRecovery = _patchRecovery.value,
-        )
+            actionsState = _actionsState.value,
+          )
     }
 
     private fun persistAsync() {

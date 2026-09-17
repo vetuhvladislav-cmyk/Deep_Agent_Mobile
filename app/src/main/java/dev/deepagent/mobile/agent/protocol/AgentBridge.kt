@@ -1,5 +1,9 @@
 package dev.deepagent.mobile.agent.protocol
 
+import dev.deepagent.mobile.agent.model.ActionsArtifactRequest
+import dev.deepagent.mobile.agent.model.ActionsArtifactSaveResult
+import dev.deepagent.mobile.agent.model.ActionsOperationState
+import dev.deepagent.mobile.agent.model.ActionsRunRequest
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentSessionState
@@ -28,6 +32,7 @@ interface AgentBridge {
     val pendingApproval: StateFlow<PendingPatchApproval?>
     val git: StateFlow<GitOperationState>
     val patchRecovery: StateFlow<PatchRecoveryState?>
+    val actions: StateFlow<ActionsOperationState>
 
     suspend fun submit(request: AgentRequest)
 
@@ -52,6 +57,12 @@ interface AgentBridge {
         request: GitPullRequestRequest,
         githubToken: String,
     ): GitOperationResult
+
+    suspend fun runActions(request: ActionsRunRequest): ActionsOperationState
+
+    suspend fun saveVerifiedArtifact(
+        request: ActionsArtifactRequest,
+    ): ActionsArtifactSaveResult
 
     suspend fun rollbackLastPatch(): PatchRollbackResult
 

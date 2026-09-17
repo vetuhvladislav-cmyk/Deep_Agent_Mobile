@@ -129,6 +129,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Redacted audit trail:** run ID, job/step states, durations, redacted logs, artifact name/size/content type/checksum и source SHA.
 - **Cancellation / timeout:** polling имеет backoff, deadline и cancel; скачивание ограничено размером, типом и timeout; failed-job retry не выполняется автоматически.
 - **Recovery rule:** неизвестный run/job/artifact получает UNKNOWN; повтор dispatch запрещён до re-check исходного run и idempotency key.
+- **Результат текущей реализации:** добавлен Actions connector с dispatch/run discovery/polling, jobs/steps, failed-step log retrieval и redacted state; workflow публикует APK вместе с SHA-256 sidecar и provenance source SHA; AgentBridge/Session Journal сохраняют correlation и recovery state; Artifact Manager скачивает ZIP, проверяет APK/AAB, checksum, source SHA и атомарно сохраняет его только после WORKSPACE_WRITE approval.
+- **Ограничение текущей реализации:** capabilityStatus остаётся `planned` до runtime-проверки dispatch → run → job → step/log → artifact на реальном repository, проверки квоты/redirect/timeout/UNKNOWN и подтверждения сохранённого APK/AAB; Actions, build и тесты в этой сессии не запускались.
 - **Exit criterion:** приложение показывает status и failed step, позволяет получить redacted logs, проверяет artifact type/size/checksum/commit SHA и сохраняет подтверждённый APK/AAB.
 
 ### P1-C — Android 16 UI и regression contract
