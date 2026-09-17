@@ -802,6 +802,9 @@ class GitHubActionsClient {
                 "Некорректный download endpoint"
             }
             val url = URL(currentEndpoint)
+            require(url.userInfo == null && isAllowedDownloadHost(url.host)) {
+                "Download redirect host запрещён политикой"
+            }
             val connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 doInput = true
@@ -842,6 +845,18 @@ class GitHubActionsClient {
             }
         }
         throw IOException("Слишком много redirect при download")
+    }
+
+    private fun isAllowedDownloadHost(rawHost: String): Boolean {
+        val host = rawHost.lowercase()
+        return host == API_HOST ||
+            host == "github.com" ||
+            host.endsWith(".github.com") ||
+            host.endsWith(".githubusercontent.com") ||
+            (
+                host.startsWith("github-production-") &&
+                    host.endsWith(".s3.amazonaws.com")
+                )
     }
 
     private fun parseRuns(value: String): List<RunInfo> {
