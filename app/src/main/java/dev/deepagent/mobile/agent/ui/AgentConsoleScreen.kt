@@ -1,5 +1,6 @@
 package dev.deepagent.mobile.agent.ui
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +49,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import dev.deepagent.mobile.agent.ui.agentControl
@@ -67,6 +69,9 @@ import dev.deepagent.mobile.agent.git.GitCommitRequest
 import dev.deepagent.mobile.agent.git.GitPullRequestRequest
 import dev.deepagent.mobile.agent.git.GitPushRequest
 import dev.deepagent.mobile.agent.protocol.AgentBridge
+import dev.deepagent.mobile.agent.preset.AgentPreset
+import dev.deepagent.mobile.agent.preset.AgentPresetPayload
+import dev.deepagent.mobile.agent.preset.AgentPresetStore
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
@@ -82,10 +87,17 @@ import dev.deepagent.mobile.agent.model.RuntimeStatus
 import dev.deepagent.mobile.agent.model.InteractiveCommandRequest
 import dev.deepagent.mobile.agent.model.InteractiveSessionStatus
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.InputStream
 
 private const val DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 private const val DEFAULT_DEEPSEEK_MODEL = "deepseek-flash"
+private const val DEFAULT_REPOSITORY = "vetuhvladislav-cmyk/Deep_Agent_Mobile"
+private const val DEFAULT_WORKFLOW = "android.yml"
+private const val DEFAULT_REF = "codex/p1-a-controlled-write-git-pr"
+private const val DEFAULT_PRESET_NAME = "Deep Agent Mobile"
 
 /**
  * Нативная Agent Console внутри единственного APK.
@@ -100,6 +112,7 @@ fun AgentConsoleScreen(
     onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val state by agent.state.collectAsState()
     val events by agent.events.collectAsState()
 
@@ -120,9 +133,9 @@ fun AgentConsoleScreen(
     }
     var model by rememberSaveable { mutableStateOf(DEFAULT_DEEPSEEK_MODEL) }
     var githubToken by remember { mutableStateOf("") }
-    var repository by rememberSaveable { mutableStateOf("") }
-    var workflow by rememberSaveable { mutableStateOf("android.yml") }
-    var ref by rememberSaveable { mutableStateOf("main") }
+    var repository by rememberSaveable { mutableStateOf(DEFAULT_REPOSITORY) }
+    var workflow by rememberSaveable { mutableStateOf(DEFAULT_WORKFLOW) }
+    var ref by rememberSaveable { mutableStateOf(DEFAULT_REF) }
     var showConfig by rememberSaveable { mutableStateOf(false) }
     var permissionMenuOpen by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
@@ -154,8 +167,61 @@ fun AgentConsoleScreen(
     val workspaceCatalog by agent.workspaceCatalog.collectAsState()
     val credentials by agent.credentials.collectAsState()
 
+    val presetStore = remember(context) {
+        AgentPresetStore(context.applicationContext)
+    }
+    var presetName by rememberSaveable {
+        mutableStateOf(DEFAULT_PRESET_NAME)
+    }
+    var presetMessage by remember { mutableStateOf<String?>(null) }
+    var presetError by remember { mutableStateOf<String?>(null) }
+
+    fun currentPreset(): AgentPreset = AgentPreset(
+        name = presetName.trim().ifBlank { DEFAULT_PRESET_NAME },
+        deepSeekBaseUrl = deepSeekBaseUrl.trim(),
+        model = model.trim(),
+        repository = repository.trim(),
+        workflow = workflow.trim(),
+        ref = ref.trim(),
+        target = target,
+        permission = permission,
+    )
+
+    fun applyPreset(payload: AgentPresetPayload) {
+        val preset = payload.preset
+        presetName = preset.name
+        deepSeekBaseUrl = preset.deepSeekBaseUrl
+        model = preset.model
+        repository = preset.repository
+        workflow = preset.workflow
+        ref = preset.ref
+        target = preset.target
+        permission = preset.permission
+        deepSeekKey = payload.deepSeekApiKey.orEmpty()
+        githubToken = payload.githubToken.orEmpty()
+        agent.configureCredentials(
+            deepSeekApiKey = payload.deepSeekApiKey,
+            githubToken = payload.githubToken,
+        )
+        showConfig = true
+        presetMessage = if (payload.credentialsRestored) {
+            "Пресет загружен; ключи восстановлены из защищённого хранилища"
+        } else {
+            "Пресет загружен; ключи нужно ввести заново"
+        }
+        presetError = null
+    }
+
     DisposableEffect(agent) {
         onDispose { agent.close() }
+    }
+
+    fun persistReadPermission(uri: Uri) {
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(uri, flags)
+        }
     }
 
     val imagePicker = rememberLauncherForActivityResult(
@@ -203,6 +269,7 @@ fun AgentConsoleScreen(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
+        persistReadPermission(uri)
         scope.launch {
             runCatching {
                 agent.importWorkspace(uri.toString())
@@ -225,6 +292,54 @@ fun AgentConsoleScreen(
                 workspaceError = null
             }.onFailure {
                 workspaceError = it.message ?: "Не удалось импортировать папку"
+            }
+        }
+    }
+
+    val presetExportPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val preset = currentPreset()
+        val deepKey = deepSeekKey
+        val githubKey = githubToken
+        presetMessage = null
+        presetError = null
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val serialized = presetStore.encode(preset, deepKey, githubKey)
+                    context.contentResolver.openOutputStream(uri)?.use { output ->
+                        output.write(serialized.toByteArray(Charsets.UTF_8))
+                        output.flush()
+                    } ?: error("Не удалось открыть файл экспорта пресета")
+                }
+            }.onSuccess {
+                presetMessage = "Пресет экспортирован; ключи записаны только в зашифрованном виде"
+            }.onFailure {
+                presetError = it.message ?: "Не удалось экспортировать пресет"
+            }
+        }
+    }
+
+    val presetImportPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        persistReadPermission(uri)
+        presetMessage = null
+        presetError = null
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        presetStore.decode(readUtf8Limited(input))
+                    } ?: error("Не удалось открыть файл пресета")
+                }
+            }.onSuccess { imported ->
+                applyPreset(imported)
+            }.onFailure {
+                presetError = it.message ?: "Не удалось импортировать пресет"
             }
         }
     }
@@ -850,6 +965,13 @@ fun AgentConsoleScreen(
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
+                    if (permission < PermissionMode.LOCAL_WRITE) {
+                        Text(
+                            text = "Для запуска локальной среды выберите permission «Локальная запись».",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -865,7 +987,7 @@ fun AgentConsoleScreen(
                                 pendingApproval == null,
                             onClick = {
                                 scope.launch {
-                                    agent.startRuntime()
+                                    agent.startRuntime(permission)
                                 }
                             },
                         ) {
@@ -1647,6 +1769,111 @@ fun AgentConsoleScreen(
                         label = { Text("Ветка / ref") },
                         singleLine = true,
                     )
+                    OutlinedTextField(
+                        value = presetName,
+                        onValueChange = { presetName = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Название пресета") },
+                        singleLine = true,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(
+                            enabled = presetName.isNotBlank(),
+                            onClick = {
+                                val preset = currentPreset()
+                                val deepKey = deepSeekKey
+                                val githubKey = githubToken
+                                presetMessage = null
+                                presetError = null
+                                scope.launch {
+                                    runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            presetStore.saveLocal(
+                                                preset,
+                                                deepKey,
+                                                githubKey,
+                                            )
+                                        }
+                                    }.onSuccess {
+                                        presetMessage =
+                                            "Локальный пресет сохранён; ключи зашифрованы"
+                                    }.onFailure {
+                                        presetError = it.message
+                                            ?: "Не удалось сохранить пресет"
+                                    }
+                                }
+                            },
+                        ) {
+                            Text("Сохранить")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                presetMessage = null
+                                presetError = null
+                                scope.launch {
+                                    runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            presetStore.loadLocal()
+                                                ?: error("Локальный пресет не найден")
+                                        }
+                                    }.onSuccess { imported ->
+                                        applyPreset(imported)
+                                    }.onFailure {
+                                        presetError = it.message
+                                            ?: "Не удалось загрузить пресет"
+                                    }
+                                }
+                            },
+                        ) {
+                            Text("Загрузить")
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TextButton(
+                            onClick = {
+                                presetExportPicker.launch("deep-agent-preset.json")
+                            },
+                        ) {
+                            Text("Экспорт")
+                        }
+                        TextButton(
+                            onClick = {
+                                presetImportPicker.launch(
+                                    arrayOf(
+                                        "application/json",
+                                        "text/json",
+                                        "text/plain",
+                                    ),
+                                )
+                            },
+                        ) {
+                            Text("Импорт")
+                        }
+                    }
+                    Text(
+                        text = "Пресет хранит DeepSeek/GitHub настройки. Ключи не сохраняются открытым текстом.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    presetMessage?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    presetError?.let {
+                        Text(
+                            text = it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
             }
 
