@@ -7,6 +7,7 @@ import dev.deepagent.mobile.agent.model.PatchRollbackStatus
 import dev.deepagent.mobile.agent.git.GitBranchRequest
 import dev.deepagent.mobile.agent.git.GitCommitRequest
 import dev.deepagent.mobile.agent.git.GitOperationResult
+import dev.deepagent.mobile.agent.git.GitOperationStatus
 import dev.deepagent.mobile.agent.git.GitPushRequest
 import dev.deepagent.mobile.agent.git.GitRepositoryClient
 import dev.deepagent.mobile.agent.model.AgentRedactor
@@ -354,6 +355,13 @@ class ToolRouter(
 
     suspend fun inspectGit(workspaceId: String? = null): GitOperationResult =
         gitRepository.status(workspaceId)
+
+    suspend fun currentGitHeadSha(workspaceId: String? = null): String? {
+        val result = inspectGit(workspaceId)
+        return result.headSha.takeIf {
+            result.status == GitOperationStatus.SUCCEEDED
+        }
+    }
 
     suspend fun createGitBranch(
         workspaceId: String?,
