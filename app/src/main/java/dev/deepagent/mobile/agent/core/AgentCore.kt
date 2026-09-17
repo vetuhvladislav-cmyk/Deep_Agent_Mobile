@@ -764,7 +764,7 @@ class AgentCore(context: Context) : AgentBridge {
         }
         val requiredPermission = interactiveSession.requiredPermission(request)
         val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
-        if (permission < requiredPermission) {
+        if (!permission.allows(requiredPermission)) {
             recordDecision(
                 kind = "INTERACTIVE",
                 state = "DENIED",
@@ -895,7 +895,7 @@ class AgentCore(context: Context) : AgentBridge {
             return busy
         }
         val permission = requestedPermission
-        if (permission < PermissionMode.LOCAL_WRITE) {
+        if (!permission.allows(PermissionMode.LOCAL_WRITE)) {
             val denied = RuntimeState(
                 status = RuntimeStatus.FAILED,
                 sessionId = currentSessionId,
@@ -974,7 +974,7 @@ class AgentCore(context: Context) : AgentBridge {
             return busy
         }
         val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
-        if (permission < PermissionMode.GITHUB_WRITE) {
+        if (!permission.allows(PermissionMode.GITHUB_WRITE)) {
             val denied = ActionsOperationState(
                 sessionId = currentSessionId,
                 repository = request.repository,
@@ -1053,7 +1053,7 @@ class AgentCore(context: Context) : AgentBridge {
             )
         }
         val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
-        if (permission < PermissionMode.LOCAL_WRITE) {
+        if (!permission.allows(PermissionMode.LOCAL_WRITE)) {
             recordDecision(
                 kind = "ARTIFACT",
                 state = "DENIED",
@@ -1301,7 +1301,7 @@ class AgentCore(context: Context) : AgentBridge {
         }
 
         val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
-        if (permission < PermissionMode.LOCAL_WRITE) {
+        if (!permission.allows(PermissionMode.LOCAL_WRITE)) {
             recordDecision(
                 kind = "PATCH",
                 state = "DENIED",
@@ -1783,7 +1783,7 @@ class AgentCore(context: Context) : AgentBridge {
                             workspaceId = request.workspaceId.orEmpty(),
                             argumentsJson = call.arguments,
                             preview = preview,
-                            canApply = permission >= PermissionMode.LOCAL_WRITE,
+                            canApply = permission.allows(PermissionMode.LOCAL_WRITE),
                             invocationId = invocationId,
                         )
                         _pendingPatch.value = pendingPatch
@@ -1805,7 +1805,7 @@ class AgentCore(context: Context) : AgentBridge {
                                 "; workspace_fingerprint=" +
                                 preview.workspaceFingerprint +
                                 "; can_apply=" +
-                                (permission >= PermissionMode.LOCAL_WRITE),
+                                (permission.allows(PermissionMode.LOCAL_WRITE)),
                         )
                         return
                     }
@@ -2131,7 +2131,7 @@ class AgentCore(context: Context) : AgentBridge {
         }
 
         val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
-        if (permission < requiredPermission) {
+        if (!permission.allows(requiredPermission)) {
             val result = GitOperationResult(
                 operation = operation,
                 status = GitOperationStatus.FAILED,
