@@ -61,6 +61,8 @@ import dev.deepagent.mobile.agent.model.AgentSessionStatus
 import dev.deepagent.mobile.agent.model.ExecutionTarget
 import dev.deepagent.mobile.agent.model.ImageAttachment
 import dev.deepagent.mobile.agent.model.PermissionMode
+import dev.deepagent.mobile.agent.model.PatchRecoveryStatus
+import dev.deepagent.mobile.agent.model.PatchRollbackStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -113,6 +115,7 @@ fun AgentConsoleScreen(
     var localError by remember { mutableStateOf<String?>(null) }
     var workspaceError by remember { mutableStateOf<String?>(null) }
     var gitError by remember { mutableStateOf<String?>(null) }
+    var patchRecoveryError by remember { mutableStateOf<String?>(null) }
     var gitBranch by rememberSaveable { mutableStateOf("agent/task") }
     var gitStartPoint by rememberSaveable { mutableStateOf("HEAD") }
     var commitPaths by rememberSaveable { mutableStateOf("") }
@@ -127,6 +130,7 @@ fun AgentConsoleScreen(
     val workspace by agent.workspace.collectAsState()
     val pendingApproval by agent.pendingApproval.collectAsState()
     val gitState by agent.git.collectAsState()
+    val patchRecovery by agent.patchRecovery.collectAsState()
 
     LaunchedEffect(imageUri) {
         val persistedUri = imageUri ?: return@LaunchedEffect
@@ -453,6 +457,86 @@ fun AgentConsoleScreen(
                     }
                 }
             }
+
+
+            patchRecovery
+                ?.takeIf { recovery -> recovery.workspaceId == workspace?.id }
+                ?.let { recovery ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        ),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = "Patch checkpoint / recovery",
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = "Операция: " + recovery.operationId.take(8) +
+                                    " · файл: " + recovery.path,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                            Text(
+                                text = "Состояние: " + recovery.status.name,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (recovery.status == PatchRecoveryStatus.UNKNOWN) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onTertiaryContainer
+                                },
+                            )
+                            recovery.workspaceFingerprintAfter?.let {
+                                Text(
+                                    text = "Post-write tree SHA: " + it,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                            if (recovery.status == PatchRecoveryStatus.APPLIED) {
+                                Button(
+                                    enabled = state.status != AgentSessionStatus.RUNNING,
+                                    onClick = {
+                                        patchRecoveryError = null
+                                        scope.launch {
+                                            runCatching { agent.rollbackLastPatch() }
+                                                .onSuccess { result ->
+                                                    if (
+                                                        result.status !=
+                                                            PatchRollbackStatus.SUCCEEDED
+                                                    ) {
+                                                        patchRecoveryError = result.summary
+                                                    }
+                                                }
+                                                .onFailure { error ->
+                                                    patchRecoveryError = error.message
+                                                        ?: "Не удалось выполнить rollback"
+                                                }
+                                        }
+                                    },
+                                ) {
+                                    Text("Откатить patch")
+                                }
+                            }
+                            patchRecoveryError?.let {
+                                Text(
+                                    text = it,
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            Text(
+                                text = "Rollback требует LOCAL_WRITE и выполняется только " +
+                                    "после повторной проверки fingerprint; автоматического повтора нет.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
+                    }
+                }
 
 
             if (workspace != null) {

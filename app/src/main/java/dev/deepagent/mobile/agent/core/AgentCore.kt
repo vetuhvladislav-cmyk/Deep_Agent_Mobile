@@ -26,6 +26,10 @@ import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
 import dev.deepagent.mobile.agent.model.PendingPatchApproval
+import dev.deepagent.mobile.agent.model.PatchRecoveryState
+import dev.deepagent.mobile.agent.model.PatchRecoveryStatus
+import dev.deepagent.mobile.agent.model.PatchRollbackResult
+import dev.deepagent.mobile.agent.model.PatchRollbackStatus
 import dev.deepagent.mobile.agent.model.AgentSessionState
 import dev.deepagent.mobile.agent.model.AgentSessionStatus
 import dev.deepagent.mobile.agent.model.ExecutionTarget
@@ -107,6 +111,10 @@ class AgentCore(context: Context) : AgentBridge {
 
     private val _gitState = MutableStateFlow(GitOperationState())
     override val git: StateFlow<GitOperationState> = _gitState.asStateFlow()
+
+    private val _patchRecovery = MutableStateFlow<PatchRecoveryState?>(null)
+    override val patchRecovery: StateFlow<PatchRecoveryState?> =
+        _patchRecovery.asStateFlow()
 
     private var activeJob: Job? = null
     private var patchApplyJob: Job? = null
@@ -258,6 +266,153 @@ class AgentCore(context: Context) : AgentBridge {
                 )
             }
         }
+    }
+
+
+    override suspend fun rollbackLastPatch(): PatchRollbackResult {
+        check(!closed) { "AgentCore уже закрыт" }
+
+        val recovery = _patchRecovery.value
+            ?: return recordPatchRollbackFailure(
+                operationId = null,
+                summary = "Нет подтверждённого patch checkpoint для rollback",
+                errorCode = "PATCH_CHECKPOINT_NOT_FOUND",
+            )
+        if (recovery.status != PatchRecoveryStatus.APPLIED) {
+            return recordPatchRollbackFailure(
+                operationId = recovery.operationId,
+                path = recovery.path,
+                summary = "Rollback недоступен: checkpoint требует re-check",
+                errorCode = "PATCH_ROLLBACK_RECHECK_REQUIRED",
+            )
+        }
+        if (_state.value.status == AgentSessionStatus.RUNNING) {
+            return recordPatchRollbackFailure(
+                operationId = recovery.operationId,
+                path = recovery.path,
+                summary = "Сначала завершите текущую сессию Agent Core",
+                errorCode = "SESSION_BUSY",
+            )
+        }
+        if (workspaceManager.current.value?.id != recovery.workspaceId) {
+            return recordPatchRollbackFailure(
+                operationId = recovery.operationId,
+                path = recovery.path,
+                summary = "Выберите workspace, в котором был применён patch",
+                errorCode = "WORKSPACE_NOT_SELECTED",
+            )
+        }
+
+        val expectedFingerprint = recovery.workspaceFingerprintAfter
+        if (expectedFingerprint.isNullOrBlank()) {
+            _patchRecovery.value = recovery.copy(
+                status = PatchRecoveryStatus.UNKNOWN,
+                errorCode = "PATCH_ROLLBACK_RECHECK_REQUIRED",
+                updatedAt = System.currentTimeMillis(),
+            )
+            return recordPatchRollbackFailure(
+                operationId = recovery.operationId,
+                path = recovery.path,
+                summary = "Post-write fingerprint отсутствует; rollback остановлен",
+                errorCode = "PATCH_ROLLBACK_RECHECK_REQUIRED",
+            )
+        }
+
+        val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
+        if (permission < PermissionMode.LOCAL_WRITE) {
+            recordDecision(
+                kind = "PATCH",
+                state = "DENIED",
+                detail = "ROLLBACK; required=" + PermissionMode.LOCAL_WRITE.name,
+            )
+            return recordPatchRollbackFailure(
+                operationId = recovery.operationId,
+                path = recovery.path,
+                summary = "Для rollback нужен permission LOCAL_WRITE",
+                errorCode = "PERMISSION_REQUIRED",
+            )
+        }
+
+        recordDecision(
+            kind = "PATCH",
+            state = "APPROVED",
+            detail = "ROLLBACK; operation_id=" + recovery.operationId,
+        )
+        append(
+            AgentEventKind.APPROVAL,
+            "Пользователь подтвердил rollback patch",
+            "operation_id=" + recovery.operationId,
+        )
+
+        val result = try {
+            toolRouter.rollbackPatch(
+                workspaceId = recovery.workspaceId,
+                operationId = recovery.operationId,
+                expectedWorkspaceFingerprint = expectedFingerprint,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            PatchRollbackResult(
+                operationId = recovery.operationId,
+                path = recovery.path,
+                status = PatchRollbackStatus.UNKNOWN,
+                summary = AgentRedactor.text(
+                    error.message ?: "Rollback завершился без подтверждения",
+                    MAX_ERROR_CHARS,
+                ).orEmpty(),
+                errorCode = "PATCH_ROLLBACK_UNKNOWN",
+            )
+        }
+
+        when (result.status) {
+            PatchRollbackStatus.SUCCEEDED -> {
+                _patchRecovery.value = recovery.copy(
+                    status = PatchRecoveryStatus.ROLLED_BACK,
+                    workspaceFingerprintAfter =
+                        result.workspaceFingerprintAfter
+                            ?: recovery.workspaceFingerprintAfter,
+                    errorCode = null,
+                    updatedAt = System.currentTimeMillis(),
+                )
+            }
+
+            PatchRollbackStatus.UNKNOWN -> {
+                _patchRecovery.value = recovery.copy(
+                    status = PatchRecoveryStatus.UNKNOWN,
+                    errorCode = result.errorCode ?: "PATCH_ROLLBACK_UNKNOWN",
+                    updatedAt = System.currentTimeMillis(),
+                )
+                recoveryReason = AgentRedactor.text(
+                    result.summary,
+                    MAX_ERROR_CHARS,
+                )
+                _state.value = _state.value.copy(
+                    status = AgentSessionStatus.UNKNOWN,
+                    lastError = recoveryReason,
+                    finishedAt = System.currentTimeMillis(),
+                    recoveryRequired = true,
+                )
+            }
+
+            PatchRollbackStatus.FAILED -> {
+                _patchRecovery.value = recovery.copy(
+                    errorCode = result.errorCode,
+                    updatedAt = System.currentTimeMillis(),
+                )
+            }
+        }
+        val eventKind = if (result.status == PatchRollbackStatus.SUCCEEDED) {
+            AgentEventKind.TOOL
+        } else {
+            AgentEventKind.ERROR
+        }
+        append(
+            eventKind,
+            result.summary,
+            result.toJson().toString(),
+        )
+        return result
     }
 
     override fun close() {
@@ -675,6 +830,11 @@ class AgentCore(context: Context) : AgentBridge {
                 expectedWorkspaceFingerprint = pending.preview.workspaceFingerprint,
             )
             if (!result.ok) {
+                updatePatchRecovery(
+                    pending = pending,
+                    result = result,
+                    status = PatchRecoveryStatus.UNKNOWN,
+                )
                 clearPendingPatch()
                 completeInvocation(
                     invocationId = pending.invocationId,
@@ -691,6 +851,11 @@ class AgentCore(context: Context) : AgentBridge {
                 invocationId = pending.invocationId,
                 state = "SUCCEEDED",
                 summary = "Patch применён",
+            )
+            updatePatchRecovery(
+                pending = pending,
+                result = result,
+                status = PatchRecoveryStatus.APPLIED,
             )
             recoveryReason = null
             clearPendingPatch()
@@ -794,6 +959,7 @@ class AgentCore(context: Context) : AgentBridge {
         )
         _state.value = recoveredState
         _gitState.value = GitOperationState(sessionId = restored.sessionId)
+        _patchRecovery.value = restored.patchRecovery
         _events.value = restored.events.takeLast(MAX_EVENTS)
 
         if (requiresRecovery) {
@@ -823,6 +989,7 @@ class AgentCore(context: Context) : AgentBridge {
             invocations = invocationRecords.toList(),
             decisions = decisionRecords.toList(),
             recoveryReason = recoveryReason,
+            patchRecovery = _patchRecovery.value,
         )
     }
 
@@ -971,6 +1138,52 @@ class AgentCore(context: Context) : AgentBridge {
     private fun workspaceIdForActions(): String? {
         return currentRequestSummary?.workspaceId
             ?: workspaceManager.current.value?.id
+    }
+
+
+
+    private fun updatePatchRecovery(
+        pending: PendingPatch,
+        result: ToolExecutionResult,
+        status: PatchRecoveryStatus,
+    ) {
+        val operationId = result.patchCheckpointId ?: return
+        val workspaceId = pending.workspaceId.takeIf { it.isNotBlank() } ?: return
+        _patchRecovery.value = PatchRecoveryState(
+            sessionId = pending.sessionId,
+            workspaceId = workspaceId,
+            operationId = operationId,
+            path = pending.preview.path,
+            status = status,
+            workspaceFingerprintBefore = pending.preview.workspaceFingerprint,
+            workspaceFingerprintAfter = result.workspaceFingerprintAfter,
+            oldSha256 = pending.preview.oldSha256,
+            newSha256 = pending.preview.newSha256,
+            errorCode = result.errorCode,
+            updatedAt = System.currentTimeMillis(),
+        )
+        persistAsync()
+    }
+
+    private fun recordPatchRollbackFailure(
+        operationId: String?,
+        path: String? = null,
+        summary: String,
+        errorCode: String,
+    ): PatchRollbackResult {
+        val result = PatchRollbackResult(
+            operationId = operationId,
+            path = path,
+            status = PatchRollbackStatus.FAILED,
+            summary = summary,
+            errorCode = errorCode,
+        )
+        append(
+            AgentEventKind.ERROR,
+            result.summary,
+            result.toJson().toString(),
+        )
+        return result
     }
 
     private fun clearPendingPatch() {

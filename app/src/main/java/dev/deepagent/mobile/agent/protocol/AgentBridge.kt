@@ -11,6 +11,8 @@ import dev.deepagent.mobile.agent.git.GitOperationState
 import dev.deepagent.mobile.agent.git.GitPullRequestRequest
 import dev.deepagent.mobile.agent.git.GitPushRequest
 import dev.deepagent.mobile.agent.model.PendingPatchApproval
+import dev.deepagent.mobile.agent.model.PatchRecoveryState
+import dev.deepagent.mobile.agent.model.PatchRollbackResult
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -25,6 +27,7 @@ interface AgentBridge {
     val workspace: StateFlow<AgentWorkspaceSnapshot?>
     val pendingApproval: StateFlow<PendingPatchApproval?>
     val git: StateFlow<GitOperationState>
+    val patchRecovery: StateFlow<PatchRecoveryState?>
 
     suspend fun submit(request: AgentRequest)
 
@@ -49,6 +52,8 @@ interface AgentBridge {
         request: GitPullRequestRequest,
         githubToken: String,
     ): GitOperationResult
+
+    suspend fun rollbackLastPatch(): PatchRollbackResult
 
     fun cancel()
 

@@ -2,6 +2,8 @@ package dev.deepagent.mobile.agent.tools
 
 import dev.deepagent.mobile.agent.patch.PatchEngine
 import dev.deepagent.mobile.agent.patch.PatchPreview
+import dev.deepagent.mobile.agent.model.PatchRollbackResult
+import dev.deepagent.mobile.agent.model.PatchRollbackStatus
 import dev.deepagent.mobile.agent.git.GitBranchRequest
 import dev.deepagent.mobile.agent.git.GitCommitRequest
 import dev.deepagent.mobile.agent.git.GitOperationResult
@@ -32,6 +34,8 @@ data class ToolExecutionResult(
     val truncated: Boolean = false,
     val errorCode: String? = null,
     val patchPreview: PatchPreview? = null,
+    val patchCheckpointId: String? = null,
+    val workspaceFingerprintAfter: String? = null,
 ) {
     fun toModelJson(): String = JSONObject()
         .put("tool", toolName)
@@ -41,6 +45,8 @@ data class ToolExecutionResult(
         .put("truncated", truncated)
         .put("error_code", errorCode)
         .put("preview", patchPreview?.toJson())
+        .put("patch_checkpoint_id", patchCheckpointId)
+        .put("workspace_fingerprint_after", workspaceFingerprintAfter)
         .toString()
 }
 
@@ -167,7 +173,8 @@ class ToolRouter(
             }
 
             return@withContext runCatching {
-                val applied = PatchEngine(checkpointDirectory).apply(
+                val patchEngine = PatchEngine(checkpointDirectory)
+                val applied = patchEngine.apply(
                     workspaceRoot = root,
                     arguments = arguments,
                     expectedWorkspaceFingerprint = expectedWorkspaceFingerprint,
@@ -176,20 +183,66 @@ class ToolRouter(
                     workspaceManager.captureIdentity(workspaceId)
                 }.getOrNull()
                 val afterFingerprint = afterIdentity?.treeSha256
-                val verified = afterFingerprint != null
+                if (afterFingerprint == null) {
+                    runCatching {
+                        patchEngine.markCheckpointUnknown(
+                            applied.operationId,
+                            "PATCH_APPLIED_RECHECK_REQUIRED",
+                        )
+                    }
+                    return@withContext ToolExecutionResult(
+                        toolName = TOOL_APPLY_PATCH,
+                        ok = false,
+                        summary = "Patch применён, но fingerprint после записи не проверен",
+                        content = applied.toJson()
+                            .put("workspace_fingerprint_after", JSONObject.NULL)
+                            .put("checkpoint_status", "UNKNOWN")
+                            .toString(),
+                        errorCode = "PATCH_APPLIED_RECHECK_REQUIRED",
+                        patchPreview = applied.preview,
+                        patchCheckpointId = applied.operationId,
+                    )
+                }
+
+                val checkpoint = runCatching {
+                    patchEngine.markCheckpointApplied(
+                        applied.operationId,
+                        afterFingerprint,
+                    )
+                }.getOrNull()
+                if (checkpoint == null) {
+                    runCatching {
+                        patchEngine.markCheckpointUnknown(
+                            applied.operationId,
+                            "PATCH_CHECKPOINT_UNCONFIRMED",
+                        )
+                    }
+                    return@withContext ToolExecutionResult(
+                        toolName = TOOL_APPLY_PATCH,
+                        ok = false,
+                        summary = "Patch применён, но checkpoint не подтверждён",
+                        content = applied.toJson()
+                            .put("workspace_fingerprint_after", afterFingerprint)
+                            .put("checkpoint_status", "UNKNOWN")
+                            .toString(),
+                        errorCode = "PATCH_CHECKPOINT_UNCONFIRMED",
+                        patchPreview = applied.preview,
+                        patchCheckpointId = applied.operationId,
+                        workspaceFingerprintAfter = afterFingerprint,
+                    )
+                }
+
                 ToolExecutionResult(
                     toolName = TOOL_APPLY_PATCH,
-                    ok = verified,
-                    summary = if (verified) {
-                        "Patch применён после явного approval"
-                    } else {
-                        "Patch применён, но fingerprint после записи не проверен"
-                    },
+                    ok = true,
+                    summary = "Patch применён после явного approval",
                     content = applied.toJson()
                         .put("workspace_fingerprint_after", afterFingerprint)
+                        .put("checkpoint_status", checkpoint.status.name)
                         .toString(),
-                    errorCode = if (verified) null else "PATCH_APPLIED_RECHECK_REQUIRED",
                     patchPreview = applied.preview,
+                    patchCheckpointId = applied.operationId,
+                    workspaceFingerprintAfter = afterFingerprint,
                 )
             }.getOrElse { error ->
                 ToolExecutionResult(
@@ -197,6 +250,47 @@ class ToolRouter(
                     ok = false,
                     summary = error.message ?: "Не удалось применить patch",
                     errorCode = "PATCH_APPLY_FAILED",
+                )
+            }
+        }
+    }
+
+
+    suspend fun rollbackPatch(
+        workspaceId: String? = null,
+        operationId: String,
+        expectedWorkspaceFingerprint: String,
+    ): PatchRollbackResult = withContext(Dispatchers.IO) {
+        if (operationId.isBlank() || expectedWorkspaceFingerprint.isBlank()) {
+            return@withContext PatchRollbackResult(
+                operationId = operationId.takeIf { it.isNotBlank() },
+                status = PatchRollbackStatus.FAILED,
+                summary = "Для rollback нужны operation id и workspace fingerprint",
+                errorCode = "PATCH_ROLLBACK_INVALID_ARGUMENTS",
+            )
+        }
+        synchronized(patchLock) {
+            val root = workspaceManager.resolveRoot(workspaceId)
+            val checkpointDirectory = workspaceManager.checkpointDirectory(workspaceId)
+            when {
+                root == null -> PatchRollbackResult(
+                    operationId = operationId,
+                    status = PatchRollbackStatus.FAILED,
+                    summary = "Workspace не выбран или недоступен",
+                    errorCode = "WORKSPACE_UNAVAILABLE",
+                )
+
+                checkpointDirectory == null -> PatchRollbackResult(
+                    operationId = operationId,
+                    status = PatchRollbackStatus.FAILED,
+                    summary = "Checkpoint directory недоступна",
+                    errorCode = "CHECKPOINT_UNAVAILABLE",
+                )
+
+                else -> PatchEngine(checkpointDirectory).rollback(
+                    workspaceRoot = root,
+                    operationId = operationId,
+                    expectedWorkspaceFingerprint = expectedWorkspaceFingerprint,
                 )
             }
         }

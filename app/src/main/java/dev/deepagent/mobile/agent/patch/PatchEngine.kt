@@ -1,5 +1,8 @@
 package dev.deepagent.mobile.agent.patch
 
+import dev.deepagent.mobile.agent.model.AgentRedactor
+import dev.deepagent.mobile.agent.model.PatchRollbackResult
+import dev.deepagent.mobile.agent.model.PatchRollbackStatus
 import dev.deepagent.mobile.agent.workspace.WorkspaceIdentity
 import org.json.JSONObject
 import java.io.File
@@ -27,15 +30,122 @@ data class PatchPreview(
         .put("creates_file", createsFile)
 }
 
+
+enum class PatchCheckpointStatus {
+    PREPARED,
+    APPLIED,
+    UNKNOWN,
+    ROLLING_BACK,
+    ROLLED_BACK,
+    ROLLED_BACK_UNVERIFIED,
+    FAILED,
+}
+
+data class PatchCheckpoint(
+    val operationId: String,
+    val path: String,
+    val oldSha256: String?,
+    val newSha256: String,
+    val checkpointFileName: String?,
+    val workspaceFingerprintBefore: String,
+    val workspaceFingerprintAfter: String?,
+    val workspaceFingerprintRolledBack: String?,
+    val status: PatchCheckpointStatus,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val errorCode: String? = null,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("operation_id", operationId)
+        .put("path", path)
+        .put("old_sha256", oldSha256)
+        .put("new_sha256", newSha256)
+        .put("checkpoint_file", checkpointFileName)
+        .put("workspace_fingerprint_before", workspaceFingerprintBefore)
+        .put("workspace_fingerprint_after", workspaceFingerprintAfter)
+        .put("workspace_fingerprint_rolled_back", workspaceFingerprintRolledBack)
+        .put("status", status.name)
+        .put("created_at", createdAt)
+        .put("updated_at", updatedAt)
+        .put("error_code", errorCode)
+
+    companion object {
+        private val OPERATION_ID_PATTERN = Regex("[A-Fa-f0-9-]{36}")
+        private val SHA256_PATTERN = Regex("[A-Fa-f0-9]{64}")
+
+        fun fromJson(value: JSONObject): PatchCheckpoint? {
+            val operationId = value.optString("operation_id").trim()
+            val path = value.optString("path").trim()
+            val oldSha = value.optString("old_sha256")
+                .trim()
+                .takeIf { it.isNotBlank() && it != "null" }
+            val newSha = value.optString("new_sha256").trim()
+            val beforeFingerprint = value.optString("workspace_fingerprint_before")
+                .trim()
+            val afterFingerprint = value.optString("workspace_fingerprint_after")
+                .trim()
+                .takeIf { it.isNotBlank() && it != "null" }
+            val rolledBackFingerprint = value.optString("workspace_fingerprint_rolled_back")
+                .trim()
+                .takeIf { it.isNotBlank() && it != "null" }
+            val checkpointFile = value.optString("checkpoint_file")
+                .trim()
+                .takeIf { it.isNotBlank() && it != "null" }
+            if (
+                !OPERATION_ID_PATTERN.matches(operationId) ||
+                path.isBlank() ||
+                path.length > 512 ||
+                path.contains('\u0000') ||
+                !SHA256_PATTERN.matches(newSha) ||
+                (oldSha != null && !SHA256_PATTERN.matches(oldSha)) ||
+                !SHA256_PATTERN.matches(beforeFingerprint) ||
+                (afterFingerprint != null && !SHA256_PATTERN.matches(afterFingerprint)) ||
+                (rolledBackFingerprint != null &&
+                    !SHA256_PATTERN.matches(rolledBackFingerprint)) ||
+                (checkpointFile != null &&
+                    (checkpointFile.length > 512 ||
+                        checkpointFile.contains('/') ||
+                        checkpointFile.contains('\\') ||
+                        checkpointFile.contains('\u0000')))
+            ) {
+                return null
+            }
+            val status = runCatching {
+                PatchCheckpointStatus.valueOf(value.optString("status"))
+            }.getOrDefault(PatchCheckpointStatus.UNKNOWN)
+            return PatchCheckpoint(
+                operationId = operationId,
+                path = path,
+                oldSha256 = oldSha,
+                newSha256 = newSha,
+                checkpointFileName = checkpointFile,
+                workspaceFingerprintBefore = beforeFingerprint,
+                workspaceFingerprintAfter = afterFingerprint,
+                workspaceFingerprintRolledBack = rolledBackFingerprint,
+                status = status,
+                createdAt = value.optLong("created_at", 0L),
+                updatedAt = value.optLong("updated_at", 0L),
+                errorCode = value.optString("error_code")
+                    .trim()
+                    .takeIf { it.isNotBlank() && it != "null" }
+                    ?.take(160),
+            )
+        }
+    }
+}
+
 data class PatchApplyResult(
     val preview: PatchPreview,
+    val operationId: String,
+    val checkpointFileName: String?,
     val checkpointPath: String?,
 ) {
     fun toJson(): JSONObject = JSONObject()
+        .put("operation_id", operationId)
         .put("path", preview.path)
         .put("old_sha256", preview.oldSha256)
         .put("new_sha256", preview.newSha256)
-        .put("checkpoint", checkpointPath)
+        .put("checkpoint", checkpointFileName)
         .put("workspace_fingerprint", preview.workspaceFingerprint)
         .put("unified_diff", preview.unifiedDiff)
 }
@@ -74,6 +184,11 @@ class PatchEngine(
         val existing = target.isFile
         if (target.exists() && !existing) {
             error("Целевой путь не является обычным файлом")
+        }
+        if (!target.exists()) {
+            require(target.parentFile?.isDirectory == true) {
+                "Для нового patch-файла parent directory должна существовать"
+            }
         }
         val beforeBytes = if (existing) {
             target.readBytes().also {
@@ -171,7 +286,9 @@ class PatchEngine(
             "Workspace изменился после preview; повторите анализ"
         }
 
-        checkpointDirectory.mkdirs()
+        check(checkpointDirectory.mkdirs() || checkpointDirectory.isDirectory) {
+            "Не удалось создать checkpoint directory"
+        }
         val operationId = UUID.randomUUID().toString()
         val checkpoint = if (target.isFile) {
             File(checkpointDirectory, operationId + "-" + target.name)
@@ -179,21 +296,29 @@ class PatchEngine(
         } else {
             null
         }
-        File(checkpointDirectory, operationId + ".json").writeText(
-            JSONObject()
-                .put("operation_id", operationId)
-                .put("path", preview.path)
-                .put("old_sha256", preview.oldSha256)
-                .put("new_sha256", preview.newSha256)
-                .put("checkpoint", checkpoint?.name)
-                .put("created_at", System.currentTimeMillis())
-                .toString(),
-            Charsets.UTF_8,
+        val now = System.currentTimeMillis()
+        writeCheckpoint(
+            PatchCheckpoint(
+                operationId = operationId,
+                path = preview.path,
+                oldSha256 = preview.oldSha256,
+                newSha256 = preview.newSha256,
+                checkpointFileName = checkpoint?.name,
+                workspaceFingerprintBefore = preview.workspaceFingerprint,
+                workspaceFingerprintAfter = null,
+                workspaceFingerprintRolledBack = null,
+                status = PatchCheckpointStatus.PREPARED,
+                createdAt = now,
+                updatedAt = now,
+            ),
         )
 
-        target.parentFile?.mkdirs()
+        val parent = target.parentFile ?: error("У patch target нет parent directory")
+        check(parent.mkdirs() || parent.isDirectory) {
+            "Не удалось создать parent directory patch target"
+        }
         val temporary = File(
-            target.parentFile,
+            parent,
             "." + target.name + "." + operationId + ".tmp",
         )
         try {
@@ -206,8 +331,303 @@ class PatchEngine(
 
         return PatchApplyResult(
             preview = preview,
+            operationId = operationId,
+            checkpointFileName = checkpoint?.name,
             checkpointPath = checkpoint?.canonicalPath,
         )
+    }
+
+
+    fun markCheckpointApplied(
+        operationId: String,
+        workspaceFingerprintAfter: String,
+    ): PatchCheckpoint {
+        require(SHA256_PATTERN.matches(workspaceFingerprintAfter)) {
+            "Некорректный post-write workspace fingerprint"
+        }
+        val current = readCheckpoint(operationId)
+            ?: error("Checkpoint не найден")
+        if (current.status == PatchCheckpointStatus.APPLIED) {
+            require(current.workspaceFingerprintAfter == workspaceFingerprintAfter) {
+                "Checkpoint уже привязан к другому workspace fingerprint"
+            }
+            return current
+        }
+        require(current.status == PatchCheckpointStatus.PREPARED) {
+            "Checkpoint нельзя подтвердить из состояния " + current.status.name
+        }
+        val updated = current.copy(
+            workspaceFingerprintAfter = workspaceFingerprintAfter,
+            status = PatchCheckpointStatus.APPLIED,
+            updatedAt = System.currentTimeMillis(),
+            errorCode = null,
+        )
+        writeCheckpoint(updated)
+        return updated
+    }
+
+    fun markCheckpointUnknown(
+        operationId: String,
+        errorCode: String,
+    ): PatchCheckpoint? {
+        val current = readCheckpoint(operationId) ?: return null
+        if (current.status == PatchCheckpointStatus.ROLLED_BACK) return current
+        val updated = current.copy(
+            status = PatchCheckpointStatus.UNKNOWN,
+            updatedAt = System.currentTimeMillis(),
+            errorCode = errorCode.take(160),
+        )
+        writeCheckpoint(updated)
+        return updated
+    }
+
+    fun rollback(
+        workspaceRoot: File,
+        operationId: String,
+        expectedWorkspaceFingerprint: String,
+    ): PatchRollbackResult {
+        val checkpoint = readCheckpoint(operationId)
+            ?: return PatchRollbackResult(
+                operationId = operationId,
+                status = PatchRollbackStatus.FAILED,
+                summary = "Checkpoint не найден",
+                errorCode = "PATCH_CHECKPOINT_NOT_FOUND",
+            )
+        when (checkpoint.status) {
+            PatchCheckpointStatus.ROLLED_BACK -> {
+                return PatchRollbackResult(
+                    operationId = operationId,
+                    path = checkpoint.path,
+                    status = PatchRollbackStatus.SUCCEEDED,
+                    summary = "Patch уже был откатан",
+                    workspaceFingerprintBefore = checkpoint.workspaceFingerprintAfter,
+                    workspaceFingerprintAfter = checkpoint.workspaceFingerprintRolledBack,
+                )
+            }
+
+            PatchCheckpointStatus.PREPARED,
+            PatchCheckpointStatus.UNKNOWN,
+            PatchCheckpointStatus.ROLLING_BACK,
+            PatchCheckpointStatus.ROLLED_BACK_UNVERIFIED,
+            -> {
+                return PatchRollbackResult(
+                    operationId = operationId,
+                    path = checkpoint.path,
+                    status = PatchRollbackStatus.UNKNOWN,
+                    summary = "Checkpoint не подтверждён; сначала выполните re-check",
+                    workspaceFingerprintBefore = checkpoint.workspaceFingerprintAfter,
+                    errorCode = "PATCH_ROLLBACK_RECHECK_REQUIRED",
+                )
+            }
+
+            PatchCheckpointStatus.FAILED -> {
+                return PatchRollbackResult(
+                    operationId = operationId,
+                    path = checkpoint.path,
+                    status = PatchRollbackStatus.FAILED,
+                    summary = "Checkpoint помечен как неуспешный",
+                    errorCode = checkpoint.errorCode ?: "PATCH_CHECKPOINT_FAILED",
+                )
+            }
+
+            PatchCheckpointStatus.APPLIED -> Unit
+        }
+
+        val expectedAfter = checkpoint.workspaceFingerprintAfter
+        if (
+            expectedAfter.isNullOrBlank() ||
+            expectedAfter != expectedWorkspaceFingerprint
+        ) {
+            return PatchRollbackResult(
+                operationId = operationId,
+                path = checkpoint.path,
+                status = PatchRollbackStatus.UNKNOWN,
+                summary = "Fingerprint patch не совпал; rollback остановлен",
+                workspaceFingerprintBefore = expectedAfter,
+                errorCode = "PATCH_ROLLBACK_RECHECK_REQUIRED",
+            )
+        }
+
+        val identityBefore = runCatching {
+            WorkspaceIdentity.capture("patch", workspaceRoot)
+        }.getOrElse {
+            return PatchRollbackResult(
+                operationId = operationId,
+                path = checkpoint.path,
+                status = PatchRollbackStatus.UNKNOWN,
+                summary = "Workspace identity недоступна; rollback не подтверждён",
+                workspaceFingerprintBefore = expectedAfter,
+                errorCode = "PATCH_ROLLBACK_RECHECK_REQUIRED",
+            )
+        }
+        if (identityBefore.treeSha256 != expectedAfter) {
+            return PatchRollbackResult(
+                operationId = operationId,
+                path = checkpoint.path,
+                status = PatchRollbackStatus.UNKNOWN,
+                summary = "Workspace изменился перед rollback; нужен новый re-check",
+                workspaceFingerprintBefore = identityBefore.treeSha256,
+                errorCode = "PATCH_ROLLBACK_RECHECK_REQUIRED",
+            )
+        }
+
+        val target = runCatching {
+            resolvePath(workspaceRoot, checkpoint.path)
+        }.getOrElse {
+            return PatchRollbackResult(
+                operationId = operationId,
+                path = checkpoint.path,
+                status = PatchRollbackStatus.FAILED,
+                workspaceFingerprintBefore = identityBefore.treeSha256,
+                summary = AgentRedactor.text(
+                    it.message ?: "Patch path недоступен",
+                    MAX_ERROR_CHARS,
+                ).orEmpty(),
+                errorCode = "PATCH_ROLLBACK_INVALID_PATH",
+            )
+        }
+        if (!target.isFile) {
+            return PatchRollbackResult(
+                operationId = operationId,
+                path = checkpoint.path,
+                status = PatchRollbackStatus.UNKNOWN,
+                workspaceFingerprintBefore = identityBefore.treeSha256,
+                summary = "Целевой файл изменён или удалён; rollback остановлен",
+                errorCode = "PATCH_ROLLBACK_RECHECK_REQUIRED",
+            )
+        }
+        if (isSensitiveFile(target)) {
+            return PatchRollbackResult(
+                operationId = operationId,
+                path = checkpoint.path,
+                status = PatchRollbackStatus.FAILED,
+                workspaceFingerprintBefore = identityBefore.treeSha256,
+                summary = "Rollback чувствительного файла запрещён политикой",
+                errorCode = "PATCH_ROLLBACK_SENSITIVE_FILE",
+            )
+        }
+        val currentBytes = runCatching {
+            target.readBytes().also {
+                require(it.size <= MAX_FILE_BYTES) {
+                    "Целевой файл превышает лимит rollback"
+                }
+            }
+        }.getOrElse {
+            return PatchRollbackResult(
+                operationId = operationId,
+                path = checkpoint.path,
+                status = PatchRollbackStatus.UNKNOWN,
+                workspaceFingerprintBefore = identityBefore.treeSha256,
+                summary = "Не удалось прочитать целевой файл; rollback не подтверждён",
+                errorCode = "PATCH_ROLLBACK_RECHECK_REQUIRED",
+            )
+        }
+        if (sha256(currentBytes) != checkpoint.newSha256) {
+            return PatchRollbackResult(
+                operationId = operationId,
+                path = checkpoint.path,
+                status = PatchRollbackStatus.UNKNOWN,
+                workspaceFingerprintBefore = identityBefore.treeSha256,
+                summary = "Целевой файл изменён после patch; rollback остановлен",
+                errorCode = "PATCH_ROLLBACK_RECHECK_REQUIRED",
+            )
+        }
+
+        val rollingBack = checkpoint.copy(
+            status = PatchCheckpointStatus.ROLLING_BACK,
+            updatedAt = System.currentTimeMillis(),
+            errorCode = null,
+        )
+        runCatching { writeCheckpoint(rollingBack) }.getOrElse {
+            return PatchRollbackResult(
+                operationId = operationId,
+                path = checkpoint.path,
+                status = PatchRollbackStatus.UNKNOWN,
+                workspaceFingerprintBefore = identityBefore.treeSha256,
+                summary = "Не удалось зафиксировать начало rollback",
+                errorCode = "PATCH_ROLLBACK_UNKNOWN",
+            )
+        }
+
+        return try {
+            if (checkpoint.oldSha256 == null) {
+                check(target.delete()) {
+                    "Не удалось удалить созданный patch-файл"
+                }
+            } else {
+                val checkpointName = checkpoint.checkpointFileName
+                    ?: error("Checkpoint content не найден")
+                val backup = resolveCheckpointFile(checkpointName)
+                check(backup.isFile) {
+                    "Checkpoint content недоступен"
+                }
+                val oldBytes = backup.readBytes()
+                require(oldBytes.size <= MAX_FILE_BYTES) {
+                    "Checkpoint content превышает лимит"
+                }
+                require(sha256(oldBytes) == checkpoint.oldSha256) {
+                    "Checkpoint content hash mismatch"
+                }
+                val parent = target.parentFile ?: error("У target нет parent directory")
+                val temporary = File(
+                    parent,
+                    "." + target.name + "." + operationId + ".rollback.tmp",
+                )
+                try {
+                    temporary.writeBytes(oldBytes)
+                    moveAtomically(temporary, target)
+                } finally {
+                    temporary.delete()
+                }
+            }
+
+            val restored = if (checkpoint.oldSha256 == null) {
+                !target.exists()
+            } else {
+                target.isFile &&
+                    sha256(target.readBytes()) == checkpoint.oldSha256
+            }
+            check(restored) {
+                "Восстановленное содержимое не прошло hash check"
+            }
+            val afterIdentity = WorkspaceIdentity.capture("patch", workspaceRoot)
+            val finalCheckpoint = rollingBack.copy(
+                status = PatchCheckpointStatus.ROLLED_BACK,
+                workspaceFingerprintRolledBack = afterIdentity.treeSha256,
+                updatedAt = System.currentTimeMillis(),
+                errorCode = null,
+            )
+            writeCheckpoint(finalCheckpoint)
+            PatchRollbackResult(
+                operationId = operationId,
+                path = checkpoint.path,
+                status = PatchRollbackStatus.SUCCEEDED,
+                summary = "Patch откатан после повторной проверки fingerprint",
+                workspaceFingerprintBefore = identityBefore.treeSha256,
+                workspaceFingerprintAfter = afterIdentity.treeSha256,
+            )
+        } catch (error: Throwable) {
+            runCatching {
+                writeCheckpoint(
+                    rollingBack.copy(
+                        status = PatchCheckpointStatus.ROLLED_BACK_UNVERIFIED,
+                        updatedAt = System.currentTimeMillis(),
+                        errorCode = "PATCH_ROLLBACK_UNKNOWN",
+                    ),
+                )
+            }
+            PatchRollbackResult(
+                operationId = operationId,
+                path = checkpoint.path,
+                status = PatchRollbackStatus.UNKNOWN,
+                summary = AgentRedactor.text(
+                    error.message ?: "Rollback завершился без подтверждения",
+                    MAX_ERROR_CHARS,
+                ).orEmpty(),
+                workspaceFingerprintBefore = identityBefore.treeSha256,
+                errorCode = "PATCH_ROLLBACK_UNKNOWN",
+            )
+        }
     }
 
     private fun moveAtomically(source: File, target: File) {
@@ -225,6 +645,70 @@ class PatchEngine(
                 StandardCopyOption.REPLACE_EXISTING,
             )
         }.getOrElse { throw it }
+    }
+
+
+    private fun readCheckpoint(operationId: String): PatchCheckpoint? {
+        val manifest = runCatching { manifestFile(operationId) }.getOrNull()
+            ?: return null
+        if (
+            !manifest.isFile ||
+            manifest.length() <= 0L ||
+            manifest.length() > MAX_CHECKPOINT_BYTES
+        ) {
+            return null
+        }
+        return runCatching {
+            PatchCheckpoint.fromJson(
+                JSONObject(manifest.readText(Charsets.UTF_8)),
+            )
+        }.getOrNull()
+    }
+
+    private fun writeCheckpoint(checkpoint: PatchCheckpoint) {
+        check(checkpointDirectory.mkdirs() || checkpointDirectory.isDirectory) {
+            "Не удалось создать checkpoint directory"
+        }
+        val target = manifestFile(checkpoint.operationId)
+        val temporary = File(
+            checkpointDirectory,
+            "." + checkpoint.operationId + "." + UUID.randomUUID() + ".tmp",
+        )
+        try {
+            temporary.writeText(checkpoint.toJson().toString(), Charsets.UTF_8)
+            moveAtomically(temporary, target)
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    private fun manifestFile(operationId: String): File {
+        require(OPERATION_ID_PATTERN.matches(operationId)) {
+            "Некорректный checkpoint operation id"
+        }
+        val directory = checkpointDirectory.canonicalFile
+        val target = File(directory, operationId + ".json").canonicalFile
+        require(target.parentFile?.canonicalFile == directory) {
+            "Checkpoint manifest выходит за границы каталога"
+        }
+        return target
+    }
+
+    private fun resolveCheckpointFile(fileName: String): File {
+        require(
+            fileName.isNotBlank() &&
+                !fileName.contains('/') &&
+                !fileName.contains('\\') &&
+                !fileName.contains('\u0000'),
+        ) {
+            "Некорректный checkpoint filename"
+        }
+        val directory = checkpointDirectory.canonicalFile
+        val target = File(directory, fileName).canonicalFile
+        require(target.parentFile?.canonicalFile == directory) {
+            "Checkpoint content выходит за границы каталога"
+        }
+        return target
     }
 
     private fun applyUnifiedPatch(
@@ -456,7 +940,11 @@ class PatchEngine(
         val HUNK_PATTERN = Regex(
             "@@ -([0-9]+)(?:,[0-9]+)? \\+[0-9]+(?:,[0-9]+)? @@.*",
         )
+        val OPERATION_ID_PATTERN = Regex("[A-Fa-f0-9-]{36}")
+        val SHA256_PATTERN = Regex("[A-Fa-f0-9]{64}")
         const val MAX_FILE_BYTES = 2 * 1024 * 1024
+        const val MAX_CHECKPOINT_BYTES = 64 * 1024
+        const val MAX_ERROR_CHARS = 4_000
         const val MAX_PATCH_CHARS = 2 * 1024 * 1024
         const val MAX_DIFF_CHARS = 32 * 1024
     }

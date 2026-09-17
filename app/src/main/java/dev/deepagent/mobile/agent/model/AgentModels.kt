@@ -1,6 +1,7 @@
 package dev.deepagent.mobile.agent.model
 
 import java.util.UUID
+import org.json.JSONObject
 
 enum class ExecutionTarget {
     AUTO,
@@ -107,6 +108,126 @@ data class PendingPatchApproval(
     val unifiedDiff: String,
     val canApply: Boolean,
 )
+
+
+enum class PatchRecoveryStatus {
+    APPLIED,
+    ROLLED_BACK,
+    UNKNOWN,
+}
+
+data class PatchRecoveryState(
+    val sessionId: String,
+    val workspaceId: String,
+    val operationId: String,
+    val path: String,
+    val status: PatchRecoveryStatus,
+    val workspaceFingerprintBefore: String,
+    val workspaceFingerprintAfter: String?,
+    val oldSha256: String?,
+    val newSha256: String,
+    val errorCode: String? = null,
+    val updatedAt: Long = System.currentTimeMillis(),
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("session_id", sessionId)
+        .put("workspace_id", workspaceId)
+        .put("operation_id", operationId)
+        .put("path", path)
+        .put("status", status.name)
+        .put("workspace_fingerprint_before", workspaceFingerprintBefore)
+        .put("workspace_fingerprint_after", workspaceFingerprintAfter)
+        .put("old_sha256", oldSha256)
+        .put("new_sha256", newSha256)
+        .put("error_code", errorCode)
+        .put("updated_at", updatedAt)
+
+    companion object {
+        private val IDENTIFIER_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
+        private val SHA256_PATTERN = Regex("[A-Fa-f0-9]{64}")
+
+        fun fromJson(value: JSONObject): PatchRecoveryState? {
+            val sessionId = value.optString("session_id").trim()
+            val workspaceId = value.optString("workspace_id").trim()
+            val operationId = value.optString("operation_id").trim()
+            val path = value.optString("path").trim()
+            val beforeFingerprint = value.optString("workspace_fingerprint_before").trim()
+            val afterFingerprint = value.optString("workspace_fingerprint_after")
+                .trim()
+                .takeIf { it.isNotBlank() && it != "null" }
+            val oldSha = value.optString("old_sha256")
+                .trim()
+                .takeIf { it.isNotBlank() && it != "null" }
+            val newSha = value.optString("new_sha256").trim()
+            if (
+                !IDENTIFIER_PATTERN.matches(sessionId) ||
+                !IDENTIFIER_PATTERN.matches(workspaceId) ||
+                !IDENTIFIER_PATTERN.matches(operationId) ||
+                path.isBlank() ||
+                path.length > 512 ||
+                path.contains('\u0000') ||
+                !SHA256_PATTERN.matches(beforeFingerprint) ||
+                (afterFingerprint != null && !SHA256_PATTERN.matches(afterFingerprint)) ||
+                (oldSha != null && !SHA256_PATTERN.matches(oldSha)) ||
+                !SHA256_PATTERN.matches(newSha)
+            ) {
+                return null
+            }
+            val parsedStatus = runCatching {
+                PatchRecoveryStatus.valueOf(value.optString("status"))
+            }.getOrNull() ?: PatchRecoveryStatus.UNKNOWN
+            val safeStatus = if (
+                parsedStatus == PatchRecoveryStatus.APPLIED &&
+                afterFingerprint == null
+            ) {
+                PatchRecoveryStatus.UNKNOWN
+            } else {
+                parsedStatus
+            }
+            return PatchRecoveryState(
+                sessionId = sessionId,
+                workspaceId = workspaceId,
+                operationId = operationId,
+                path = path,
+                status = safeStatus,
+                workspaceFingerprintBefore = beforeFingerprint,
+                workspaceFingerprintAfter = afterFingerprint,
+                oldSha256 = oldSha,
+                newSha256 = newSha,
+                errorCode = value.optString("error_code")
+                    .trim()
+                    .takeIf { it.isNotBlank() && it != "null" }
+                    ?.take(160),
+                updatedAt = value.optLong("updated_at", System.currentTimeMillis()),
+            )
+        }
+    }
+}
+
+enum class PatchRollbackStatus {
+    SUCCEEDED,
+    FAILED,
+    UNKNOWN,
+}
+
+data class PatchRollbackResult(
+    val operationId: String? = null,
+    val path: String? = null,
+    val status: PatchRollbackStatus,
+    val summary: String,
+    val workspaceFingerprintBefore: String? = null,
+    val workspaceFingerprintAfter: String? = null,
+    val errorCode: String? = null,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("operation_id", operationId)
+        .put("path", path)
+        .put("status", status.name)
+        .put("summary", summary)
+        .put("workspace_fingerprint_before", workspaceFingerprintBefore)
+        .put("workspace_fingerprint_after", workspaceFingerprintAfter)
+        .put("error_code", errorCode)
+}
 
 
 internal object AgentRedactor {

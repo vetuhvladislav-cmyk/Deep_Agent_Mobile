@@ -109,8 +109,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Владелец:** Patch Engine, Workspace Manager и GitHub Connector
 - **Входной контракт:** read-only workspace snapshot, ToolCall для patch, WorkspaceIdentity, base fingerprint, explicit approval и target repository/ref.
 - **Выходной контракт:** preview/diff, checkpoint и controlled local apply; branch/commit/push и ручной Pull Request с проверяемой provenance.
-- **Результат текущей реализации:** добавлены фиксированные Git-операции `status`, `checkout -b`, `add + commit` и `push` через ToolRouter; write-операции проверяют workspace fingerprint до/после и HEAD SHA, timeout/неподтверждённый результат переводятся в `UNKNOWN`; добавлен GitHub PR connector с redacted-ответом и ручным approval через AgentBridge/UI.
-- **Ограничение текущей реализации:** P1-A не переводится в `available` без поведенческой проверки branch/commit/push/PR, отказов Git, timeout/re-check, permission gates и проверки отсутствия секретов в событиях/journal.
+- **Результат текущей реализации:** добавлены фиксированные Git-операции `status`, `checkout -b`, `add + commit` и `push` через ToolRouter; write-операции проверяют workspace fingerprint до/после и HEAD SHA, timeout/неподтверждённый результат переводятся в `UNKNOWN`; добавлен GitHub PR connector с redacted-ответом и ручным approval через AgentBridge/UI; для `apply_patch` добавлены атомарный checkpoint manifest, persisted recovery state и ручной rollback с повторной проверкой post-write fingerprint.
+- **Ограничение текущей реализации:** P1-A не переводится в `available` без поведенческой проверки branch/commit/push/PR, отказов Git, timeout/re-check, permission gates, checkpoint/rollback и проверки отсутствия секретов в событиях/journal.
 - **Permission gate:** WORKSPACE_WRITE для локальной записи; GIT_WRITE для branch/commit/push/PR; REMOTE_ACTION для merge/release не входит в этап.
 - **Session ID:** обязателен в preview, approval, checkpoint, commit, PR и каждом связанном event.
 - **Redacted audit trail:** base file SHA, plan/apply fingerprints, changed paths, approval actor, checkpoint reference, commit SHA и PR number; secrets redacted.

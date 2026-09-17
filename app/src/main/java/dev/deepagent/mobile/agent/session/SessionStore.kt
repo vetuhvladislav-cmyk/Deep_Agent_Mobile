@@ -8,6 +8,7 @@ import dev.deepagent.mobile.agent.model.AgentSessionState
 import dev.deepagent.mobile.agent.model.AgentSessionStatus
 import dev.deepagent.mobile.agent.model.ExecutionTarget
 import dev.deepagent.mobile.agent.model.PermissionMode
+import dev.deepagent.mobile.agent.model.PatchRecoveryState
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -174,6 +175,7 @@ data class PersistedAgentSession(
     val invocations: List<SessionInvocationRecord> = emptyList(),
     val decisions: List<SessionDecisionRecord> = emptyList(),
     val recoveryReason: String? = null,
+    val patchRecovery: PatchRecoveryState? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("schema_version", VERSION)
@@ -219,18 +221,19 @@ data class PersistedAgentSession(
             },
         )
         .put("recovery_reason", AgentRedactor.text(recoveryReason, MAX_ERROR_CHARS))
+        .put("patch_recovery", patchRecovery?.toJson())
         .put("event_cursor", eventCursor)
         .put("updated_at", updatedAt)
 
     companion object {
-        const val VERSION = 2
+        const val VERSION = 3
         const val MAX_EVENTS = 500
         const val MAX_INVOCATIONS = 500
         const val MAX_DECISIONS = 200
         const val MAX_ERROR_CHARS = 4_000
         const val MAX_EVENT_ID_CHARS = 160
         const val MAX_EVENT_MESSAGE_CHARS = 1_000
-        val SUPPORTED_VERSIONS = setOf(1, 2)
+        val SUPPORTED_VERSIONS = setOf(1, 2, 3)
         const val MAX_EVENT_DETAIL_CHARS = 4_000
 
         fun fromJson(value: JSONObject): PersistedAgentSession? {
@@ -344,6 +347,8 @@ data class PersistedAgentSession(
                     value.optString("recovery_reason"),
                     MAX_ERROR_CHARS,
                 )?.takeIf { it.isNotBlank() },
+                patchRecovery = value.optJSONObject("patch_recovery")
+                    ?.let(PatchRecoveryState::fromJson),
             )
         }
 
