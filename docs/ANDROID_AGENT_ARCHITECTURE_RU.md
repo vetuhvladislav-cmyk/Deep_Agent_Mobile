@@ -232,6 +232,10 @@ Permission level является атрибутом сессии и не мож
 
 Permission проверяется непосредственно перед действием. Разрешение, указанное в ToolCall, не заменяет разрешение текущей сессии.
 
+### 4.2 ApprovalToken для controlled write
+
+Для model-generated `apply_patch` явное подтверждение оформляется непрозрачным in-memory `ApprovalToken`. Он связывает operation, sessionId, workspaceId, preview fingerprint, path, old/new SHA, digest исходных аргументов, время выдачи и expiry. Core проверяет token и все связанные поля непосредственно перед apply; mismatch или истёкший TTL не дают выполнить запись. Истёкший token переводит сессию в `UNKNOWN` и требует нового preview, а token не сохраняется в journal и не replay-ится после process death. После token gate ToolRouter повторно проверяет актуальный workspace fingerprint и SHA.
+
 ## 5. Live event stream и durable journal
 
 Live и durable состояния разделены.
