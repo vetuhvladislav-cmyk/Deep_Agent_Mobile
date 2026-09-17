@@ -38,7 +38,7 @@ data class GitOperationState(
     val status: GitOperationStatus = GitOperationStatus.IDLE,
     val sessionId: String? = null,
     val operationId: String? = null,
-        val repository: String? = null,
+    val repository: String? = null,
     val base: String? = null,
     val expectedHeadSha: String? = null,
     val operation: String? = null,
@@ -252,6 +252,7 @@ class GitRepositoryClient(
         val status = writeStatus(command, after, head)
         GitOperationResult(
             operation = GitOperation.CREATE_BRANCH,
+            operationId = operationId,
             status = status,
             summary = when (status) {
                 GitOperationStatus.SUCCEEDED -> "Git branch создан: " + branch
@@ -329,6 +330,7 @@ class GitRepositoryClient(
         val status = writeStatus(commitCommand, after, head)
         GitOperationResult(
             operation = GitOperation.COMMIT,
+            operationId = operationId,
             status = status,
             summary = when (status) {
                 GitOperationStatus.SUCCEEDED -> "Commit создан: " + head?.sha.orEmpty()
@@ -384,6 +386,7 @@ class GitRepositoryClient(
         val status = writeStatus(command, after, head)
         GitOperationResult(
             operation = GitOperation.PUSH,
+            operationId = operationId,
             status = status,
             summary = when (status) {
                 GitOperationStatus.SUCCEEDED -> "Push подтверждён: " + remote + "/" + branch
