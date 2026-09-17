@@ -1,5 +1,6 @@
 package dev.deepagent.mobile.agent.patch
 
+import dev.deepagent.mobile.agent.model.PatchRollbackStatus
 import dev.deepagent.mobile.agent.workspace.WorkspaceIdentity
 import java.io.File
 import java.security.MessageDigest
