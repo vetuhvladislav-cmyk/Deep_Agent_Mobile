@@ -486,9 +486,9 @@ class WorkspaceManager(context: Context) {
     }
 
     private fun loadEntries(): List<WorkspaceSummary> {
-        if (!indexFile.isFile) return emptyList()
-        val root = runCatching { JSONObject(indexFile.readText()) }.getOrNull()
-            ?: return emptyList()
+        val root = runCatching {
+            readIndexText()?.let(::JSONObject)
+        }.getOrNull() ?: return emptyList()
         val array = root.optJSONArray("workspaces") ?: JSONArray()
         return buildList {
             for (index in 0 until array.length()) {
@@ -500,12 +500,29 @@ class WorkspaceManager(context: Context) {
     }
 
     private fun loadSelectedId(): String? {
-        if (!indexFile.isFile) return null
         return runCatching {
-            JSONObject(indexFile.readText())
-                .optString("selected_id")
-                .takeIf { it.isNotBlank() }
+            readIndexText()
+                ?.let(::JSONObject)
+                ?.optString("selected_id")
+                ?.takeIf { it.isNotBlank() }
         }.getOrNull()
+    }
+
+    private fun readIndexText(): String? {
+        if (!indexFile.isFile) return null
+        val length = indexFile.length()
+        if (length !in 0..MAX_INDEX_BYTES) return null
+        val bytes = ByteArray(length.toInt())
+        indexFile.inputStream().use { input ->
+            var offset = 0
+            while (offset < bytes.size) {
+                val count = input.read(bytes, offset, bytes.size - offset)
+                if (count < 0) return null
+                offset += count
+            }
+            if (input.read() >= 0) return null
+        }
+        return bytes.toString(Charsets.UTF_8)
     }
 
     private fun findSelected(): WorkspaceSummary? {
@@ -611,6 +628,7 @@ class WorkspaceManager(context: Context) {
 
     private companion object {
         const val INDEX_VERSION = 2
+        const val MAX_INDEX_BYTES = 1L * 1024L * 1024L
         const val MAX_TREE_DEPTH = 8
         const val MAX_TREE_ENTRIES = 500
         val IGNORED_TREE_DIRECTORIES = setOf(".git", ".gradle", "build", "node_modules")
