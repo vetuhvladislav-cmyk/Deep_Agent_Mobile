@@ -955,7 +955,7 @@ class AgentCore(context: Context) : AgentBridge {
         activeJob?.cancel()
         patchApplyJob?.cancel()
         patchApplyJob = null
-        interactiveSession.cancelActive()
+        interactiveSession.close()
         runtimeSupervisor.close()
         coreScope.cancel()
         closed = true

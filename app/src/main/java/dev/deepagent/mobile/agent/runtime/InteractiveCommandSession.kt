@@ -136,13 +136,9 @@ class InteractiveCommandSession(
                 onState,
             )
             request.input?.let { input ->
-                require(input.length <= MAX_INPUT_CHARS && !input.contains('\u0000')) {
-                    "Interactive input превышает лимит"
-                }
-                process.outputStream.bufferedWriter().use { writer ->
-                    writer.write(input)
-                    writer.flush()
-                }
+                process.outputStream.write(input.toByteArray(Charsets.UTF_8))
+                process.outputStream.flush()
+                process.outputStream.close()
             }
 
             val finished = process.waitFor(
@@ -158,7 +154,7 @@ class InteractiveCommandSession(
                 return@withContext publish(
                     base.copy(
                         status = InteractiveSessionStatus.UNKNOWN,
-                        stdout =readOutput(stdoutFuture).text,
+                        stdout = readOutput(stdoutFuture).text,
                         stderr = readOutput(stderrFuture).text,
                         durationMs = elapsedMs(startedAt),
                         summary = "Interactive process превысил timeout",
@@ -211,10 +207,8 @@ class InteractiveCommandSession(
             if (activeSessionId == sessionId) activeProcess else null
         } ?: return false
         return runCatching {
-            process.outputStream.bufferedWriter().use { writer ->
-                writer.write(input)
-                writer.flush()
-            }
+            process.outputStream.write(input.toByteArray(Charsets.UTF_8))
+            process.outputStream.flush()
             true
         }.getOrDefault(false)
     }
@@ -225,6 +219,11 @@ class InteractiveCommandSession(
         } ?: return false
         terminate(process)
         return true
+    }
+
+    fun close() {
+        cancelActive()
+        outputExecutor.shutdownNow()
     }
 
     private fun validate(request: InteractiveCommandRequest): Validation? {
@@ -255,6 +254,13 @@ class InteractiveCommandSession(
         if (request.env.keys.any { it !in ALLOWED_ENV_KEYS }) {
             return "Environment key не входит в allowlist"
         }
+        if (
+            request.input != null &&
+            (request.input.length > MAX_INPUT_CHARS ||
+                request.input.contains('\u0000'))
+        ) {
+            return "Interactive input превышает лимит"
+        }
         if (request.workspaceId.isNullOrBlank()) {
             return "Для interactive command нужен workspace"
         }
@@ -272,8 +278,6 @@ class InteractiveCommandSession(
         }
         return null
     }
-
-    private fun Validation? .dummy(): Unit = Unit
 
     private fun publish(
         state: InteractiveSessionState,
