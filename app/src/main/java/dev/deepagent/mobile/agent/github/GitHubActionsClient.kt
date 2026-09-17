@@ -135,11 +135,11 @@ class GitHubActionsClient {
                 "Для Actions нужен ожидаемый commit SHA"
             expectedSessionId.isNullOrBlank() ->
                 "Для Actions нужен обязательный agent_session_id"
-            !SESSION_ID_PATTERN.matches(expectedSessionId) ->
+            !SESSION_ID_PATTERN.matches(expectedSessionId.orEmpty()) ->
                 "Session correlation id имеет недопустимый формат"
             expectedOperationId.isNullOrBlank() ->
                 "Для Actions нужен обязательный operation_id"
-            !OPERATION_ID_PATTERN.matches(expectedOperationId) ->
+            !OPERATION_ID_PATTERN.matches(expectedOperationId.orEmpty()) ->
                 "Operation correlation id имеет недопустимый формат"
             else -> null
         }
@@ -154,7 +154,7 @@ class GitHubActionsClient {
                         "ACTIONS_SOURCE_SHA_REQUIRED"
                     expectedSessionId.isNullOrBlank() ->
                         "ACTIONS_SESSION_ID_REQUIRED"
-                    !SESSION_ID_PATTERN.matches(expectedSessionId) ->
+                    !SESSION_ID_PATTERN.matches(expectedSessionId.orEmpty()) ->
                         "ACTIONS_SESSION_ID_INVALID"
                     expectedOperationId.isNullOrBlank() ->
                         "ACTIONS_OPERATION_ID_REQUIRED"
