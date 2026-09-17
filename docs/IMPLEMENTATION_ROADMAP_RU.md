@@ -4,6 +4,22 @@
 
 Архитектурные контракты и permission matrix находятся в [ANDROID_AGENT_ARCHITECTURE_RU.md](./ANDROID_AGENT_ARCHITECTURE_RU.md). Этот документ не переопределяет их и не дублирует их полные определения.
 
+## 0. Зафиксированный статический hardening pass
+
+На ветке `codex/p1-a-controlled-write-git-pr` выполнен сквозной статический проход по текущему Android diff. `main` не изменялся.
+
+В коде закреплены следующие границы и исправления:
+
+- UI использует единый `AgentUiContract`; workspace-entry IDs детерминированы, а lifecycle `AgentCore` закрывается владельцем приложения.
+- Проверки permission используют capability semantics, а не порядок enum; локальная запись и GitHub-доступ не смешиваются.
+- `WorkspacePathPolicy` является общей fail-closed границей для ToolRouter, Patch Engine, Git и interactive adapter: абсолютные пути, `..`, symlink-компоненты и чувствительные файлы блокируются.
+- Commit ограничен явно указанными файлами; полный diff исключает известные секретные паттерны; process output bounded и дочитывается после достижения лимита.
+- Отмена распространяется на DeepSeek, GitHub Actions и runtime; неподтверждённая остановка остаётся `FAILED/UNKNOWN`, а не маскируется под успешное завершение.
+- Actions связываются с `sessionId`, ref и ожидаемым commit SHA; artifact дополнительно проверяет run/source provenance, checksum и тип.
+- Session/workspace/preset persistence использует временный файл, flush/sync и atomic replacement.
+
+Этот проход не переводит этапы в `available`: Android build, unit/instrumentation tests, реальный runtime и Actions в текущей сессии не запускались. Поведенческая верификация и acceptance fixtures остаются обязательными для закрытия соответствующих exit criteria.
+
 ## 1. Правила статусов и этапов
 
 Допустимые значения capabilityStatus:
