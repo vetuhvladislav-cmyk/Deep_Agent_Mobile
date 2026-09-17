@@ -11,6 +11,11 @@ on:
         required: true
         default: "v0.1.0"
         type: string
+      agent_session_id:
+        description: "Correlation ID сессии Agent Core"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -42,12 +47,25 @@ jobs:
       - name: Сборка APK
         run: ./gradlew --no-daemon assembleDebug
 
+      - name: Checksum и provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$apk"
+          sha256sum "$apk" > "$apk.sha256"
+          printf '{"source_sha":"%s","artifact_type":"apk","file":"%s"}\n' \
+            "$GITHUB_SHA" "$(basename "$apk")" \
+            > app/build/outputs/apk/debug/deep-agent-provenance.json
+
       - name: Артефакт
-        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: deep-agent-mobile-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/debug/*.apk.sha256
+            app/build/outputs/apk/debug/deep-agent-provenance.json
           if-no-files-found: error
           retention-days: 3
 
