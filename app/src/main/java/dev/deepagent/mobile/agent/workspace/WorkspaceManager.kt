@@ -16,6 +16,7 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.file.Files
 import java.io.InputStream
 import java.util.UUID
 import java.util.zip.ZipInputStream
@@ -28,6 +29,10 @@ data class WorkspaceSummary(
     val fileCount: Int,
     val totalBytes: Long,
     val importedAt: Long,
+    val fingerprint: String? = null,
+    val repository: String? = null,
+    val ref: String? = null,
+    val commitSha: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -37,6 +42,10 @@ data class WorkspaceSummary(
         .put("file_count", fileCount)
         .put("total_bytes", totalBytes)
         .put("imported_at", importedAt)
+        .put("fingerprint", fingerprint)
+        .put("repository", repository)
+        .put("ref", ref)
+        .put("commit_sha", commitSha)
 
     companion object {
         fun fromJson(value: JSONObject): WorkspaceSummary? {
@@ -51,6 +60,10 @@ data class WorkspaceSummary(
                 fileCount = value.optInt("file_count", 0),
                 totalBytes = value.optLong("total_bytes", 0L),
                 importedAt = value.optLong("imported_at", 0L),
+                fingerprint = value.optString("fingerprint").takeIf { it.isNotBlank() },
+                repository = value.optString("repository").takeIf { it.isNotBlank() },
+                ref = value.optString("ref").takeIf { it.isNotBlank() },
+                commitSha = value.optString("commit_sha").takeIf { it.isNotBlank() },
             )
         }
     }
@@ -112,6 +125,102 @@ class WorkspaceManager(context: Context) {
         if (!entry.id.matches(WORKSPACE_ID_PATTERN)) return@synchronized null
         if (resolveRoot(entry) == null) return@synchronized null
         File(appContext.filesDir, "agent-checkpoints/" + entry.id)
+    }
+
+
+    fun refresh(id: String? = current.value?.id): WorkspaceSummary = synchronized(this) {
+        val entry = entries.firstOrNull { it.id == id }
+            ?: error("Workspace не найден")
+        val root = resolveRoot(entry)
+            ?: error("Workspace недоступен: " + entry.displayName)
+        val identity = WorkspaceIdentity.capture(entry.id, root)
+        val refreshed = entry.copy(
+            fileCount = identity.fileCount,
+            totalBytes = identity.totalBytes,
+            fingerprint = identity.treeSha256,
+        )
+        entries[entries.indexOf(entry)] = refreshed
+        persistIndexLocked()
+        if (selectedId == refreshed.id) {
+            _current.value = refreshed
+        }
+        refreshed
+    }
+
+    fun treePage(
+        id: String? = current.value?.id,
+        prefix: String = "",
+        maxDepth: Int = 6,
+        maxEntries: Int = 300,
+    ): WorkspaceTreePage = synchronized(this) {
+        val entry = entries.firstOrNull { it.id == id }
+            ?: return@synchronized WorkspaceTreePage()
+        val root = resolveRoot(entry)
+            ?: error("Workspace недоступен: " + entry.displayName)
+        val normalizedPrefix = normalizeTreePrefix(prefix)
+        val base = if (normalizedPrefix.isBlank()) {
+            root
+        } else {
+            resolveChild(root, normalizedPrefix).also {
+                require(it.isDirectory) { "Tree prefix не является директорией" }
+            }
+        }
+        val entries = mutableListOf<WorkspaceFileEntry>()
+        var truncated = false
+        val boundedDepth = maxDepth.coerceIn(0, MAX_TREE_DEPTH)
+        val boundedEntries = maxEntries.coerceIn(1, MAX_TREE_ENTRIES)
+
+        fun visit(directory: File, depth: Int) {
+            if (entries.size >= boundedEntries) {
+                truncated = true
+                return
+            }
+            val children = directory.listFiles()
+                ?.sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name })
+                ?: error("Не удалось прочитать каталог workspace")
+            for (child in children) {
+                if (entries.size >= boundedEntries) {
+                    truncated = true
+                    return
+                }
+                if (child.name in IGNORED_TREE_DIRECTORIES) continue
+                require(!Files.isSymbolicLink(child.toPath())) {
+                    "Symbolic link запрещён в workspace tree: " + child.name
+                }
+                val canonical = child.canonicalFile
+                require(
+                    canonical.path == root.canonicalPath ||
+                        canonical.path.startsWith(root.canonicalPath + File.separator),
+                ) {
+                    "Workspace tree entry выходит за границы root"
+                }
+                val relative = root.toPath()
+                    .relativize(child.toPath())
+                    .toString()
+                    .replace(File.separatorChar, '/')
+                entries += WorkspaceFileEntry(
+                    path = relative,
+                    type = if (child.isDirectory) "directory" else "file",
+                    sizeBytes = if (child.isFile) child.length() else 0L,
+                    depth = depth,
+                )
+                if (child.isDirectory && depth < boundedDepth) {
+                    visit(child, depth + 1)
+                }
+            }
+        }
+        visit(base, 0)
+        WorkspaceTreePage(entries = entries, truncated = truncated)
+    }
+
+    private fun normalizeTreePrefix(value: String): String {
+        val normalized = value.replace('\\', '/').trim('/')
+        if (normalized.isBlank()) return ""
+        val parts = normalized.split('/')
+        require(parts.none { it.isBlank() || it == "." || it == ".." }) {
+            "Tree prefix недействителен"
+        }
+        return parts.joinToString("/")
     }
 
     suspend fun importUri(
@@ -456,7 +565,10 @@ class WorkspaceManager(context: Context) {
     }
 
     private companion object {
-        const val INDEX_VERSION = 1
+        const val INDEX_VERSION = 2
+        const val MAX_TREE_DEPTH = 8
+        const val MAX_TREE_ENTRIES = 500
+        val IGNORED_TREE_DIRECTORIES = setOf(".git", ".gradle", "build", "node_modules")
         const val COPY_BUFFER_SIZE = 16 * 1024
         const val MAX_FILES = 20_000
         const val MAX_FILE_BYTES = 16L * 1024L * 1024L

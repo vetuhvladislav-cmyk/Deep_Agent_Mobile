@@ -296,6 +296,20 @@ class ToolRouter(
         }
     }
 
+
+    suspend fun readProjectRules(
+        workspaceId: String? = null,
+    ): ToolExecutionResult {
+        return execute(
+            toolName = TOOL_READ_FILE,
+            argumentsJson = JSONObject()
+                .put("path", "AGENT_RULES.md")
+                .put("max_bytes", MAX_PROJECT_RULE_BYTES)
+                .toString(),
+            workspaceId = workspaceId,
+        )
+    }
+
     suspend fun inspectGit(workspaceId: String? = null): GitOperationResult =
         gitRepository.status(workspaceId)
 
@@ -726,6 +740,7 @@ class ToolRouter(
         const val MAX_ENTRIES_LIMIT = 2_000
         const val DEFAULT_READ_BYTES = 512 * 1024
         const val MAX_READ_BYTES = 2 * 1024 * 1024
+        const val MAX_PROJECT_RULE_BYTES = 16 * 1024
         const val DEFAULT_MAX_RESULTS = 50
         const val MAX_RESULTS_LIMIT = 200
         const val DEFAULT_SEARCH_FILE_BYTES = 512 * 1024

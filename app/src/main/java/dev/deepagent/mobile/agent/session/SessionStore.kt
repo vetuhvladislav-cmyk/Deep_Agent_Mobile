@@ -25,6 +25,7 @@ data class SessionRequestSummary(
     val target: ExecutionTarget,
     val permission: PermissionMode,
     val workspaceId: String?,
+    val workspaceFingerprint: String? = null,
     val repository: String?,
     val workflow: String?,
     val ref: String,
@@ -34,6 +35,7 @@ data class SessionRequestSummary(
         .put("target", target.name)
         .put("permission", permission.name)
         .put("workspace_id", AgentRedactor.text(workspaceId, MAX_IDENTIFIER_CHARS))
+        .put("workspace_fingerprint", AgentRedactor.text(workspaceFingerprint, 80))
         .put("repository", AgentRedactor.text(repository, MAX_IDENTIFIER_CHARS))
         .put("workflow", AgentRedactor.text(workflow, MAX_IDENTIFIER_CHARS))
         .put("ref", AgentRedactor.text(ref, MAX_IDENTIFIER_CHARS))
@@ -56,6 +58,10 @@ data class SessionRequestSummary(
                 workspaceId = AgentRedactor.text(
                     value.optString("workspace_id"),
                     MAX_IDENTIFIER_CHARS,
+                )?.takeIf { it.isNotBlank() },
+                workspaceFingerprint = AgentRedactor.text(
+                    value.optString("workspace_fingerprint"),
+                    80,
                 )?.takeIf { it.isNotBlank() },
                 repository = AgentRedactor.text(
                     value.optString("repository"),

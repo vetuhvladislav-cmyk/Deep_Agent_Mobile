@@ -62,6 +62,7 @@ import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentSessionStatus
 import dev.deepagent.mobile.agent.model.ExecutionTarget
 import dev.deepagent.mobile.agent.model.ImageAnalysisStatus
+import dev.deepagent.mobile.agent.model.WorkspaceCatalogStatus
 import dev.deepagent.mobile.agent.model.PermissionMode
 import dev.deepagent.mobile.agent.model.PatchRecoveryStatus
 import dev.deepagent.mobile.agent.model.PatchRollbackStatus
@@ -136,6 +137,7 @@ fun AgentConsoleScreen(
     val runtimeState by agent.runtime.collectAsState()
     val interactiveState by agent.interactive.collectAsState()
     val imageState by agent.image.collectAsState()
+    val workspaceCatalog by agent.workspaceCatalog.collectAsState()
 
     DisposableEffect(agent) {
         onDispose { agent.close() }
@@ -413,6 +415,143 @@ fun AgentConsoleScreen(
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall,
                         )
+                    }
+                }
+            }
+
+            if (
+                workspaceCatalog.items.isNotEmpty() ||
+                    workspaceCatalog.status != WorkspaceCatalogStatus.IDLE
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = "D2 Workspace Catalog · " +
+                                workspaceCatalog.status.name,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        workspaceCatalog.items.take(12).forEach { candidate ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    text = candidate.displayName + " · " +
+                                        candidate.fileCount + " файлов",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                                OutlinedButton(
+                                    modifier = Modifier.agentControl(
+                                        AgentUiContract.workspace(candidate.id),
+                                        "Выбрать workspace " + candidate.displayName,
+                                    ),
+                                    enabled = candidate.id != workspaceCatalog.selectedId &&
+                                        state.status != AgentSessionStatus.RUNNING &&
+                                        pendingApproval == null,
+                                    onClick = {
+                                        workspaceError = null
+                                        scope.launch {
+                                            runCatching {
+                                                agent.selectWorkspace(candidate.id)
+                                            }.onFailure {
+                                                workspaceError = it.message
+                                                    ?: "Не удалось выбрать workspace"
+                                            }
+                                        }
+                                    },
+                                ) {
+                                    Text(
+                                        if (candidate.id == workspaceCatalog.selectedId) {
+                                            "Выбран"
+                                        } else {
+                                            "Выбрать"
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        OutlinedButton(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.WORKSPACE_REFRESH,
+                                "Обновить workspace catalog",
+                            ),
+                            enabled = state.status != AgentSessionStatus.RUNNING,
+                            onClick = {
+                                workspaceError = null
+                                scope.launch {
+                                    runCatching {
+                                        agent.refreshWorkspace()
+                                    }.onFailure {
+                                        workspaceError = it.message
+                                            ?: "Не удалось обновить workspace catalog"
+                                    }
+                                }
+                            },
+                        ) {
+                            Text("Обновить catalog")
+                        }
+                        workspaceCatalog.fingerprint?.let {
+                            Text(
+                                text = "Fingerprint: " + it.take(16) + "…",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        if (workspaceCatalog.rules.available) {
+                            Text(
+                                text = "AGENT_RULES.md подключён как дополнительное ограничение" +
+                                    if (workspaceCatalog.rules.truncated) {
+                                        " (обрезан)"
+                                    } else {
+                                        ""
+                                    },
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        workspaceCatalog.summary?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        workspaceCatalog.entries.take(80).forEach { entry ->
+                            Text(
+                                text = (if (entry.type == "directory") "▸ " else "· ") +
+                                    entry.path +
+                                    if (entry.type == "file") {
+                                        " · " + formatWorkspaceBytes(entry.sizeBytes)
+                                    } else {
+                                        ""
+                                    },
+                                modifier = Modifier.agentControl(
+                                    AgentUiContract.workspaceEntry(entry.path),
+                                    "Workspace entry " + entry.path,
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        if (workspaceCatalog.entriesTruncated) {
+                            Text(
+                                text = "Tree ограничен; используйте read-only tools для paging.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        workspaceCatalog.errorCode?.let {
+                            Text(
+                                text = "Ошибка catalog: " + it,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
             }

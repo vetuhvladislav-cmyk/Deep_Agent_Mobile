@@ -9,6 +9,8 @@ import dev.deepagent.mobile.agent.model.ActionsOperationState
 import dev.deepagent.mobile.agent.model.ActionsRunRequest
 import dev.deepagent.mobile.agent.model.AgentEvent
 import dev.deepagent.mobile.agent.model.ImageAnalysisState
+import dev.deepagent.mobile.agent.model.WorkspaceCatalogState
+import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
 import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentSessionState
 import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
@@ -40,6 +42,7 @@ interface AgentBridge {
     val runtime: StateFlow<RuntimeState>
     val interactive: StateFlow<InteractiveSessionState>
     val image: StateFlow<ImageAnalysisState>
+    val workspaceCatalog: StateFlow<WorkspaceCatalogState>
 
     suspend fun submit(request: AgentRequest)
 
@@ -54,6 +57,10 @@ interface AgentBridge {
     ): ImageAnalysisState
 
     fun clearImage()
+
+    suspend fun selectWorkspace(workspaceId: String): AgentWorkspaceSnapshot
+
+    suspend fun refreshWorkspace(): WorkspaceCatalogState
 
     fun approvePendingPatch()
 

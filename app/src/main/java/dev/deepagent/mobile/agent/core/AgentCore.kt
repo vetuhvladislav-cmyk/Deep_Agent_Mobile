@@ -9,6 +9,9 @@ import dev.deepagent.mobile.agent.deepseek.DeepSeekStreamEvent
 import dev.deepagent.mobile.agent.deepseek.DeepSeekToolDefinition
 import dev.deepagent.mobile.agent.github.GitHubActionsClient
 import dev.deepagent.mobile.agent.image.ImageAnalysisPipeline
+import dev.deepagent.mobile.agent.model.WorkspaceCatalogState
+import dev.deepagent.mobile.agent.model.WorkspaceCatalogStatus
+import dev.deepagent.mobile.agent.model.WorkspaceRulesMetadata
 import dev.deepagent.mobile.agent.github.GitHubActionsRequest
 import dev.deepagent.mobile.agent.github.GitHubActionsResult
 import dev.deepagent.mobile.agent.github.ArtifactDownloadResult
@@ -152,6 +155,17 @@ class AgentCore(context: Context) : AgentBridge {
     private val _imageState = MutableStateFlow(ImageAnalysisState())
     override val image: StateFlow<ImageAnalysisState> = _imageState.asStateFlow()
 
+    private val _workspaceCatalog = MutableStateFlow(
+        WorkspaceCatalogState(
+            selectedId = workspaceManager.current.value?.id,
+            items = workspaceManager.list().map { it.toAgentSnapshot() },
+            status = WorkspaceCatalogStatus.READY,
+            summary = "Workspace catalog готов",
+        ),
+    )
+    override val workspaceCatalog: StateFlow<WorkspaceCatalogState> =
+        _workspaceCatalog.asStateFlow()
+
     private var activeJob: Job? = null
     private var patchApplyJob: Job? = null
     private var currentSessionId: String? = null
@@ -167,6 +181,7 @@ class AgentCore(context: Context) : AgentBridge {
 
     init {
         restoreLatestSession()
+        coreScope.launch { refreshWorkspace() }
     }
 
     override suspend fun submit(request: AgentRequest) {
@@ -223,7 +238,9 @@ class AgentCore(context: Context) : AgentBridge {
             uri = Uri.parse(normalizedUri),
             displayName = displayName,
         )
-        return summary.toAgentSnapshot().also { _workspace.value = it }
+        val refreshed = workspaceManager.refresh(summary.id)
+        refreshWorkspace()
+        return refreshed.toAgentSnapshot().also { _workspace.value = it }
     }
 
 
@@ -290,6 +307,94 @@ class AgentCore(context: Context) : AgentBridge {
             "Временное изображение удалено пользователем",
         )
         persistAsync()
+    }
+
+
+    override suspend fun selectWorkspace(workspaceId: String): AgentWorkspaceSnapshot {
+        check(!closed) { "AgentCore уже закрыт" }
+        if (
+            _state.value.status == AgentSessionStatus.RUNNING ||
+            _state.value.status == AgentSessionStatus.WAITING_APPROVAL
+        ) {
+            throw IllegalStateException(
+                "Нельзя менять workspace во время активной сессии или approval",
+            )
+        }
+        val selected = workspaceManager.select(workspaceId)
+        val refreshed = workspaceManager.refresh(selected.id)
+        val catalog = refreshWorkspace()
+        append(
+            AgentEventKind.INFO,
+            "Workspace выбран пользователем",
+            "workspace_id=" + selected.id +
+                "; fingerprint=" + (catalog.fingerprint ?: "unknown"),
+        )
+        return refreshed.toAgentSnapshot()
+    }
+
+    override suspend fun refreshWorkspace(): WorkspaceCatalogState {
+        check(!closed) { "AgentCore уже закрыт" }
+        _workspaceCatalog.value = _workspaceCatalog.value.copy(
+            status = WorkspaceCatalogStatus.LOADING,
+            summary = "Workspace catalog обновляется",
+            errorCode = null,
+            updatedAt = System.currentTimeMillis(),
+        )
+        return try {
+            val selectedId = workspaceManager.current.value?.id
+            val selected = selectedId?.let { workspaceManager.refresh(it) }
+            val items = workspaceManager.list().map { it.toAgentSnapshot() }
+            val tree = selectedId?.let {
+                workspaceManager.treePage(
+                    id = it,
+                    maxDepth = 6,
+                    maxEntries = 300,
+                )
+            } ?: dev.deepagent.mobile.agent.model.WorkspaceTreePage()
+            val rulesResult = selectedId?.let {
+                toolRouter.readProjectRules(it)
+            }
+            val rules = if (rulesResult?.ok == true) {
+                WorkspaceRulesMetadata(
+                    available = true,
+                    sizeBytes = rulesResult.content.toByteArray(Charsets.UTF_8).size,
+                    truncated = rulesResult.truncated,
+                )
+            } else {
+                WorkspaceRulesMetadata()
+            }
+            val next = WorkspaceCatalogState(
+                selectedId = selectedId,
+                items = items,
+                entries = tree.entries,
+                entriesTruncated = tree.truncated,
+                fingerprint = selected?.fingerprint,
+                rules = rules,
+                status = WorkspaceCatalogStatus.READY,
+                summary = if (selectedId == null) {
+                    "Workspace не выбран"
+                } else {
+                    "Workspace catalog готов"
+                },
+                errorCode = null,
+                updatedAt = System.currentTimeMillis(),
+            )
+            _workspace.value = selected?.toAgentSnapshot()
+            _workspaceCatalog.value = next
+            next
+        } catch (error: Exception) {
+            val failed = _workspaceCatalog.value.copy(
+                status = WorkspaceCatalogStatus.FAILED,
+                summary = AgentRedactor.text(
+                    error.message ?: "Не удалось обновить workspace catalog",
+                    MAX_ERROR_CHARS,
+                ),
+                errorCode = "WORKSPACE_CATALOG_FAILED",
+                updatedAt = System.currentTimeMillis(),
+            )
+            _workspaceCatalog.value = failed
+            failed
+        }
     }
 
     override suspend fun inspectGit(): GitOperationResult {
@@ -1061,6 +1166,9 @@ class AgentCore(context: Context) : AgentBridge {
             target = target,
             permission = request.permission,
             workspaceId = workspaceId,
+            workspaceFingerprint = workspaceId?.let {
+                workspaceManager.captureIdentity(it)?.treeSha256
+            },
             repository = request.repository,
             workflow = request.workflow,
             ref = request.ref,
@@ -1246,6 +1354,23 @@ class AgentCore(context: Context) : AgentBridge {
             request.image?.let { DeepSeekImage(it.dataUrl, it.detail) }
         }
 
+
+        val projectRulesResult = request.workspaceId?.let {
+            toolRouter.readProjectRules(it)
+        }
+        val projectRules = projectRulesResult
+            ?.takeIf { it.ok }
+            ?.content
+            ?.take(16 * 1024)
+        if (projectRulesResult?.ok == true) {
+            append(
+                AgentEventKind.INFO,
+                "AGENT_RULES.md загружен как дополнительное ограничение",
+                "bytes=" + projectRulesResult.content.toByteArray(Charsets.UTF_8).size +
+                    "; truncated=" + projectRulesResult.truncated,
+            )
+        }
+
         append(
             AgentEventKind.SESSION,
             "DeepSeek " + request.model + " streaming запущен",
@@ -1262,6 +1387,7 @@ class AgentCore(context: Context) : AgentBridge {
                     model = request.model,
                     task = request.task,
                     image = visualImage,
+                    projectRules = projectRules,
                     inputItems = inputItems,
                     tools = definitions.map { it.toDeepSeekDefinition() },
                 ),
@@ -1884,6 +2010,10 @@ class AgentCore(context: Context) : AgentBridge {
             fileCount = fileCount,
             totalBytes = totalBytes,
             importedAt = importedAt,
+            fingerprint = fingerprint,
+            repository = repository,
+            ref = ref,
+            commitSha = commitSha,
         )
     }
 

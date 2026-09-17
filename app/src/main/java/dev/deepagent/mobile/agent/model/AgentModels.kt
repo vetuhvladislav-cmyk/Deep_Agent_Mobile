@@ -99,6 +99,10 @@ data class AgentWorkspaceSnapshot(
     val fileCount: Int,
     val totalBytes: Long,
     val importedAt: Long,
+    val fingerprint: String? = null,
+    val repository: String? = null,
+    val ref: String? = null,
+    val commitSha: String? = null,
 )
 
 data class PendingPatchApproval(
@@ -150,6 +154,91 @@ data class ImageAnalysisState(
         .put("width", width)
         .put("height", height)
         .put("checksum", AgentRedactor.text(checksum, 80))
+        .put("summary", AgentRedactor.text(summary, 2_000))
+        .put("error_code", AgentRedactor.text(errorCode, 96))
+        .put("updated_at", updatedAt)
+}
+
+
+
+enum class WorkspaceCatalogStatus {
+    IDLE,
+    LOADING,
+    READY,
+    FAILED,
+}
+
+data class WorkspaceFileEntry(
+    val path: String,
+    val type: String,
+    val sizeBytes: Long = 0L,
+    val depth: Int = 0,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("path", AgentRedactor.text(path, 512))
+        .put("type", AgentRedactor.text(type, 32))
+        .put("size_bytes", sizeBytes)
+        .put("depth", depth)
+}
+
+data class WorkspaceTreePage(
+    val entries: List<WorkspaceFileEntry> = emptyList(),
+    val truncated: Boolean = false,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put(
+            "entries",
+            JSONArray().apply {
+                entries.take(300).forEach { put(it.toJson()) }
+            },
+        )
+        .put("truncated", truncated)
+}
+
+data class WorkspaceRulesMetadata(
+    val path: String = "AGENT_RULES.md",
+    val available: Boolean = false,
+    val sizeBytes: Int = 0,
+    val truncated: Boolean = false,
+)
+
+data class WorkspaceCatalogState(
+    val selectedId: String? = null,
+    val items: List<AgentWorkspaceSnapshot> = emptyList(),
+    val entries: List<WorkspaceFileEntry> = emptyList(),
+    val entriesTruncated: Boolean = false,
+    val fingerprint: String? = null,
+    val rules: WorkspaceRulesMetadata = WorkspaceRulesMetadata(),
+    val status: WorkspaceCatalogStatus = WorkspaceCatalogStatus.IDLE,
+    val summary: String? = null,
+    val errorCode: String? = null,
+    val updatedAt: Long = System.currentTimeMillis(),
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("selected_id", AgentRedactor.text(selectedId, 160))
+        .put(
+            "items",
+            JSONArray().apply {
+                items.take(32).forEach { item ->
+                    put(
+                        JSONObject()
+                            .put("id", AgentRedactor.text(item.id, 160))
+                            .put("display_name", AgentRedactor.text(item.displayName, 200))
+                            .put("source_type", AgentRedactor.text(item.sourceType, 64))
+                            .put("file_count", item.fileCount)
+                            .put("total_bytes", item.totalBytes)
+                            .put("fingerprint", AgentRedactor.text(item.fingerprint, 80)),
+                    )
+                }
+            },
+        )
+        .put("tree", WorkspaceTreePage(entries, entriesTruncated).toJson())
+        .put("fingerprint", AgentRedactor.text(fingerprint, 80))
+        .put("rules_path", AgentRedactor.text(rules.path, 160))
+        .put("rules_available", rules.available)
+        .put("rules_bytes", rules.sizeBytes)
+        .put("rules_truncated", rules.truncated)
+        .put("status", status.name)
         .put("summary", AgentRedactor.text(summary, 2_000))
         .put("error_code", AgentRedactor.text(errorCode, 96))
         .put("updated_at", updatedAt)
