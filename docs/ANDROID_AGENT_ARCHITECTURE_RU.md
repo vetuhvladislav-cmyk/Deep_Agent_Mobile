@@ -170,7 +170,7 @@ Live stream может содержать дополнительные диаг�
 
 `LlmProvider` — явный контракт между Agent Core и model provider. `ProviderRegistry` разрешает только заранее зарегистрированные IDs; в текущем APK зарегистрирован `deepseek.responses`. Это не означает поддержку произвольных OpenAI-compatible endpoint. Для DeepSeek Core и transport client принимают только HTTPS host `api.deepseek.com` с default/443 port, без credentials/query/fragment; HTTP redirects отключены, чтобы Authorization не передавался на другой host.
 
-Future providers must provide a separate contract, credential policy, timeout/cancellation и host/redirect policy before registration.
+Новый provider допускается к регистрации только после отдельного контракта, credential policy, timeout/cancellation и host/redirect policy.
 
 ### 3.6 SessionRecord
 
