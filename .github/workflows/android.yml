@@ -32,6 +32,8 @@ jobs:
     name: Сборка Deep Agent debug APK
     timeout-minutes: 20
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -73,28 +75,8 @@ jobs:
             "$GITHUB_SHA" "$(basename "$apk")" \
             > app/build/outputs/apk/debug/deep-agent-provenance.json
 
-      - name: Артефакт
-        uses: actions/upload-artifact@v4
-        with:
-          name: deep-agent-mobile-debug-apk
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/debug/*.apk.sha256
-            app/build/outputs/apk/debug/deep-agent-provenance.json
-          if-no-files-found: error
-          retention-days: 3
-
-  release:
-    permissions:
-      actions: read
-      contents: write
-    timeout-minutes: 5
-    name: Публикация Deep Agent APK
-    needs: build
-    if: inputs.publish_release
-    runs-on: ubuntu-latest
-    steps:
       - name: Проверить параметры релиза
+        if: ${{ inputs.publish_release }}
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -112,34 +94,30 @@ jobs:
             }
           fi
 
-      - name: Загрузить проверенный build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: deep-agent-mobile-debug-apk
-          path: dist/input
-
       - name: Подготовить release files
+        if: ${{ inputs.publish_release }}
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          apk="$(find dist/input -type f -name '*.apk' -print -quit)"
+          apk="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
           test -n "$apk"
           test -f "$apk.sha256"
-          provenance="$(find dist/input -type f -name 'deep-agent-provenance.json' -print -quit)"
-          test -n "$provenance"
+          test -f app/build/outputs/apk/debug/deep-agent-provenance.json
           mkdir -p dist
           cp "$apk" "dist/deep-agent-mobile-${RELEASE_TAG}-test.apk"
           cp "$apk.sha256" "dist/deep-agent-mobile-${RELEASE_TAG}-test.apk.sha256"
-          cp "$provenance" "dist/deep-agent-provenance.json"
+          cp app/build/outputs/apk/debug/deep-agent-provenance.json dist/deep-agent-provenance.json
 
       - name: Публикация релиза
+        if: ${{ inputs.publish_release }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag }}
           files: dist/*
           generate_release_notes: true
           body: |
-            Публикуется тот же APK и sidecar provenance, которые прошли build job.
+            Публикуется APK и sidecar provenance из того же build job.
+            Модульные тесты и assembleDebug завершены до публикации.
             Сборка отладочная и предназначена для тестирования на Android.
