@@ -100,6 +100,12 @@ class DeepSeekResponsesClient {
         require(url.protocol.equals("https", ignoreCase = true)) {
             "DeepSeek endpoint должен использовать HTTPS"
         }
+        require(url.host.isNotBlank() && url.userInfo == null) {
+            "DeepSeek endpoint не должен содержать credentials"
+        }
+        require(url.query == null && url.ref == null) {
+            "DeepSeek base URL не должен содержать query или fragment"
+        }
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
