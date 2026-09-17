@@ -136,8 +136,7 @@ class AgentCore(context: Context) : AgentBridge {
     private val journalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val submitMutex = Mutex()
     private val journalMutex = Mutex()
-    private val gitWriteMutex = Mutex()
-    private val actionsRunMutex = Mutex()
+    private val externalMutationMutex = Mutex()
     private val gitOperationCache = LinkedHashMap<String, GitOperationResult>()
     private val actionsOperationCache = LinkedHashMap<String, ActionsOperationState>()
     private var lastGitResult: GitOperationResult? = null
@@ -1012,7 +1011,7 @@ class AgentCore(context: Context) : AgentBridge {
     override suspend fun runActions(
         request: ActionsRunRequest,
     ): ActionsOperationState {
-        actionsRunMutex.lock()
+        externalMutationMutex.lock()
         try {
             check(!closed) { "AgentCore уже закрыт" }
             val boundRequest = request.copy(
@@ -1067,7 +1066,7 @@ class AgentCore(context: Context) : AgentBridge {
             }
             return result
         } finally {
-            actionsRunMutex.unlock()
+            externalMutationMutex.unlock()
         }
     }
 
@@ -2513,7 +2512,7 @@ class AgentCore(context: Context) : AgentBridge {
         description: String,
         action: suspend () -> GitOperationResult,
     ): GitOperationResult {
-        gitWriteMutex.lock()
+        externalMutationMutex.lock()
         try {
             check(!closed) { "AgentCore уже закрыт" }
             val cached = cachedGitResult(operationId)
@@ -2639,7 +2638,7 @@ class AgentCore(context: Context) : AgentBridge {
         }
         return boundResult
         } finally {
-            gitWriteMutex.unlock()
+            externalMutationMutex.unlock()
         }
     }
 
