@@ -4,6 +4,7 @@ import dev.deepagent.mobile.agent.model.RuntimeState
 import dev.deepagent.mobile.agent.model.RuntimeStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -130,6 +131,14 @@ class RuntimeSupervisor(
 
     suspend fun start(sessionId: String?): RuntimeState = withContext(Dispatchers.IO) {
         mutex.withLock {
+            if (closeRequested) {
+                return@withLock RuntimeState(
+                    status = RuntimeStatus.FAILED,
+                    sessionId = sessionId,
+                    summary = "RuntimeSupervisor уже закрыт",
+                    errorCode = "RUNTIME_CLOSED",
+                ).also { _state.value = it }
+            }
             val manifest = RuntimeManifest.loopback()
             val current = _state.value
             if (
@@ -220,19 +229,31 @@ class RuntimeSupervisor(
                     errorCode = "RUNTIME_START_TIMEOUT",
                 )
             } catch (cancelled: CancellationException) {
-                runCatching {
+                val stopped = runCatching {
                     withContext(NonCancellable) {
                         withTimeout(STOP_TIMEOUT_MS) { provider.stop() }
                     }
+                }.getOrNull()
+                if (stopped?.ok == true) {
+                    publish(
+                        RuntimeState(
+                            status = RuntimeStatus.EMPTY,
+                            sessionId = sessionId,
+                            summary = "Запуск runtime отменён после подтверждённой остановки",
+                            errorCode = "RUNTIME_START_CANCELLED",
+                        ),
+                    )
+                } else {
+                    publish(
+                        RuntimeState(
+                            status = RuntimeStatus.FAILED,
+                            sessionId = sessionId,
+                            summary = "Запуск runtime отменён, но stop не подтверждён",
+                            errorCode = stopped?.errorCode
+                                ?: "RUNTIME_START_CANCEL_STOP_UNKNOWN",
+                        ),
+                    )
                 }
-                publish(
-                    RuntimeState(
-                        status = RuntimeStatus.EMPTY,
-                        sessionId = sessionId,
-                        summary = "Запуск runtime отменён; временное состояние удалено",
-                        errorCode = "RUNTIME_START_CANCELLED",
-                    ),
-                )
                 throw cancelled
             } catch (error: Exception) {
                 rollback(
@@ -351,35 +372,40 @@ class RuntimeSupervisor(
         if (closeRequested) return
         closeRequested = true
         closeScope.launch {
-            mutex.withLock {
-                if (_state.value.status == RuntimeStatus.EMPTY) return@withLock
-                publish(
-                    _state.value.copy(
-                        status = RuntimeStatus.STOPPING,
-                        summary = "Закрытие runtime supervisor",
-                        errorCode = null,
-                    ),
-                )
-                val stopped = runCatching {
-                    withTimeout(STOP_TIMEOUT_MS) { provider.stop() }
-                }.getOrNull()
-                if (stopped?.ok == true) {
-                    publish(
-                        RuntimeState(
-                            status = RuntimeStatus.EMPTY,
-                            sessionId = _state.value.sessionId,
-                            summary = "Runtime supervisor закрыт после подтверждённой остановки",
-                        ),
-                    )
-                } else {
+            try {
+                mutex.withLock {
+                    if (_state.value.status == RuntimeStatus.EMPTY) return@withLock
                     publish(
                         _state.value.copy(
-                            status = RuntimeStatus.FAILED,
-                            summary = "Runtime stop при закрытии не подтверждён",
-                            errorCode = "RUNTIME_CLOSE_UNKNOWN",
+                            status = RuntimeStatus.STOPPING,
+                            summary = "Закрытие runtime supervisor",
+                            errorCode = null,
                         ),
                     )
+                    val stopped = runCatching {
+                        withTimeout(STOP_TIMEOUT_MS) { provider.stop() }
+                    }.getOrNull()
+                    if (stopped?.ok == true) {
+                        publish(
+                            RuntimeState(
+                                status = RuntimeStatus.EMPTY,
+                                sessionId = _state.value.sessionId,
+                                summary = "Runtime supervisor закрыт после подтверждённой остановки",
+                            ),
+                        )
+                    } else {
+                        publish(
+                            _state.value.copy(
+                                status = RuntimeStatus.FAILED,
+                                summary = "Runtime stop при закрытии не подтверждён",
+                                errorCode = stopped?.errorCode
+                                    ?: "RUNTIME_CLOSE_UNKNOWN",
+                            ),
+                        )
+                    }
                 }
+            } finally {
+                closeScope.cancel()
             }
         }
     }
