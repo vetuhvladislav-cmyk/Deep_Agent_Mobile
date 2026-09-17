@@ -2638,6 +2638,7 @@ class AgentCore(context: Context) : AgentBridge {
         message: String,
         detail: String? = null,
         invocationId: String? = null,
+        payload: String? = null,
     ) {
         eventSequence += 1
         val next = _events.value + AgentEvent(
@@ -2650,6 +2651,11 @@ class AgentCore(context: Context) : AgentBridge {
             sequence = eventSequence,
             workspaceId = _state.value.workspaceId,
             invocationId = invocationId,
+            schemaVersion = AgentEvent.SCHEMA_VERSION,
+            payload = AgentRedactor.text(
+                payload,
+                AgentEvent.MAX_PAYLOAD_CHARS,
+            )?.takeIf { it.isNotBlank() },
         )
         _events.value = next.takeLast(MAX_EVENTS)
         _state.value = _state.value.copy(eventCursor = eventSequence)
