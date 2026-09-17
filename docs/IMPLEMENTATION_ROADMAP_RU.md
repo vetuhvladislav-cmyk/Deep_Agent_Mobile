@@ -70,7 +70,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Cancellation / timeout:** отмена до commit оставляет исходный snapshot без применения; статические операции имеют bounded timeout и не запускают build/test.
 - **Recovery rule:** после interruption повторно считать repository fingerprint; неизвестную запись не повторять без нового diff и approval.
 - **Exit criterion:** запрещённые Harness/mobile-adapter runtime-зависимости и лишние документационные файлы удалены из целевого scope; четыре Markdown-файла проходят ссылочную и структурную проверку; code/build/test gate остаётся отдельным.
-- **Результат приёмки:** на commit `35bfd006` в целевом scope остались ровно четыре канонических Markdown-файла; проверены 9 относительных ссылок, отсутствующих целей нет; запрещённые `harness`/`mobile-adapter` runtime-пути отсутствуют. `testDebugUnitTest` и `assembleDebug` прошли в GitHub Actions run #6; APK опубликован в Release `v0.1.1`.
+- **Историческая приёмка baseline:** на commit `35bfd006` в целевом scope остались ровно четыре канонических Markdown-файла; проверены 9 относительных ссылок, отсутствующих целей нет; запрещённые `harness`/`mobile-adapter` runtime-пути отсутствуют. `testDebugUnitTest` и `assembleDebug` прошли в GitHub Actions run #6; APK опубликован в Release `v0.1.1`. Это не результат текущей ветки.
 
 ### P0-A — Workspace и read-only ToolRouter
 
