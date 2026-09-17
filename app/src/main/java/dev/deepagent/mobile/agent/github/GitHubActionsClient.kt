@@ -26,6 +26,7 @@ import java.net.URLEncoder
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.zip.ZipInputStream
+import kotlin.math.abs
 
 data class GitHubActionsRequest(
     val token: String,
@@ -113,16 +114,42 @@ class GitHubActionsClient {
             workflow = request.workflow,
             ref = request.ref,
         )
-        if (validation != null) {
+        val expectedCommitSha = request.expectedCommitSha?.trim()
+        val sourceValidation = when {
+            validation != null -> validation
+            expectedCommitSha.isNullOrBlank() ||
+                !SHA_PATTERN.matches(expectedCommitSha) ->
+                "Для Actions нужен ожидаемый commit SHA"
+            else -> null
+        }
+        if (sourceValidation != null) {
             val failed = baseState.copy(
                 status = ActionsOperationStatus.FAILED,
-                summary = validation,
-                errorCode = "ACTIONS_INVALID_ARGUMENTS",
+                summary = sourceValidation,
+                errorCode = if (validation != null) {
+                    "ACTIONS_INVALID_ARGUMENTS"
+                } else {
+                    "ACTIONS_SOURCE_SHA_REQUIRED"
+                },
             )
             onState(failed)
             return@withContext failed
         }
 
+        val expectedSessionId = request.sessionId?.trim()
+            ?.takeIf { it.isNotBlank() }
+        if (
+            expectedSessionId != null &&
+            !SESSION_ID_PATTERN.matches(expectedSessionId)
+        ) {
+            val failed = baseState.copy(
+                status = ActionsOperationStatus.FAILED,
+                summary = "Session correlation id имеет недопустимый формат",
+                errorCode = "ACTIONS_SESSION_ID_INVALID",
+            )
+            onState(failed)
+            return@withContext failed
+        }
         var current = baseState
         fun publish(next: ActionsOperationState): ActionsOperationState {
             current = next.copy(updatedAt = System.currentTimeMillis())
@@ -249,9 +276,10 @@ class GitHubActionsClient {
                 request.repository.trim(),
                 run.id,
             )
-            val sourceMatches = request.expectedCommitSha?.let { expected ->
-                run.headSha.equals(expected.trim(), ignoreCase = true)
-            } ?: true
+            val sourceMatches = run.headSha.equals(
+                expectedCommitSha,
+                ignoreCase = true,
+            )
             val hasAndroidArtifact = artifacts.any {
                 it.name.lowercase().endsWith(".apk") ||
                     it.name.lowercase().endsWith(".aab") ||
@@ -424,13 +452,14 @@ class GitHubActionsClient {
             val candidate = parseRuns(response.body.toUtf8())
                 .filter { run ->
                     run.createdAt >= dispatchedAt - DISCOVERY_SKEW_MS &&
-                        (request.expectedCommitSha == null ||
-                            run.headSha.equals(
-                                request.expectedCommitSha.trim(),
-                                ignoreCase = true,
-                            ))
+                        run.headSha.equals(expectedCommitSha, ignoreCase = true) &&
+                        (
+                            expectedSessionId == null ||
+                                run.displayName.isBlank() ||
+                                run.displayName.contains(expectedSessionId)
+                        )
                 }
-                .maxByOrNull { it.id }
+                .minByOrNull { abs(it.createdAt - dispatchedAt) }
             if (candidate != null) return candidate
             delay(
                 request.pollIntervalMs.coerceIn(
@@ -532,6 +561,7 @@ class GitHubActionsClient {
         var payload: Pair<String, ByteArray>? = null
         val checksums = mutableMapOf<String, String>()
         var provenanceSha: String? = null
+        val archivePaths = mutableSetOf<String>()
         var entryCount = 0
         var totalEntryBytes = 0L
         ZipInputStream(ByteArrayInputStream(archive)).use { zip ->
@@ -544,7 +574,13 @@ class GitHubActionsClient {
                         "ARTIFACT_ENTRY_COUNT_LIMIT",
                     )
                 }
-                requireSafeArchivePath(entry.name)
+                val archivePath = requireSafeArchivePath(entry.name)
+                if (!archivePaths.add(archivePath)) {
+                    throw ArtifactVerificationException(
+                        "Artifact содержит повторяющийся ZIP path",
+                        "ARTIFACT_DUPLICATE_PATH",
+                    )
+                }
                 if (entry.isDirectory) {
                     zip.closeEntry()
                     continue
@@ -821,6 +857,11 @@ class GitHubActionsClient {
             conclusion = value.optString("conclusion").trim()
                 .takeIf { it.isNotBlank() && it != "null" },
             headSha = value.optString("head_sha").trim(),
+            displayName = listOf(
+                value.optString("run_name"),
+                value.optString("display_title"),
+                value.optString("name"),
+            ).firstOrNull { it.isNotBlank() && it != "null" }.orEmpty(),
             createdAt = parseTime(value.optString("created_at")),
             isCompleted = status == "completed",
         )
@@ -994,6 +1035,7 @@ class GitHubActionsClient {
         val status: String,
         val conclusion: String?,
         val headSha: String,
+        val displayName: String,
         val createdAt: Long,
         val isCompleted: Boolean,
     )
@@ -1070,7 +1112,7 @@ class GitHubActionsClient {
         return output.toByteArray()
     }
 
-    private fun requireSafeArchivePath(path: String) {
+    private fun requireSafeArchivePath(path: String): String {
         val normalized = path.trimEnd('/')
         if (
             normalized.isBlank() ||
@@ -1083,6 +1125,7 @@ class GitHubActionsClient {
                 "ARTIFACT_PATH_INVALID",
             )
         }
+        return normalized
     }
 
     private fun sha256(bytes: ByteArray): String =
@@ -1123,6 +1166,7 @@ class GitHubActionsClient {
         const val MAX_ARTIFACT_NAME_CHARS = 200
         const val MAX_ERROR_CHARS = 4_000
         const val MAX_REDIRECTS = 4
+        private val SESSION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
         private val REPOSITORY_PART_PATTERN = Regex("[A-Za-z0-9_.-]{1,100}")
         private val WORKFLOW_PART_PATTERN = Regex("[A-Za-z0-9._-]{1,100}")
         private val SHA_PATTERN = Regex("[A-Fa-f0-9]{40,64}")
