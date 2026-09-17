@@ -258,3 +258,15 @@ D1–D3 являются утверждёнными post-core этапами. О
 - **Результат текущей реализации:** добавлен memory-only EphemeralCredentialVault с bounded TTL и wipe при очистке/закрытии, AgentBridge credential state без значений secrets, санитизация legacy request fields и UI-кнопка очистки; SessionStore получил retention limit (до 12 session-файлов/32 MiB) и SAF export redacted journal; PR flow перед внешним вызовом повторно проверяет Git HEAD, требует sessionId и expected head SHA, сверяет SHA ответа и сохраняет только provenance metadata.
 - **Ограничение текущей реализации:** D3 остаётся planned: Android/provider runtime-проверка, реальный export/recovery сценарий, Keystore decision (baseline остаётся memory-only), Actions/PR integration tests и server-side idempotency требуют отдельного acceptance gate; merge/release и автоматический PR по Actions не добавлялись.
 
+
+
+## Исправление импорта и пресеты подключения
+
+- Исправлен импорт ZIP: создание существующей родительской директории теперь не считается ошибкой.
+- Исправлен импорт папки через Android Storage Access Framework: tree URI читается через `DocumentFile`, а не трактуется как обычный файл.
+- Для выбранных URI сохраняется временное разрешение чтения, а содержимое копируется в app-private workspace.
+- Исправлен запуск локального runtime: `LOCAL_WRITE` передаётся из выбранного UI-разрешения до создания сессии.
+- Добавлен `AgentPresetStore`: DeepSeek URL/model и GitHub repository/workflow/ref сохраняются и импортируются единым JSON-пресетом.
+- API-ключ DeepSeek и токен GitHub в пресете не записываются открытым текстом: используется AES-GCM с ключом Android Keystore. При переносе пресета на другое устройство ключи требуют повторного ввода.
+- Добавлены действия UI: «Сохранить», «Загрузить», «Экспорт», «Импорт» пресета.
+- Базовые значения проекта: `vetuhvladislav-cmyk/Deep_Agent_Mobile`, `android.yml`, `codex/p1-a-controlled-write-git-pr`, `deepseek-flash`.
