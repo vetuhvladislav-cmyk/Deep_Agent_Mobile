@@ -229,6 +229,9 @@ D1–D3 являются утверждёнными post-core этапами. О
 - **Recovery rule:** stale/foreign target или fingerprint mismatch останавливает операцию; восстановление не повторяет checkout, write или Git action автоматически.
 - **Exit criterion:** пользователь может повторно открыть ранее импортированный workspace, увидеть подтверждённую provenance, безопасно просмотреть большой tree, применить project rules без permission escalation и восстановить связь результата с session/artifact/build.
 
+- **Результат текущей реализации:** Workspace Manager расширен повторно открываемым app-private catalog: сохраняются стабильные workspaceId и optional repository/ref/commitSha, текущий fingerprint refresh-ится перед публикацией, добавлены bounded tree pages с canonical path/symlink guard, выбор workspace через AgentBridge и чтение корневого AGENT_RULES.md через allowlisted read_file; rules передаются модели только как redacted дополнительные ограничения и не меняют permission policy.
+- **Ограничение текущей реализации:** D2 остаётся planned: immutable snapshot history, GitHub snapshot/checkout provider, полноценный lazy paging для очень больших workspace и Android recovery/runtime-проверка требуют отдельного закрытия acceptance gate.
+
 ### D3 — Токены, журнал и Pull Request
 
 - **Статус:** capabilityStatus: planned

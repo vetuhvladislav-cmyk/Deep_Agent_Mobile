@@ -1361,7 +1361,7 @@ class AgentCore(context: Context) : AgentBridge {
         val projectRules = projectRulesResult
             ?.takeIf { it.ok }
             ?.content
-            ?.take(16 * 1024)
+            ?.let { AgentRedactor.text(it, 16 * 1024) }
         if (projectRulesResult?.ok == true) {
             append(
                 AgentEventKind.INFO,

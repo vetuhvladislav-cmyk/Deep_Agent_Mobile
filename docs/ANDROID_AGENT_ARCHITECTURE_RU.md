@@ -67,6 +67,12 @@ Image Pipeline является внутренним владельцем D1 и 
 
 Перед внешней передачей UI показывает user-visible disclosure. Состояние attachment, checksum, размеры, transfer decision и result state публикуются как redacted metadata через AgentBridge. Отмена, недоступный asset или ошибка provider переводят visual state в FAILED/UNKNOWN и не запускают скрытый retry. Отдельный raster-generation provider, OCR, multi-image и screenshot diff пока не входят в закрытый baseline D1.
 
+### 2.3 Workspace Catalog и project rules
+
+Workspace Catalog остаётся частью Workspace Manager и публикуется только через AgentBridge. Он хранит app-private список workspace с устойчивыми workspaceId, последним подтверждённым fingerprint и optional repository/ref/commitSha; выбранный workspace получает bounded tree page без raw provider response.
+
+Tree paging использует canonical path boundary, лимит глубины/элементов и fail-closed обработку symbolic links. Root AGENT_RULES.md читается только allowlisted read_file, ограничивается по размеру и передаётся DeepSeek как дополнительные недоверенные ограничения. Rules не могут повысить permission, изменить global policy, выбрать другой workspace или заменить user approval. Catalog не создаёт отдельный TaskTracker/state owner.
+
 ## 3. Контракты данных
 
 ### 3.1 WorkspaceIdentity
