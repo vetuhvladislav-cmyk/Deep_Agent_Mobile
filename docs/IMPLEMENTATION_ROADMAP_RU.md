@@ -18,7 +18,7 @@
 - Actions связываются с `sessionId`, ref и ожидаемым commit SHA; artifact дополнительно проверяет run/source provenance, checksum и тип.
 - Session/workspace/preset persistence использует временный файл, flush/sync и atomic replacement.
 
-Текущий проход подтвердил unit-тесты и debug APK в [GitHub Actions run #20](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35264066884) на commit `6176a68`. Android instrumentation, реальный runtime и device lifecycle acceptance ещё не запускались, поэтому соответствующие exit criteria остаются открытыми.
+Текущий проход подтвердил unit-тесты, компиляцию instrumentation APK и debug APK в [GitHub Actions run #22](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35265831202) на commit `3d97077`. Android device execution, реальный runtime и device lifecycle acceptance ещё не запускались, поэтому соответствующие exit criteria остаются открытыми.
 
 ## 1. Правила статусов и этапов
 
@@ -83,7 +83,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Redacted audit trail:** invocation ID, tool name, workspace ID, input summary, output size, truncation, fingerprint и redacted error.
 - **Cancellation / timeout:** отдельный deadline для каждого tool; Git timeout и cancellation возвращают нормализованный результат; generic shell не добавляется.
 - **Recovery rule:** running без подтверждённого результата переводится в UNKNOWN; автоматический replay запрещён, выполняется re-check.
-- **Результат текущей реализации:** пять allowlisted read-only entry points и fail-closed guards присутствуют в едином ToolRouter; добавлены JVM-тесты на workspace path policy, fingerprint, пять read-only операций, no-git, unknown arguments и строгие bounded schemas. `testDebugUnitTest` и `assembleDebug` прошли в [run #20](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35264066884).
+- **Результат текущей реализации:** пять allowlisted read-only entry points и fail-closed guards присутствуют в едином ToolRouter; добавлены JVM-тесты на workspace path policy, fingerprint, пять read-only операций, no-git, unknown arguments и строгие bounded schemas. `testDebugUnitTest` и `assembleDebug` прошли в [run #22](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35265831202).
 - **Acceptance gate:** capabilityStatus остаётся `planned` до Android/runtime-проверки пяти tools на реально импортированном workspace, включая path/symlink escape, sensitive files, overflow, no-git и неизменность workspace; instrumentation и SAF import fixture ещё не запускались.
 - **Exit criterion:** все пять tools работают через единый router contract; path escape, symlink escape, sensitive files, output overflow и отсутствие git обрабатываются fail-closed; workspace не изменяется.
 
@@ -99,7 +99,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Cancellation / timeout:** journal write атомарен; recovery имеет bounded timeout и сообщает неполное состояние вместо зависания.
 - **Recovery rule:** завершённые side effects не повторяются; незавершённые операции получают UNKNOWN и требуют re-check.
 - **Результат текущей реализации:** кодовая часть P0-B внесена: versioned bounded journal v5 с чтением версий 1–5, per-session JSON snapshots, атомарная запись session/latest, сохранение events/invocations/decisions, redaction и recovery без автоматического replay; статическая согласованность изменённых файлов проверена.
-- **Validation:** добавлены JVM-тесты на versioned atomic journal snapshot, redaction, latest pointer и отбрасывание неподдерживаемых recovery inputs; [run #20](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35264066884) прошёл. Android-проверка background/process death/rotation и отсутствие replay на device ещё не выполнялись.
+- **Validation:** добавлены JVM-тесты на versioned atomic journal snapshot, redaction, latest pointer и отбрасывание неподдерживаемых recovery inputs; [run #22](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35265831202) прошёл. Android-проверка background/process death/rotation и отсутствие replay на device ещё не выполнялись.
 - **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки восстановления после background/process death/rotation и подтверждения отсутствия replay; JVM coverage не заменяет instrumentation gate.
 - **Exit criterion:** сессия восстанавливается без повторения завершённых tool/build/write операций, сохраняет correlation IDs и объясняет неизвестное состояние.
 
@@ -115,8 +115,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Cancellation / timeout:** cancel доступен из UI; network/provider timeout переводится в понятное состояние без скрытого retry.
 - **Recovery rule:** после rotation/background UI подписывается на AgentBridge, а не читает journal; при UNKNOWN предлагает re-check.
 - **Результат текущей реализации:** Agent Console подключён только к AgentBridge, workspace import и patch approval выведены из внутренних типов, добавлены provider/session/recovery summary, сохранение несекретной формы, восстановление image URI и единый scrollable mobile layout; статическая проверка пройдена.
-- **Validation:** unit-тесты и debug APK проверены в [run #20](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35264066884); Android UI instrumentation для readability, rotation/background, keyboard/insets и recovery ещё не выполнялась.
-- **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки читаемости состояния, recovery affordances, rotation/background и keyboard/insets; в репозитории пока нет `src/test` и `src/androidTest`, поэтому поведенческое покрытие не подтверждено.
+- **Validation:** unit-тесты, компиляция `assembleDebugAndroidTest` и debug APK проверены в [run #22](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35265831202); instrumentation smoke test добавлен, но Android UI/lifecycle запуск на device или emulator ещё не выполнялся.
+- **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки читаемости состояния, recovery affordances, rotation/background, keyboard/insets и process death; compilation instrumentation APK не заменяет device execution.
 - **Exit criterion:** новый пользователь из одного экрана понимает, что настроено, что отсутствует, какой permission требуется и почему операция остановилась.
 
 ### P1-A — Diff, controlled write, Git и ручной PR
@@ -125,7 +125,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Владелец:** Patch Engine, Workspace Manager и GitHub Connector
 - **Входной контракт:** read-only workspace snapshot, ToolCall для patch, WorkspaceIdentity, base fingerprint, explicit approval и target repository/ref.
 - **Выходной контракт:** preview/diff, checkpoint и controlled local apply; branch/commit/push и ручной Pull Request с проверяемой provenance.
-- **Результат текущей реализации:** добавлены фиксированные Git-операции `status`, `checkout -b`, `add + commit` и `push` через ToolRouter; write-операции проверяют workspace fingerprint до/после и HEAD SHA, timeout/неподтверждённый результат переводятся в `UNKNOWN`; добавлен GitHub PR connector с redacted-ответом и ручным approval через AgentBridge/UI; для `apply_patch` добавлены атомарный checkpoint manifest, persisted recovery state и ручной rollback с повторной проверкой post-write fingerprint.
+- **Результат текущей реализации:** добавлены фиксированные Git-операции `status`, `checkout -b`, `add + commit` и `push` через ToolRouter; write-операции проверяют workspace fingerprint до/после и HEAD SHA, timeout/неподтверждённый результат переводятся в `UNKNOWN`; добавлен GitHub PR connector с redacted-ответом и ручным approval через AgentBridge/UI; для `apply_patch` добавлены атомарный checkpoint manifest, persisted recovery state и ручной rollback с повторной проверкой post-write fingerprint. Для model-generated local write введён operation-bound `ApprovalToken`: opaque token связывает operation, session, workspace fingerprint, old/new SHA, digest аргументов и expiry; unit-тесты на binding и TTL прошли в run #22.
 - **Ограничение текущей реализации:** P1-A не переводится в `available` без поведенческой проверки branch/commit/push/PR, отказов Git, timeout/re-check, permission gates, checkpoint/rollback и проверки отсутствия секретов в событиях/journal.
 - **Permission gate:** WORKSPACE_WRITE для локальной записи; GIT_WRITE для branch/commit/push/PR; REMOTE_ACTION для merge/release не входит в этап.
 - **Session ID:** обязателен в preview, approval, checkpoint, commit, PR и каждом связанном event.
