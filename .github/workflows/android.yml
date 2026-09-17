@@ -86,6 +86,17 @@ jobs:
             "$GITHUB_SHA" "$(basename "$apk")" \
             > app/build/outputs/apk/debug/deep-agent-provenance.json
 
+      - name: Загрузить проверяемый Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deep-agent-mobile-debug-apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/debug/*.apk.sha256
+            app/build/outputs/apk/debug/deep-agent-provenance.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Проверить параметры релиза
         if: ${{ inputs.publish_release }}
         shell: bash
