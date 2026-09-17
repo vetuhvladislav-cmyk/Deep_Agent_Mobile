@@ -41,7 +41,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -210,10 +209,6 @@ fun AgentConsoleScreen(
             "Пресет загружен; ключи нужно ввести заново"
         }
         presetError = null
-    }
-
-    DisposableEffect(agent) {
-        onDispose { agent.close() }
     }
 
     fun persistReadPermission(uri: Uri) {
