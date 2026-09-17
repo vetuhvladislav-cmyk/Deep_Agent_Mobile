@@ -63,6 +63,7 @@ class PatchEngineTest {
             writeText("before\n")
         }
         val engine = PatchEngine(temporaryFolder.newFolder("checkpoints"))
+        val expectedSha = sha256(target.readBytes())
         val arguments = JSONObject(
             """{"path":"App.kt","expected_sha256":"$expectedSha","replacement":"after\n"}""",
         )
