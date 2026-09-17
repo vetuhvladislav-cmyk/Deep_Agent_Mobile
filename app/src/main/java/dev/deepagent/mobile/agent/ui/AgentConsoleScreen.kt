@@ -965,7 +965,7 @@ fun AgentConsoleScreen(
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
-                    if (permission < PermissionMode.LOCAL_WRITE) {
+                    if (!permission.allows(PermissionMode.LOCAL_WRITE)) {
                         Text(
                             text = "Для запуска локальной среды выберите permission «Локальная запись».",
                             style = MaterialTheme.typography.labelSmall,
@@ -982,7 +982,7 @@ fun AgentConsoleScreen(
                                 "Запустить внутреннюю среду выполнения",
                             ),
                             enabled = runtimeState.status == RuntimeStatus.EMPTY &&
-                                permission >= PermissionMode.LOCAL_WRITE &&
+                                permission.allows(PermissionMode.LOCAL_WRITE) &&
                                 state.status != AgentSessionStatus.RUNNING &&
                                 pendingApproval == null,
                             onClick = {
@@ -1245,7 +1245,7 @@ fun AgentConsoleScreen(
                                     AgentUiContract.RUN_ACTIONS,
                                     "Явно запустить GitHub Actions",
                                 ),
-                                enabled = permission >= PermissionMode.GITHUB_WRITE &&
+                                enabled = permission.allows(PermissionMode.GITHUB_WRITE) &&
                                     githubToken.isNotBlank() &&
                                     repository.isNotBlank() &&
                                     workflow.isNotBlank() &&
