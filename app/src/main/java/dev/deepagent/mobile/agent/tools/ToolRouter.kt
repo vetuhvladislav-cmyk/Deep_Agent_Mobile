@@ -10,6 +10,7 @@ import dev.deepagent.mobile.agent.git.GitOperationResult
 import dev.deepagent.mobile.agent.git.GitPushRequest
 import dev.deepagent.mobile.agent.git.GitRepositoryClient
 import dev.deepagent.mobile.agent.model.AgentRedactor
+import dev.deepagent.mobile.agent.workspace.WorkspacePathPolicy
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -671,12 +672,13 @@ class ToolRouter(
                 val count = input.read(buffer)
                 if (count < 0) break
                 val remaining = maxChars - output.size()
-                if (remaining <= 0) {
+                if (remaining > 0) {
+                    val copied = minOf(count, remaining)
+                    output.write(buffer, 0, copied)
+                    if (copied < count) truncated = true
+                } else {
                     truncated = true
-                    break
                 }
-                output.write(buffer, 0, minOf(count, remaining))
-                if (count > remaining) truncated = true
             }
         }
         return CapturedOutput(
@@ -689,35 +691,11 @@ class ToolRouter(
         root: File,
         requestedPath: String,
         requireExisting: Boolean,
-    ): File {
-        require(!requestedPath.startsWith("/") && !requestedPath.contains('\u0000')) {
-            "Недопустимый путь"
-        }
-        val canonicalRoot = root.canonicalFile
-        val rootPath = canonicalRoot.path
-        val normalizedPath = requestedPath.replace('\\', '/')
-        var cursor = canonicalRoot.toPath()
-        normalizedPath.split('/').forEach { part ->
-            when (part) {
-                "", "." -> Unit
-                ".." -> cursor = cursor.parent ?: cursor
-                else -> {
-                    cursor = cursor.resolve(part)
-                    require(!Files.isSymbolicLink(cursor)) {
-                        "Symbolic link запрещён в workspace: " + part
-                    }
-                }
-            }
-        }
-        val target = File(canonicalRoot, normalizedPath).canonicalFile
-        require(target.path == rootPath || target.path.startsWith(rootPath + File.separator)) {
-            "Путь выходит за границы workspace"
-        }
-        if (requireExisting) require(target.exists()) {
-            "Путь не найден: " + requestedPath
-        }
-        return target
-    }
+    ): File = WorkspacePathPolicy.resolve(
+        root = root,
+        requestedPath = requestedPath,
+        requireExisting = requireExisting,
+    )
 
     private fun relativePath(root: File, file: File): String {
         val rootUri = root.canonicalFile.toURI()
@@ -744,6 +722,7 @@ class ToolRouter(
                     "Symbolic link запрещён в workspace: " + child.name
                 }
                 if (child.isDirectory && isIgnoredDirectory(child)) continue
+                if (isSensitiveFile(child)) continue
                 if (!includeHidden && child.name.startsWith(".")) continue
                 if (!visit(child, depth + 1)) return false
             }
@@ -756,19 +735,8 @@ class ToolRouter(
         return file.name in IGNORED_DIRECTORIES
     }
 
-    private fun isSensitiveFile(file: File): Boolean {
-        val name = file.name.lowercase()
-        return name == ".env" ||
-            name.startsWith(".env.") ||
-            name.endsWith(".pem") ||
-            name.endsWith(".key") ||
-            name.endsWith(".p12") ||
-            name.endsWith(".jks") ||
-            name == "google-services.json" ||
-            name.contains("credential") ||
-            name.contains("secret") ||
-            name == "id_rsa"
-    }
+    private fun isSensitiveFile(file: File): Boolean =
+        WorkspacePathPolicy.isSensitiveFile(file)
 
     private fun readBounded(file: File, maxBytes: Int): BoundedRead {
         val output = ByteArrayOutputStream(
