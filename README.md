@@ -2,7 +2,7 @@
 
 Единый Android APK для инженерного агента: постановка задач, анализ кода и документации, работа с изображениями, локальные лёгкие операции и удалённые GitHub Actions.
 
-Deep Agent использует одну нативную оболочку, Agent Core, AgentBridge v1, DeepSeek и local lite-runtime. Termux и отдельный DSH APK не обязательны. Серверные plugins приложением не изменяются.
+Deep Agent использует одну нативную оболочку, Agent Core, AgentBridge v1, DeepSeek и local lite-runtime. Обязательный Termux, отдельный DSH APK и вторая пользовательская оболочка находятся вне границ поставки.
 
 ## Документация
 
@@ -31,6 +31,9 @@ Deep Agent использует одну нативную оболочку, Agen
 | P1-C | planned |
 | P2-A | planned |
 | P2-B | planned |
+| D1 | planned |
+| D2 | planned |
+| D3 | planned |
 
 ## Последняя проверка
 
