@@ -18,7 +18,7 @@
 - Actions связываются с `sessionId`, ref и ожидаемым commit SHA; artifact дополнительно проверяет run/source provenance, checksum и тип.
 - Session/workspace/preset persistence использует временный файл, flush/sync и atomic replacement.
 
-Этот проход не переводит этапы в `available`: Android build, unit/instrumentation tests, реальный runtime и Actions в текущей сессии не запускались. Поведенческая верификация и acceptance fixtures остаются обязательными для закрытия соответствующих exit criteria.
+Текущий проход подтвердил unit-тесты и debug APK в [GitHub Actions run #20](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35264066884) на commit `6176a68`. Android instrumentation, реальный runtime и device lifecycle acceptance ещё не запускались, поэтому соответствующие exit criteria остаются открытыми.
 
 ## 1. Правила статусов и этапов
 
@@ -83,8 +83,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Redacted audit trail:** invocation ID, tool name, workspace ID, input summary, output size, truncation, fingerprint и redacted error.
 - **Cancellation / timeout:** отдельный deadline для каждого tool; Git timeout и cancellation возвращают нормализованный результат; generic shell не добавляется.
 - **Recovery rule:** running без подтверждённого результата переводится в UNKNOWN; автоматический replay запрещён, выполняется re-check.
-- **Результат текущей реализации:** пять allowlisted read-only entry points и fail-closed guards присутствуют в едином ToolRouter; статический hardening-проход подтвердил контрактные границы. Build, тесты и Actions для текущей ветки не запускались.
-- **Acceptance gate:** capabilityStatus остаётся `planned` до runtime-проверки пяти tools на импортированном workspace, включая path/symlink escape, sensitive files, overflow, no-git и неизменность workspace; в репозитории пока нет `src/test` и `src/androidTest`, поэтому поведенческое покрытие не подтверждено.
+- **Результат текущей реализации:** пять allowlisted read-only entry points и fail-closed guards присутствуют в едином ToolRouter; добавлены JVM-тесты на workspace path policy, fingerprint, пять read-only операций, no-git, unknown arguments и строгие bounded schemas. `testDebugUnitTest` и `assembleDebug` прошли в [run #20](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35264066884).
+- **Acceptance gate:** capabilityStatus остаётся `planned` до Android/runtime-проверки пяти tools на реально импортированном workspace, включая path/symlink escape, sensitive files, overflow, no-git и неизменность workspace; instrumentation и SAF import fixture ещё не запускались.
 - **Exit criterion:** все пять tools работают через единый router contract; path escape, symlink escape, sensitive files, output overflow и отсутствие git обрабатываются fail-closed; workspace не изменяется.
 
 ### P0-B — Durable session journal и recovery
@@ -99,8 +99,8 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Cancellation / timeout:** journal write атомарен; recovery имеет bounded timeout и сообщает неполное состояние вместо зависания.
 - **Recovery rule:** завершённые side effects не повторяются; незавершённые операции получают UNKNOWN и требуют re-check.
 - **Результат текущей реализации:** кодовая часть P0-B внесена: versioned bounded journal v5 с чтением версий 1–5, per-session JSON snapshots, атомарная запись session/latest, сохранение events/invocations/decisions, redaction и recovery без автоматического replay; статическая согласованность изменённых файлов проверена.
-- **Validation:** текущий проход ограничен статическим анализом; Android build/test и GitHub Actions не запускались. Историческая проверка базовой ветки описана отдельно в README.
-- **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки восстановления после background/process death/rotation и подтверждения отсутствия replay; в репозитории пока нет `src/test` и `src/androidTest`, поэтому поведенческое покрытие не подтверждено.
+- **Validation:** добавлены JVM-тесты на versioned atomic journal snapshot, redaction, latest pointer и отбрасывание неподдерживаемых recovery inputs; [run #20](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35264066884) прошёл. Android-проверка background/process death/rotation и отсутствие replay на device ещё не выполнялись.
+- **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки восстановления после background/process death/rotation и подтверждения отсутствия replay; JVM coverage не заменяет instrumentation gate.
 - **Exit criterion:** сессия восстанавливается без повторения завершённых tool/build/write операций, сохраняет correlation IDs и объясняет неизвестное состояние.
 
 ### P0-C — MVP setup и понятный Agent Console
@@ -115,7 +115,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Cancellation / timeout:** cancel доступен из UI; network/provider timeout переводится в понятное состояние без скрытого retry.
 - **Recovery rule:** после rotation/background UI подписывается на AgentBridge, а не читает journal; при UNKNOWN предлагает re-check.
 - **Результат текущей реализации:** Agent Console подключён только к AgentBridge, workspace import и patch approval выведены из внутренних типов, добавлены provider/session/recovery summary, сохранение несекретной формы, восстановление image URI и единый scrollable mobile layout; статическая проверка пройдена.
-- **Validation:** текущий проход ограничен статическим анализом; Android build/test и GitHub Actions не запускались. Историческая проверка базовой ветки описана отдельно в README.
+- **Validation:** unit-тесты и debug APK проверены в [run #20](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35264066884); Android UI instrumentation для readability, rotation/background, keyboard/insets и recovery ещё не выполнялась.
 - **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки читаемости состояния, recovery affordances, rotation/background и keyboard/insets; в репозитории пока нет `src/test` и `src/androidTest`, поэтому поведенческое покрытие не подтверждено.
 - **Exit criterion:** новый пользователь из одного экрана понимает, что настроено, что отсутствует, какой permission требуется и почему операция остановилась.
 
@@ -146,7 +146,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Cancellation / timeout:** polling имеет backoff, deadline и cancel; скачивание ограничено размером, типом и timeout; failed-job retry не выполняется автоматически.
 - **Recovery rule:** неизвестный run/job/artifact получает UNKNOWN; повтор dispatch запрещён до re-check исходного run и idempotency key.
 - **Результат текущей реализации:** добавлен Actions connector с dispatch/run discovery/polling, jobs/steps, failed-step log retrieval и redacted state; workflow публикует APK вместе с SHA-256 sidecar и provenance source SHA; AgentBridge/Session Journal сохраняют correlation и recovery state; Artifact Manager скачивает ZIP, проверяет APK/AAB, checksum, source SHA и атомарно сохраняет его только после WORKSPACE_WRITE approval.
-- **Ограничение текущей реализации:** capabilityStatus остаётся `planned` до runtime-проверки dispatch → run → job → step/log → artifact на реальном repository, проверки квоты/redirect/timeout/UNKNOWN и подтверждения сохранённого APK/AAB; Actions, build и тесты в этой сессии не запускались.
+- **Ограничение текущей реализации:** capabilityStatus остаётся `planned` до runtime-проверки именно app-side пути dispatch → run → job → step/log → artifact на реальном repository, проверки квоты/redirect/timeout/UNKNOWN и подтверждения сохранённого APK/AAB; workflow build/release уже проверен отдельно, но это не заменяет Android connector acceptance.
 - **Exit criterion:** приложение показывает status и failed step, позволяет получить redacted logs, проверяет artifact type/size/checksum/commit SHA и сохраняет подтверждённый APK/AAB.
 
 ### P1-C — Android 16 UI и regression contract
@@ -161,7 +161,7 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 - **Cancellation / timeout:** каждый UI scenario имеет bounded timeout; зависший provider не блокирует UI test lifecycle.
 - **Recovery rule:** потеря Activity не создаёт новую сессию и не повторяет side effect; тест повторно подключается к AgentBridge state.
 - **Результат текущей реализации:** добавлен канонический UI contract с независимыми стабильными test IDs и accessibility semantics для корневого экрана, task/workspace controls, patch approval/rollback, Actions artifact, Git, session lifecycle и event cards; существующие `rememberSaveable`, app-private journal и AgentBridge state сохраняют recovery-safe поведение при Activity recreation, keyboard и system insets.
-- **Ограничение текущей реализации:** capabilityStatus остаётся `planned` до Android 16 instrumentation-проверки основных сценариев, rotation/background/process death, keyboard/insets, accessibility tree и screenshot fixtures; UI-тесты и сборка в этой сессии не запускались.
+- **Ограничение текущей реализации:** capabilityStatus остаётся `planned` до Android 16 instrumentation-проверки основных сценариев, rotation/background/process death, keyboard/insets, accessibility tree и screenshot fixtures; debug APK собран в CI, но UI lifecycle tests ещё не запускались.
 - **Exit criterion:** основные user flows воспроизводимы на Android 16, имеют стабильные test IDs и не теряют session state при rotation/background/insets transitions.
 
 ### P2-A — RuntimeSupervisor и headless DSH
