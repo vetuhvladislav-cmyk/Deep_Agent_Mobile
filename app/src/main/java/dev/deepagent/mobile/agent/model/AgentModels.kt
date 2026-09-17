@@ -65,6 +65,7 @@ data class AgentRequest(
     val task: String,
     val target: ExecutionTarget = ExecutionTarget.AUTO,
     val permission: PermissionMode = PermissionMode.READ_ONLY,
+    val providerId: String = "deepseek.responses",
     val image: ImageAttachment? = null,
     val imageAssetId: String? = null,
     val deepSeekApiKey: String? = null,
