@@ -28,7 +28,13 @@ data class AgentToolDefinition(
     val name: String,
     val description: String,
     val parameters: JSONObject,
-)
+) {
+    init {
+        // Keep provider-side schemas strict even when a new tool definition
+        // forgets to repeat the root-level guard.
+        parameters.put("additionalProperties", false)
+    }
+}
 
 data class ToolExecutionResult(
     val toolName: String,
