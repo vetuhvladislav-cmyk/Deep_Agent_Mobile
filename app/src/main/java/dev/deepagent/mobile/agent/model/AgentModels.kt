@@ -929,7 +929,7 @@ internal object AgentRedactor {
     )
 
     private val secretKeyPattern = Regex(
-        """(?i)(^|[_-])(key|token|secret|password|authorization|cookie|credential)($|[_-])""",
+        """(?i)(^|[_-])(api[_-]?key|access[_-]?key|key|token|secret|password|authorization|cookie|credential)($|[_-])""",
     )
 
     fun inputValue(key: String, value: String?, maxChars: Int): String? {
