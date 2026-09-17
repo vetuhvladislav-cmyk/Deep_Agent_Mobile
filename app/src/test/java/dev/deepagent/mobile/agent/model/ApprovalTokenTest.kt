@@ -76,12 +76,53 @@ class ApprovalTokenTest {
         )
     }
 
-    private fun issue(now: Long): ApprovalToken {
+    @Test
+    fun tokenBindsTargetSha() {
+        val token = issue(now = 30_000L, targetSha = "commit-1")
+
+        assertTrue(
+            token.matches(
+                presentedValue = token.value,
+                operation = ApprovalTokenFactory.APPLY_PATCH_OPERATION,
+                sessionId = token.sessionId,
+                workspaceId = token.workspaceId,
+                workspaceFingerprint = token.workspaceFingerprint,
+                targetSha = "commit-1",
+                path = token.path,
+                oldSha256 = token.oldSha256,
+                newSha256 = token.newSha256,
+                argumentsJson = """{"path":"src/App.kt","patch":"@@ -1 +1 @@
+-old
++new"}""",
+                now = 30_001L,
+            ),
+        )
+        assertFalse(
+            token.matches(
+                presentedValue = token.value,
+                operation = ApprovalTokenFactory.APPLY_PATCH_OPERATION,
+                sessionId = token.sessionId,
+                workspaceId = token.workspaceId,
+                workspaceFingerprint = token.workspaceFingerprint,
+                targetSha = "commit-2",
+                path = token.path,
+                oldSha256 = token.oldSha256,
+                newSha256 = token.newSha256,
+                argumentsJson = """{"path":"src/App.kt","patch":"@@ -1 +1 @@
+-old
++new"}""",
+                now = 30_001L,
+            ),
+        )
+    }
+
+    private fun issue(now: Long, targetSha: String? = null): ApprovalToken {
         return ApprovalTokenFactory.issue(
             operation = ApprovalTokenFactory.APPLY_PATCH_OPERATION,
             sessionId = "session-1",
             workspaceId = "workspace-1",
             workspaceFingerprint = "fingerprint-1",
+            targetSha = targetSha,
             path = "src/App.kt",
             oldSha256 = "old-sha",
             newSha256 = "new-sha",

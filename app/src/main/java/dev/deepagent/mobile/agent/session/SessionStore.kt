@@ -34,6 +34,7 @@ data class SessionRequestSummary(
     val model: String? = null,
     val imageAssetId: String? = null,
     val providerId: String? = null,
+    val targetSha: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("task", AgentRedactor.text(task, MAX_TASK_CHARS))
@@ -42,6 +43,7 @@ data class SessionRequestSummary(
         .put("provider_id", AgentRedactor.text(providerId, MAX_IDENTIFIER_CHARS))
         .put("workspace_id", AgentRedactor.text(workspaceId, MAX_IDENTIFIER_CHARS))
         .put("workspace_fingerprint", AgentRedactor.text(workspaceFingerprint, 80))
+        .put("target_sha", AgentRedactor.text(targetSha, 128))
         .put("repository", AgentRedactor.text(repository, MAX_IDENTIFIER_CHARS))
         .put("workflow", AgentRedactor.text(workflow, MAX_IDENTIFIER_CHARS))
         .put("ref", AgentRedactor.text(ref, MAX_IDENTIFIER_CHARS))
@@ -99,6 +101,10 @@ data class SessionRequestSummary(
                 providerId = AgentRedactor.text(
                     value.optString("provider_id"),
                     MAX_IDENTIFIER_CHARS,
+                )?.takeIf { it.isNotBlank() },
+                targetSha = AgentRedactor.text(
+                    value.optString("target_sha"),
+                    128,
                 )?.takeIf { it.isNotBlank() },
             )
         }
@@ -231,7 +237,10 @@ data class PersistedAgentSession(
                 .put("finished_at", state.finishedAt)
                 .put("last_error", AgentRedactor.text(state.lastError, MAX_ERROR_CHARS))
                 .put("event_cursor", eventCursor)
-                .put("recovery_required", state.recoveryRequired),
+                .put("recovery_required", state.recoveryRequired)
+                .put("ledger_health", AgentRedactor.text(state.ledgerHealth, 64))
+                .put("ledger_unknown_count", state.ledgerUnknownCount.coerceAtLeast(0))
+                .put("ledger_diagnostic", AgentRedactor.text(state.ledgerDiagnostic, MAX_ERROR_CHARS)),
         )
         .put(
             "events",
@@ -377,6 +386,18 @@ data class PersistedAgentSession(
                     "recovery_required",
                     false,
                 ),
+                ledgerHealth = AgentRedactor.text(
+                    stateObject.optString("ledger_health"),
+                    64,
+                ) ?: "CLEAN",
+                ledgerUnknownCount = stateObject.optInt(
+                    "ledger_unknown_count",
+                    0,
+                ).coerceAtLeast(0),
+                ledgerDiagnostic = AgentRedactor.text(
+                    stateObject.optString("ledger_diagnostic"),
+                    MAX_ERROR_CHARS,
+                )?.takeIf { it.isNotBlank() },
             )
 
             val invocations = parseInvocations(value)

@@ -24,6 +24,47 @@
 
 Последний подтверждённый baseline прошёл unit-тесты, компиляцию instrumentation APK и debug APK в [GitHub Actions run #27](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35269039901) на commit `aa6b7a3`. После него bounded Planner/Evaluator, DeepSeek host-policy и operation-bound Git/PR/Actions recovery изменены в коммитах `b056589`, `82b29ba`, `0e751ed`, `2ab6f1f`, `d9744b7`, `eb15608`, `5b93dcd`, `a184072`, `3f0dcf5`, `8eb357b`, `17f926e`, `70629ea`, `b5d7071`, `b9bdf4a`, `a1646ca` и `4668d3e`; по текущему ограничению пользователя новая компиляция и тесты не запускались. Android device execution, реальный runtime и device lifecycle acceptance ещё не запускались, поэтому соответствующие exit criteria остаются открытыми.
 
+
+## 1A. MVP hardening gate
+
+### H0 — Подтверждение фактической структуры
+
+- **Статус:** capabilityStatus: implemented.
+- **Входной SHA:** `156d845cb3d06fa9110996a709875160a6f89caa`.
+- **Результат:** подтверждены реальные файлы, symbol map, AgentBridge boundary, persistence boundary, policy boundary и execution boundary; размеры файлов не используются как контракт.
+- **Ограничение:** AgentBridge v1 и существующие публичные операции сохраняются.
+- **Exit criterion:** фактическая структура и контрольный SHA зафиксированы до hardening-изменений.
+
+### Structural seams
+
+- **Статус:** capabilityStatus: implemented.
+- Выделены отдельные контракты ledger, CanonicalArgs и typed security envelope.
+- Структурные изменения не меняют AgentBridge v1.
+- **Exit criterion:** hardening-слои могут тестироваться отдельно от AgentCore orchestration.
+
+### H1 — Durable Operation Ledger + UNKNOWN
+
+- **Статус:** capabilityStatus: implemented; validation: recovery tests.
+- Ledger выполняет `PREPARED → STARTED → effect → terminal` с полной durability для side effects.
+- Реализованы framing, length, CRC32C/HMAC profile, sequence, boot ID, operation ID, corruption handling и downgrade guard.
+- Старые незавершённые операции переводятся в UNKNOWN; автоматический replay запрещён, а явный retry тем же operation ID разрешён только для IDEMPOTENT после re-check.
+- **Exit criterion:** torn trailing frame обрезается, middle corruption блокирует continuation, terminal corruption даёт UNKNOWN, resolution policies различаются, side effect не повторяется.
+
+### H2 — Threat model, capabilities и prompt-injection defense
+
+- **Статус:** capabilityStatus: implemented; validation: security tests.
+- Реализованы CanonicalArgs v1, golden vectors, approval binding с target SHA, typed untrusted envelope, capability filtering и direct forged-tool rejection.
+- Secrets redacted до model context, snapshot, trace и UI; UNKNOWN отображается в Agent Console и экспортируется вместе с redacted ledger/audit trace.
+- Threat model и ADR зафиксированы в канонической архитектуре без создания отдельного Markdown-файла.
+- **Exit criterion:** модель получает только доступные tools; изменение args invalidates approval; injection fixtures проходят отрицательные тесты.
+
+### Recovery/security tests и independent review
+
+- **Статус:** capabilityStatus: in_progress.
+- Обязательные проверки: ledger crash/torn-write/middle-corruption/key-loss/replay, CanonicalArgs vectors, approval binding, capability filtering, forged calls, typed envelope и redaction.
+- После тестов выполняется независимый review итогового SHA; изменения после review требуют нового review.
+- P1/P2 до закрытия этого блока не начинать.
+
 ## 1. Правила статусов и этапов
 
 Допустимые значения capabilityStatus:
@@ -38,8 +79,10 @@
 Порядок этапов:
 
 ```text
-P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B → D1 → D2 → D3
+H0 → structural seams → H1 → H2 → recovery/security tests → independent review → P0/P1/P2 queue
 ```
+
+H0–H2 являются обязательным hardening-gate. P1/P2 не запускаются до закрытия этого gate.
 
 Один этап не получает второй самостоятельный статус. Если часть широкого этапа закрывается раньше, это фиксируется в его карточке и не создаёт новый Markdown-документ или новый статусный источник.
 
@@ -47,6 +90,11 @@ P0-0 → P0-A → P0-B → P0-C → P1-A → P1-B → P1-C → P2-A → P2-B →
 
 | Этап | capabilityStatus | Назначение |
 | --- | --- | --- |
+| H0 | implemented | подтверждение фактической структуры и SHA |
+| structural seams | implemented | ledger, CanonicalArgs и typed security contracts |
+| H1 | implemented | durable operation ledger и UNKNOWN recovery |
+| H2 | implemented | threat model, capability и prompt-injection defense |
+| recovery/security tests | in_progress | автоматическая hardening-проверка |
 | P0-0 | available | очистка Deep Agent и границ репозитория |
 | P0-A | planned | workspace и read-only ToolRouter |
 | P0-B | planned | durable session journal и recovery |

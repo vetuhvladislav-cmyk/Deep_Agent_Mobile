@@ -1,0 +1,56 @@
+# H0 symbol map
+source_sha=156d845cb3d06fa9110996a709875160a6f89caa
+branch=codex/p1-a-controlled-write-git-pr
+mode=read-only pre-gate; generated before hardening changes
+
+app/src/main/java/dev/deepagent/mobile/agent/core/AgentCore.kt
+  declarations: data class PendingPatch, class AgentCore
+  methods: submit, configureCredentials, clearCredentials, exportJournal, cancel, clearEvents, importWorkspace, prepareImage, clearImage, selectWorkspace, refreshWorkspace, inspectGit, createGitBranch, commitGit, pushGit, createPullRequest, runInteractive, sendInteractiveInput, cancelInteractive, interactiveFailure, startRuntime, stopRuntime, runActions, runActionsLocked, saveVerifiedArtifact, runActionsInternal, artifactSaveFailure, rollbackLastPatch, close, execute, validateRequest, validateDeepSeekBaseUrl, executeLocal, executeRemote, runDeepSeekAgent, appendToolResult, responseOutputItems, approvePendingPatch, rejectPendingPatch, restoreLatestSession, buildPersistedSnapshot, persistAsync, persistOnClose, runGitWrite, publishGitResult, cachedGitResult, cacheGitResult, cachedActionsResult, cacheActionsResult, normalizeOperationId, readCredential, workspaceIdForActions, updatePatchRecovery, recordPatchRollbackFailure, clearPendingPatch, completeOpenInvocations, beginInvocation, completeInvocation, recordDecision, resolveTarget, fail, markUnknown, append
+  lines: 3047
+
+app/src/main/java/dev/deepagent/mobile/agent/tools/ToolRouter.kt
+  declarations: data class AgentToolDefinition, data class ToolExecutionResult, class ToolRouter, data class ArgumentSchema, data class BoundedRead, data class CapturedOutput
+  methods: toModelJson, previewPatch, applyPatch, rollbackPatch, readProjectRules, inspectGit, currentGitHeadSha, createGitBranch, commitGit, pushGit, execute, validateArguments, requireString, requireOptionalString, requireOptionalInt, requireOptionalBoolean, listFiles, readFile, searchCode, gitStatus, gitDiff, hasSafeGitMetadata, runGit, captureOutput, resolvePath, relativePath, visitTree, visit, isIgnoredDirectory, isSensitiveFile, readBounded, definitions
+  lines: 1154
+
+app/src/main/java/dev/deepagent/mobile/agent/protocol/AgentBridge.kt
+  declarations: interface AgentBridge, object AgentBridgeProtocol
+  methods: submit, configureCredentials, clearCredentials, exportJournal, importWorkspace, prepareImage, clearImage, selectWorkspace, refreshWorkspace, approvePendingPatch, rejectPendingPatch, inspectGit, createGitBranch, commitGit, pushGit, createPullRequest, startRuntime, runInteractive, sendInteractiveInput, cancelInteractive, stopRuntime, runActions, saveVerifiedArtifact, rollbackLastPatch, cancel, clearEvents, close
+  lines: 151
+
+app/src/main/java/dev/deepagent/mobile/agent/session/SessionStore.kt
+  declarations: data class SessionRequestSummary, data class SessionInvocationRecord, data class SessionDecisionRecord, data class PersistedAgentSession, class SessionStore
+  methods: toJson, fromJson, parseInvocations, parseDecisions, loadLatest, load, save, pruneLocked, readPointerLocked, loadLocked, fileFor, writeAtomically, moveAtomically, isValidJournalIdentifier
+  lines: 634
+
+app/src/main/java/dev/deepagent/mobile/agent/workspace/WorkspaceManager.kt
+  declarations: data class WorkspaceSummary, class WorkspaceManager, class ImportBudget
+  methods: toJson, fromJson, list, select, resolveRoot, captureIdentity, checkpointDirectory, refresh, treePage, visit, normalizeTreePrefix, importUri, copyZip, copyDocumentTree, copyDocumentDirectory, copyBounded, resolveChild, normalizeRelativePath, summarizeTree, isTreeUri, queryDisplayName, loadEntries, loadSelectedId, readIndexText, findSelected, pruneMissingEntries, persistIndexLocked, claimPath, beginFile, addBytes
+  lines: 642
+
+app/src/main/java/dev/deepagent/mobile/agent/workspace/WorkspaceIdentity.kt
+  declarations: data class WorkspaceIdentity, data class TreeEntry, class CaptureBudget
+  methods: toJson, capture, collect, digestFile, updateField, safeAdd
+  lines: 187
+
+app/src/main/java/dev/deepagent/mobile/agent/workspace/WorkspacePathPolicy.kt
+  declarations: object WorkspacePathPolicy
+  methods: resolve, isSensitiveFile, isBlockedRelativePath, isSensitiveName
+  lines: 113
+
+app/src/main/java/dev/deepagent/mobile/agent/model/AgentModels.kt
+  declarations: enum class ExecutionTarget, enum class PermissionMode, enum class AgentEventKind, enum class AgentSessionStatus, data class ImageAttachment, data class AgentRequest, data class AgentEvent, data class AgentSessionState, data class CredentialState, enum class JournalExportStatus, data class JournalExportResult, data class AgentWorkspaceSnapshot, data class PendingPatchApproval, enum class ImageAnalysisStatus, data class ImageAnalysisState, enum class WorkspaceCatalogStatus, data class WorkspaceFileEntry, data class WorkspaceTreePage, data class WorkspaceRulesMetadata, data class WorkspaceCatalogState, enum class InteractiveSessionStatus, data class InteractiveCommandRequest, data class InteractiveSessionState, enum class RuntimeStatus, data class RuntimeState, enum class ActionsOperationStatus, data class ActionsRunRequest, data class ActionsStepState, data class ActionsJobState, data class ActionsArtifactState, data class ActionsOperationState, data class ActionsArtifactRequest, enum class ActionsArtifactSaveStatus, data class ActionsArtifactSaveResult, enum class PatchRecoveryStatus, data class PatchRecoveryState, enum class PatchRollbackStatus, data class PatchRollbackResult, object AgentRedactor
+  methods: allows, toJson, toAuditJson, fromJson, safeText, optionalLong, safeSha, inputValue, text
+  lines: 981
+
+app/src/main/java/dev/deepagent/mobile/agent/model/ApprovalToken.kt
+  declarations: data class ApprovalToken, object ApprovalTokenFactory
+  methods: isExpired, matches, issue, argumentsDigest, sha256
+  lines: 109
+
+
+H0 boundaries
+- persistence: SessionStore JSON snapshots + atomic replacement; operation side effects have in-memory caches only at baseline
+- policy: PermissionMode, ApprovalToken and ToolRouter allowlist
+- execution: AgentCore orchestration, ToolRouter read/write gates, Git/Actions/runtime adapters
+- preserved public boundary: AgentBridge v1

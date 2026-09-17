@@ -11,6 +11,10 @@ import dev.deepagent.mobile.agent.git.GitOperationStatus
 import dev.deepagent.mobile.agent.git.GitPushRequest
 import dev.deepagent.mobile.agent.git.GitRepositoryClient
 import dev.deepagent.mobile.agent.model.AgentRedactor
+import dev.deepagent.mobile.agent.model.PermissionMode
+import dev.deepagent.mobile.agent.security.EnvelopePolicy
+import dev.deepagent.mobile.agent.security.ToolAuthorization
+import dev.deepagent.mobile.agent.security.ToolCapability
 import dev.deepagent.mobile.agent.workspace.WorkspacePathPolicy
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
 import kotlinx.coroutines.CancellationException
@@ -29,6 +33,8 @@ data class AgentToolDefinition(
     val name: String,
     val description: String,
     val parameters: JSONObject,
+    val capability: ToolCapability = ToolCapability.READ_ONLY,
+    val requiredPermission: PermissionMode = capability.requiredPermission,
 ) {
     init {
         // Keep provider-side schemas strict even when a new tool definition
@@ -48,23 +54,29 @@ data class ToolExecutionResult(
     val patchCheckpointId: String? = null,
     val workspaceFingerprintAfter: String? = null,
 ) {
-    fun toModelJson(): String = JSONObject()
-        .put("tool", AgentRedactor.text(toolName, MAX_TOOL_NAME_CHARS))
-        .put("ok", ok)
-        .put("summary", AgentRedactor.text(summary, MAX_SUMMARY_CHARS))
-        .put("content", AgentRedactor.text(content, MAX_CONTENT_CHARS))
-        .put("truncated", truncated || content.length > MAX_CONTENT_CHARS)
-        .put("error_code", AgentRedactor.text(errorCode, MAX_ERROR_CODE_CHARS))
-        .put("preview", patchPreview?.toJson())
-        .put(
-            "patch_checkpoint_id",
-            AgentRedactor.text(patchCheckpointId, MAX_IDENTIFIER_CHARS),
-        )
-        .put(
-            "workspace_fingerprint_after",
-            AgentRedactor.text(workspaceFingerprintAfter, MAX_IDENTIFIER_CHARS),
-        )
-        .toString()
+    fun toModelJson(): String {
+        val definition = ToolRegistry.definition(toolName)
+        return EnvelopePolicy.untrusted(
+            toolName = toolName,
+            capability = definition?.capability ?: ToolCapability.READ_ONLY,
+            ok = ok,
+            summary = summary,
+            content = JSONObject()
+                .put("content", AgentRedactor.text(content, MAX_CONTENT_CHARS))
+                .put("preview", patchPreview?.toJson())
+                .put(
+                    "patch_checkpoint_id",
+                    AgentRedactor.text(patchCheckpointId, MAX_IDENTIFIER_CHARS),
+                )
+                .put(
+                    "workspace_fingerprint_after",
+                    AgentRedactor.text(workspaceFingerprintAfter, MAX_IDENTIFIER_CHARS),
+                )
+                .toString(),
+            truncated = truncated || content.length > MAX_CONTENT_CHARS,
+            errorCode = errorCode,
+        ).toModelJson()
+    }
 
     private companion object {
         const val MAX_TOOL_NAME_CHARS = 160
@@ -94,7 +106,17 @@ class ToolRouter(
     suspend fun previewPatch(
         argumentsJson: String,
         workspaceId: String? = null,
+        permission: PermissionMode = PermissionMode.READ_ONLY,
     ): ToolExecutionResult = withContext(Dispatchers.IO) {
+        val authorization = authorize(TOOL_APPLY_PATCH, permission)
+        if (!authorization.allowed) {
+            return@withContext ToolExecutionResult(
+                toolName = TOOL_APPLY_PATCH,
+                ok = false,
+                summary = "Tool запрещён текущей capability policy",
+                errorCode = authorization.errorCode,
+            )
+        }
         val arguments = runCatching { JSONObject(argumentsJson.ifBlank { "{}" }) }
             .getOrElse {
                 return@withContext ToolExecutionResult(
@@ -370,7 +392,18 @@ class ToolRouter(
         toolName: String,
         argumentsJson: String,
         workspaceId: String? = null,
+        permission: PermissionMode = PermissionMode.READ_ONLY,
     ): ToolExecutionResult = withContext(Dispatchers.IO) {
+        val authorization = authorize(toolName, permission)
+        if (!authorization.allowed) {
+            return@withContext ToolExecutionResult(
+                toolName = toolName,
+                ok = false,
+                summary = "Tool запрещён текущей capability policy",
+                errorCode = authorization.errorCode,
+            )
+        }
+
         val arguments = runCatching { JSONObject(argumentsJson.ifBlank { "{}" }) }
             .getOrElse {
                 return@withContext ToolExecutionResult(
@@ -989,7 +1022,7 @@ class ToolRouter(
         )
         val IGNORED_DIRECTORIES = setOf(".git", ".gradle", "build", "node_modules")
 
-        fun definitions(): List<AgentToolDefinition> = listOf(
+        private fun allDefinitions(): List<AgentToolDefinition> = listOf(
             AgentToolDefinition(
                 name = TOOL_LIST_FILES,
                 description = "List source files and directories in the selected workspace.",
@@ -1148,6 +1181,39 @@ class ToolRouter(
                     ),
             ),
         )
+            .map { definition ->
+                if (definition.name == TOOL_APPLY_PATCH) {
+                    definition.copy(
+                        capability = ToolCapability.LOCAL_WRITE,
+                        requiredPermission = PermissionMode.LOCAL_WRITE,
+                    )
+                } else {
+                    definition
+                }
+            }
+
+        fun definitions(
+            permission: PermissionMode = PermissionMode.READ_ONLY,
+        ): List<AgentToolDefinition> = allDefinitions()
+            .filter { permission.allows(it.requiredPermission) }
+
+        fun definition(toolName: String): AgentToolDefinition? =
+            allDefinitions().firstOrNull { it.name == toolName }
+                ?.let { definition ->
+                    if (definition.name == TOOL_APPLY_PATCH) {
+                        definition.copy(
+                            capability = ToolCapability.LOCAL_WRITE,
+                            requiredPermission = PermissionMode.LOCAL_WRITE,
+                        )
+                    } else {
+                        definition
+                    }
+                }
+
+        fun authorize(
+            toolName: String,
+            permission: PermissionMode,
+        ): ToolAuthorization = ToolVerifier.authorize(toolName, permission)
 
     }
 }

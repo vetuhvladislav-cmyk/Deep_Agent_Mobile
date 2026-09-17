@@ -63,6 +63,9 @@ jobs:
       - name: Кэш Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: CanonicalArgs reference vectors
+        run: python3 tools/canonical_args_reference.py app/src/test/resources/canonical_args_v1_vectors.json
+
       - name: Модульные тесты
         run: ./gradlew --no-daemon testDebugUnitTest
 

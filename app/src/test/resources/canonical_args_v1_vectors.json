@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "vectors": [
+    {
+      "name": "object_keys_sorted",
+      "input": "{\"b\":2,\"a\":1}",
+      "canonical_bytes_hex": "7b2261223a312c2262223a327d",
+      "sha256": "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+    },
+    {
+      "name": "nested_arrays_and_negative_zero",
+      "input": "{\"nested\":{\"z\":true,\"a\":null},\"items\":[3,1.0,-0]}",
+      "canonical_bytes_hex": "7b226974656d73223a5b332c312c305d2c226e6573746564223a7b2261223a6e756c6c2c227a223a747275657d7d",
+      "sha256": "2312e1edd9028d1a9508390ea719e8b330fdcee9cb8a5a82c01518a7ff99ac10"
+    },
+    {
+      "name": "number_and_unicode_string",
+      "input": "{\"n\":1.2300e+2,\"s\":\"line\\n\\u263A\"}",
+      "canonical_bytes_hex": "7b226e223a3132332c2273223a226c696e655c6ee298ba227d",
+      "sha256": "6b17f2fa159745ade19801d83b63a58afef99e8b6641150591fb241561ce6458"
+    },
+    {
+      "name": "supplementary_unicode",
+      "input": "{\"s\":\"😀\"}",
+      "canonical_bytes_hex": "7b2273223a22f09f9880227d",
+      "sha256": "f9949e1006d1ca22bc0b60ea94f09779f11a8f0a29bae250fc7ab313d879f5e7"
+    }
+  ],
+  "invalid_cases": [
+    {
+      "name": "duplicate_keys",
+      "raw": "{\"a\":1,\"a\":2}",
+      "expected_code": "DUPLICATE_KEY"
+    },
+    {
+      "name": "leading_zero",
+      "raw": "{\"n\":01}",
+      "expected_code": "INVALID_NUMBER"
+    },
+    {
+      "name": "missing_exponent_digits",
+      "raw": "{\"n\":1e}",
+      "expected_code": "INVALID_NUMBER"
+    },
+    {
+      "name": "nan",
+      "raw": "{\"n\":NaN}",
+      "expected_code": "INVALID_VALUE"
+    }
+  ]
+}

@@ -360,3 +360,56 @@ Agent Console использует собственную визуальную �
 4. Поверхности используют небольшое количество уровней глубины и тонкую границу; постоянное свечение и тяжёлая вложенность карточек не применяются.
 5. Текст пользовательского интерфейса — русский; технические имена протоколов, permission и Git-команд сохраняются без перевода, когда это нужно для точности.
 6. Тема применяется через существующий Compose `DeepAgentTheme`; Agent Core, AgentBridge v1, permission gates и владельцы состояния не изменяются.
+
+
+## 13. MVP hardening: ADR и security boundary
+
+Эта секция фиксирует стабильные решения hardening-среза. Порядок реализации и exit criteria находятся в дорожной карте.
+
+### ADR-001 — Durable Operation Ledger
+
+- **Дата:** 2026-09-17.
+- **Статус:** accepted.
+- Side-effect операция проходит `PREPARED + fsync → STARTED + fsync → effect → terminal + fsync`.
+- Ledger использует framing, длину payload, checksum, sequence, boot ID, operation ID, integrity mode и key version.
+- Базовый integrity profile — CRC32C.
+- HMAC-SHA-256 через Android Keystore используется для privileged/remote/exported trace profile; потеря или invalidation ключа переводит состояние в `KEY_UNAVAILABLE/CORRUPT/UNKNOWN`.
+- `FULL` и `BATCHED` durability не смешиваются с resolution. `BATCHED` запрещён для side-effect операций.
+- `QUERYABLE`, `IDEMPOTENT` и `BLIND` имеют разные recovery actions; только `IDEMPOTENT` допускает явный retry с тем же operation ID после re-check.
+- Старые `PREPARED/STARTED/RUNNING/PENDING` не продолжаются автоматически и переводятся в `UNKNOWN`.
+- Повреждение trailing frame обрезается. Повреждение середины ledger блокирует автоматическое продолжение.
+- Downgrade формата ledger запрещён; перенос выполняется только через export/import.
+
+### ADR-002 — CanonicalArgs и approval binding
+
+- **Дата:** 2026-09-17.
+- **Статус:** accepted.
+- Approval связывает session ID, tool/operation name, canonical args SHA-256, workspace ID, workspace fingerprint, target SHA и expiry.
+- Raw JSON с duplicate keys, invalid numbers или невалидной структурой отклоняется.
+- Golden vectors находятся в `app/src/test/resources/canonical_args_v1_vectors.json`.
+- Kotlin-реализация и независимый reference находятся в `tools/canonical_args_reference.py`.
+
+### ADR-003 — Typed tool envelope и capability isolation
+
+- **Дата:** 2026-09-17.
+- **Статус:** accepted.
+- Tool output передаётся модели только как typed envelope с `schema_version`, capability, trust, `content_is_data` и `instructions_are_data`.
+- Workspace/provider output считается untrusted content и не может расширить capability set.
+- Tool definitions фильтруются до передачи модели по текущему permission.
+- Router отвергает неизвестный или запрещённый tool даже при прямом сфабрикованном вызове.
+- UI и Agent Core не получают capability через текстовый XML/Markdown-маркер; такие маркеры являются только данными.
+- Structural seams выделены без изменения AgentBridge v1: `AgentTransaction`, `ToolRegistry`, `ToolInvoker`, `ToolVerifier`, `EnvelopePolicy`, `ApprovalBinding`, `AuditTraceStore` и `ProcessCleanupController`.
+- UNKNOWN отображается отдельной карточкой с ledger health, числом операций, diagnostic reason и запретом automatic retry; export journal включает redacted ledger snapshot и audit trace.
+
+### ADR-004 — Threat model
+
+- **Дата:** 2026-09-17.
+- **Статус:** accepted for MVP hardening.
+- **Assets:** исходный workspace, локальные изменения, Git/PR state, Actions credentials, provider credentials, session journal, operation ledger, APK/CI artifacts и diagnostic exports.
+- **Trust boundaries:** пользовательский UI → AgentBridge; AgentBridge → Agent Core; Agent Core → ToolRouter; ToolRouter → workspace/Git/Actions/provider; untrusted workspace/tool/provider output → model context; app-private persistence → exported diagnostic bundle.
+- **Malicious inputs:** prompt injection в workspace rules, Markdown/XML, source comments, tool output, CI logs, provider response и forged function call.
+- **Data flow control:** canonical args и typed envelope до model context; permission/capability check до invocation; approval binding до side effect; redaction до journal, snapshot, trace и UI; provenance/checksum до artifact acceptance.
+- **P0 controls:** fail-closed permission policy, unavailable tools omitted from model context, direct forged tool rejection, fingerprint/target SHA binding, durable ledger, UNKNOWN recovery, no automatic replay, secret redaction и HMAC profile.
+- **Automatic tests:** CanonicalArgs golden/negative vectors, ledger torn-write/middle-corruption/key-loss/replay tests, capability filtering, forged-tool rejection, typed-envelope injection fixture и approval binding tests.
+- **Residual risks:** Android process death между effect и terminal frame, compromise of the host OS/Keystore, malicious content that is not recognized as a secret, и correctness of external GitHub/Actions state until re-check.
+- **Privileged mode:** отдельная capability profile с теми же approval, ledger, provenance и redaction invariants; privileged mode не может быть получен моделью самостоятельно.

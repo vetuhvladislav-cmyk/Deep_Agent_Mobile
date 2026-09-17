@@ -2,6 +2,7 @@ package dev.deepagent.mobile.agent.tools
 
 import android.content.Context
 import android.content.ContextWrapper
+import dev.deepagent.mobile.agent.model.PermissionMode
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
 import java.io.File
 import kotlinx.coroutines.runBlocking
@@ -116,6 +117,19 @@ class ToolRouterReadOnlyTest {
     }
 
     @Test
+    fun directForbiddenToolIsRejectedBeforeArgumentParsing() = runBlocking {
+        val forged = router.execute(
+            ToolRouter.TOOL_APPLY_PATCH,
+            "{not-json",
+            workspaceId,
+            permission = PermissionMode.READ_ONLY,
+        )
+
+        assertFalse(forged.ok)
+        assertEquals("TOOL_FORBIDDEN", forged.errorCode)
+    }
+
+    @Test
     fun gitToolsFailClosedWhenWorkspaceIsNotRepository() = runBlocking {
         val status = router.execute(ToolRouter.TOOL_GIT_STATUS, "{}", workspaceId)
         assertFalse(status.ok)
@@ -130,10 +144,11 @@ class ToolRouterReadOnlyTest {
     fun definitionsDeclareStrictBoundedArguments() {
         val definitions = ToolRouter.definitions().associateBy { it.name }
 
-        assertEquals(6, definitions.size)
+        assertEquals(5, definitions.size)
         assertTrue(definitions.values.all {
             !it.parameters.optBoolean("additionalProperties", true)
         })
+        assertEquals(PermissionMode.READ_ONLY, definitions.getValue(ToolRouter.TOOL_LIST_FILES).requiredPermission)
 
         val listPath = definitions.getValue(ToolRouter.TOOL_LIST_FILES)
             .parameters.getJSONObject("properties")

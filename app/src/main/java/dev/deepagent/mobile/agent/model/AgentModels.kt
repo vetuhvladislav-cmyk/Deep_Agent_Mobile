@@ -109,6 +109,9 @@ data class AgentSessionState(
     val workspaceId: String? = null,
     val eventCursor: Long = 0L,
     val recoveryRequired: Boolean = false,
+    val ledgerHealth: String = "CLEAN",
+    val ledgerUnknownCount: Int = 0,
+    val ledgerDiagnostic: String? = null,
 )
 
     
@@ -168,6 +171,7 @@ data class PendingPatchApproval(
     val canApply: Boolean,
     val approvalToken: String = "",
     val approvalExpiresAt: Long = 0L,
+    val targetSha: String? = null,
 )
 
 

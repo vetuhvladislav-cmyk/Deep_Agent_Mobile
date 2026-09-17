@@ -7,6 +7,13 @@ import dev.deepagent.mobile.agent.deepseek.DeepSeekStreamEvent
 import dev.deepagent.mobile.agent.deepseek.DeepSeekToolDefinition
 import dev.deepagent.mobile.agent.github.GitHubActionsClient
 import dev.deepagent.mobile.agent.image.ImageAnalysisPipeline
+import dev.deepagent.mobile.agent.ledger.AndroidKeystoreHmacKeyProvider
+import dev.deepagent.mobile.agent.ledger.LedgerHealth
+import dev.deepagent.mobile.agent.ledger.LedgerIntegrityMode
+import dev.deepagent.mobile.agent.ledger.LedgerOperationSpec
+import dev.deepagent.mobile.agent.ledger.LedgerPhase
+import dev.deepagent.mobile.agent.ledger.LedgerResolution
+import dev.deepagent.mobile.agent.ledger.OperationLedger
 import dev.deepagent.mobile.agent.credential.CredentialKind
 import dev.deepagent.mobile.agent.credential.EphemeralCredentialVault
 import dev.deepagent.mobile.agent.model.CredentialState
@@ -75,7 +82,12 @@ import dev.deepagent.mobile.agent.session.SessionRequestSummary
 import dev.deepagent.mobile.agent.session.SessionStore
 import dev.deepagent.mobile.agent.tools.AgentToolDefinition
 import dev.deepagent.mobile.agent.tools.ToolExecutionResult
+import dev.deepagent.mobile.agent.security.AuditTraceStore
+import dev.deepagent.mobile.agent.security.InMemoryAuditTraceStore
+import dev.deepagent.mobile.agent.tools.ToolInvoker
 import dev.deepagent.mobile.agent.tools.ToolRouter
+import dev.deepagent.mobile.agent.tools.ToolRegistry
+import dev.deepagent.mobile.agent.tools.ToolVerifier
 import dev.deepagent.mobile.agent.workspace.WorkspaceManager
 import dev.deepagent.mobile.agent.workspace.WorkspaceSummary
 import kotlinx.coroutines.CancellationException
@@ -92,7 +104,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.net.URL
 import java.util.LinkedHashMap
 import java.util.UUID
@@ -104,6 +118,7 @@ private data class PendingPatch(
     val preview: PatchPreview,
     val canApply: Boolean,
     val approvalToken: ApprovalToken,
+    val targetSha: String? = null,
     val invocationId: String? = null,
 )
 
@@ -123,6 +138,7 @@ class AgentCore(context: Context) : AgentBridge {
     private val runtimeSupervisor = RuntimeSupervisor()
     private val interactiveSession = InteractiveCommandSession(workspaceManager)
     private val toolRouter = ToolRouter(workspaceManager)
+    private val toolInvoker = ToolInvoker(toolRouter)
     private val providerRegistry = ProviderRegistry(
         listOf(DeepSeekLlmProvider()),
     )
@@ -132,6 +148,13 @@ class AgentCore(context: Context) : AgentBridge {
     private val credentialVault = EphemeralCredentialVault()
     private val pullRequests = GitHubPullRequestClient()
     private val sessionStore = SessionStore(appContext)
+    private val auditTraceStore: AuditTraceStore = InMemoryAuditTraceStore()
+    private val agentTransaction = AgentTransaction(
+        OperationLedger(
+            file = File(appContext.filesDir, "agent-operation-ledger.bin"),
+            keyProvider = AndroidKeystoreHmacKeyProvider(),
+        ),
+    )
     private val coreScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val journalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val submitMutex = Mutex()
@@ -207,6 +230,7 @@ class AgentCore(context: Context) : AgentBridge {
 
     init {
         restoreLatestSession()
+        applyLedgerState()
         coreScope.launch { refreshWorkspace() }
     }
 
@@ -315,7 +339,13 @@ class AgentCore(context: Context) : AgentBridge {
                     summary = "Нет журнала для экспорта",
                     errorCode = "JOURNAL_EMPTY",
                 )
-                val payload = snapshot.toJson().toString(2)
+                val payload = snapshot.toJson()
+                    .put("operation_ledger", agentTransaction.snapshot().toJson())
+                    .put(
+                        "audit_trace",
+                        JSONArray(auditTraceStore.exportRedacted()),
+                    )
+                    .toString(2)
                 val bytes = payload.toByteArray(Charsets.UTF_8)
                 if (bytes.size.toLong() > SessionStore.MAX_JOURNAL_BYTES) {
                     return@withContext JournalExportResult(
@@ -1138,10 +1168,47 @@ class AgentCore(context: Context) : AgentBridge {
         )
         val actionToken = request.token.trim().takeIf { it.isNotBlank() }
             ?: readCredential(CredentialKind.GITHUB_TOKEN).orEmpty()
+        val ledgerOperationId = boundRequest.operationId.orEmpty()
+        val ledgerStarted = beginLedger(
+            LedgerOperationSpec(
+                operationId = ledgerOperationId,
+                operation = "github_actions_dispatch",
+                sessionId = boundRequest.sessionId,
+                workspaceId = workspaceIdForActions(),
+                targetSha = currentRequestSummary?.targetSha,
+                resolution = LedgerResolution.QUERYABLE,
+                integrityMode = LedgerIntegrityMode.HMAC_SHA256,
+                keyVersion = 1,
+            ),
+        )
+        if (ledgerStarted == null) {
+            val blocked = ActionsOperationState(
+                sessionId = boundRequest.sessionId,
+                operationId = ledgerOperationId,
+                repository = boundRequest.repository,
+                workflow = boundRequest.workflow,
+                ref = boundRequest.ref,
+                status = ActionsOperationStatus.UNKNOWN,
+                summary = "Operation ledger заблокировал Actions side effect",
+                errorCode = "LEDGER_RECHECK_REQUIRED",
+            )
+            _actionsState.value = blocked
+            append(AgentEventKind.ERROR, blocked.summary.orEmpty(), blocked.toJson().toString())
+            return blocked
+        }
         val result = runActionsInternal(
             boundRequest.copy(
                 token = actionToken,
             ),
+        )
+        finishLedger(
+            operationId = ledgerOperationId,
+            phase = when (result.status) {
+                ActionsOperationStatus.SUCCEEDED -> LedgerPhase.SUCCEEDED
+                ActionsOperationStatus.FAILED -> LedgerPhase.FAILED
+                else -> LedgerPhase.UNKNOWN
+            },
+            detail = result.summary,
         )
         when (result.status) {
             ActionsOperationStatus.UNKNOWN -> markUnknown(
@@ -1692,6 +1759,7 @@ class AgentCore(context: Context) : AgentBridge {
             workspaceFingerprint = workspaceId?.let {
                 workspaceManager.captureIdentity(it)?.treeSha256
             },
+            targetSha = workspaceId?.let { toolRouter.currentGitHeadSha(it) },
             repository = request.repository,
             workflow = request.workflow,
             ref = request.ref,
@@ -1848,6 +1916,23 @@ class AgentCore(context: Context) : AgentBridge {
             return
         }
 
+        val operationId = UUID.randomUUID().toString()
+        val ledgerStarted = beginLedger(
+            LedgerOperationSpec(
+                operationId = operationId,
+                operation = "github_actions_dispatch",
+                sessionId = currentSessionId,
+                workspaceId = request.workspaceId,
+                targetSha = currentRequestSummary?.targetSha,
+                resolution = LedgerResolution.QUERYABLE,
+                integrityMode = LedgerIntegrityMode.HMAC_SHA256,
+                keyVersion = 1,
+            ),
+        )
+        if (ledgerStarted == null) {
+            markUnknown("Operation ledger заблокирован; GitHub Actions не запускался")
+            return
+        }
         val result = runActionsInternal(
             ActionsRunRequest(
                 token = readCredential(CredentialKind.GITHUB_TOKEN).orEmpty(),
@@ -1855,7 +1940,17 @@ class AgentCore(context: Context) : AgentBridge {
                 workflow = request.workflow.orEmpty(),
                 ref = request.ref,
                 sessionId = currentSessionId,
+                operationId = operationId,
             ),
+        )
+        finishLedger(
+            operationId = operationId,
+            phase = when (result.status) {
+                ActionsOperationStatus.SUCCEEDED -> LedgerPhase.SUCCEEDED
+                ActionsOperationStatus.FAILED -> LedgerPhase.FAILED
+                else -> LedgerPhase.UNKNOWN
+            },
+            detail = result.summary,
         )
         when (result.status) {
             ActionsOperationStatus.SUCCEEDED -> Unit
@@ -1889,7 +1984,7 @@ class AgentCore(context: Context) : AgentBridge {
         val selectedWorkspace = request.workspaceId
             ?.let { workspaceManager.resolveRoot(it) }
         val definitions = if (selectedWorkspace != null) {
-            ToolRouter.definitions()
+            ToolRegistry.definitions(request.permission)
         } else {
             emptyList()
         }
@@ -2064,6 +2159,26 @@ class AgentCore(context: Context) : AgentBridge {
             val nextInput = responseOutputItems(response).toMutableList()
             for (call in result.functionCalls) {
                 val invocationId = beginInvocation(call.name, call.callId)
+                val authorization = ToolVerifier.authorize(call.name, request.permission)
+                if (!authorization.allowed) {
+                    val denied = ToolExecutionResult(
+                        toolName = call.name,
+                        ok = false,
+                        summary = "Tool запрещён текущей capability policy",
+                        errorCode = authorization.errorCode,
+                    )
+                    completeInvocation(
+                        invocationId = invocationId,
+                        state = "DENIED",
+                        summary = denied.summary,
+                    )
+                    appendToolResult(denied, invocationId)
+                    nextInput += JSONObject()
+                        .put("type", "function_call_output")
+                        .put("call_id", call.callId)
+                        .put("output", denied.toModelJson())
+                    continue
+                }
                 append(
                     AgentEventKind.TOOL,
                     "Вызов tool: " + call.name,
@@ -2072,9 +2187,10 @@ class AgentCore(context: Context) : AgentBridge {
                 )
 
                 if (call.name == ToolRouter.TOOL_APPLY_PATCH) {
-                    val previewResult = toolRouter.previewPatch(
+                    val previewResult = toolInvoker.previewPatch(
                         argumentsJson = call.arguments,
                         workspaceId = request.workspaceId,
+                        permission = request.permission,
                     )
                     completeInvocation(
                         invocationId = invocationId,
@@ -2097,11 +2213,13 @@ class AgentCore(context: Context) : AgentBridge {
                             argumentsJson = call.arguments,
                             preview = preview,
                             canApply = permission.allows(PermissionMode.LOCAL_WRITE),
+                            targetSha = currentRequestSummary?.targetSha,
                             approvalToken = ApprovalTokenFactory.issue(
                                 operation = ApprovalTokenFactory.APPLY_PATCH_OPERATION,
                                 sessionId = currentSessionId.orEmpty(),
                                 workspaceId = pendingWorkspaceId,
                                 workspaceFingerprint = preview.workspaceFingerprint,
+                                targetSha = currentRequestSummary?.targetSha,
                                 path = preview.path,
                                 oldSha256 = preview.oldSha256,
                                 newSha256 = preview.newSha256,
@@ -2139,10 +2257,11 @@ class AgentCore(context: Context) : AgentBridge {
                     continue
                 }
 
-                val toolResult = toolRouter.execute(
+                val toolResult = toolInvoker.execute(
                     toolName = call.name,
                     argumentsJson = call.arguments,
                     workspaceId = request.workspaceId,
+                    permission = request.permission,
                 )
                 completeInvocation(
                     invocationId = invocationId,
@@ -2195,6 +2314,7 @@ class AgentCore(context: Context) : AgentBridge {
             sessionId = pending.sessionId,
             workspaceId = pending.workspaceId,
             workspaceFingerprint = pending.preview.workspaceFingerprint,
+            targetSha = pending.targetSha,
             path = pending.preview.path,
             oldSha256 = pending.preview.oldSha256,
             newSha256 = pending.preview.newSha256,
@@ -2258,12 +2378,58 @@ class AgentCore(context: Context) : AgentBridge {
 
         patchApplyJob?.cancel()
         val job = coreScope.launch {
+            val targetShaCheck = runCatching {
+                toolRouter.currentGitHeadSha(pending.workspaceId)
+            }
+            if (
+                targetShaCheck.isFailure ||
+                    targetShaCheck.getOrNull() != pending.targetSha
+            ) {
+                clearPendingPatch()
+                completeInvocation(
+                    invocationId = pending.invocationId,
+                    state = "UNKNOWN",
+                    summary = "Target SHA изменился или не подтверждён после approval",
+                )
+                markUnknown(
+                    "Target SHA не подтверждён; выполните новый preview перед записью",
+                )
+                return@launch
+            }
+            val ledgerOperationId = pending.invocationId ?: UUID.randomUUID().toString()
+            val ledgerStarted = beginLedger(
+                LedgerOperationSpec(
+                    operationId = ledgerOperationId,
+                    operation = "apply_patch",
+                    sessionId = pending.sessionId,
+                    workspaceId = pending.workspaceId,
+                    targetSha = pending.targetSha,
+                    argumentsSha256 = pending.approvalToken.argumentsSha256,
+                    resolution = LedgerResolution.IDEMPOTENT,
+                ),
+            )
+            if (ledgerStarted == null) {
+                clearPendingPatch()
+                completeInvocation(
+                    invocationId = pending.invocationId,
+                    state = "UNKNOWN",
+                    summary = "Operation ledger заблокировал применение patch",
+                )
+                markUnknown("Operation ledger заблокирован; требуется re-check")
+                return@launch
+            }
+
             val result = toolRouter.applyPatch(
                 argumentsJson = pending.argumentsJson,
                 workspaceId = pending.workspaceId,
                 expectedWorkspaceFingerprint = pending.preview.workspaceFingerprint,
             )
             if (!result.ok) {
+                finishLedger(
+                    operationId = ledgerOperationId,
+                    phase = LedgerPhase.UNKNOWN,
+                    detail = result.summary,
+                )
                 updatePatchRecovery(
                     pending = pending,
                     result = result,
@@ -2281,6 +2447,11 @@ class AgentCore(context: Context) : AgentBridge {
                 return@launch
             }
 
+            finishLedger(
+                operationId = ledgerOperationId,
+                phase = LedgerPhase.SUCCEEDED,
+                detail = "Patch applied",
+            )
             completeInvocation(
                 invocationId = pending.invocationId,
                 state = "SUCCEEDED",
@@ -2655,6 +2826,32 @@ class AgentCore(context: Context) : AgentBridge {
             )
             persistAsync()
 
+            val ledgerStarted = beginLedger(
+                LedgerOperationSpec(
+                    operationId = operationId,
+                    operation = "git_" + operation.name.lowercase(),
+                    sessionId = currentSessionId,
+                    workspaceId = currentRequestSummary?.workspaceId,
+                    targetSha = currentRequestSummary?.targetSha,
+                    resolution = LedgerResolution.QUERYABLE,
+                    integrityMode = LedgerIntegrityMode.HMAC_SHA256,
+                    keyVersion = 1,
+                ),
+            )
+            if (ledgerStarted == null) {
+                val blocked = GitOperationResult(
+                    operation = operation,
+                    operationId = operationId,
+                    sessionId = currentSessionId,
+                    status = GitOperationStatus.UNKNOWN,
+                    summary = "Operation ledger заблокировал Git side effect",
+                    errorCode = "LEDGER_RECHECK_REQUIRED",
+                )
+                publishGitResult(blocked)
+                markUnknown(blocked.summary)
+                return blocked
+            }
+
             val result = try {
                 action()
             } catch (cancelled: CancellationException) {
@@ -2674,6 +2871,15 @@ class AgentCore(context: Context) : AgentBridge {
             val boundResult = result.copy(
                 sessionId = result.sessionId ?: currentSessionId,
                 operationId = result.operationId ?: operationId,
+            )
+            finishLedger(
+                operationId = operationId,
+                phase = when (boundResult.status) {
+                    GitOperationStatus.SUCCEEDED -> LedgerPhase.SUCCEEDED
+                    GitOperationStatus.FAILED -> LedgerPhase.FAILED
+                    else -> LedgerPhase.UNKNOWN
+                },
+                detail = boundResult.summary,
             )
             if (
                 boundResult.status == GitOperationStatus.SUCCEEDED ||
@@ -2839,6 +3045,70 @@ class AgentCore(context: Context) : AgentBridge {
         return result
     }
 
+    private fun applyLedgerState() {
+        val ledger = agentTransaction.snapshot()
+        val diagnostic = ledger.diagnostics.joinToString("; ")
+            .take(MAX_ERROR_CHARS)
+            .takeIf { it.isNotBlank() }
+        val needsRecovery = ledger.health != LedgerHealth.CLEAN ||
+            ledger.unknownOperationIds.isNotEmpty() ||
+            ledger.blocked
+        _state.value = _state.value.copy(
+            ledgerHealth = ledger.health.name,
+            ledgerUnknownCount = ledger.unknownOperationIds.size,
+            ledgerDiagnostic = diagnostic,
+            recoveryRequired = _state.value.recoveryRequired || needsRecovery,
+            lastError = if (
+                needsRecovery &&
+                    _state.value.status != AgentSessionStatus.RUNNING &&
+                    _state.value.status != AgentSessionStatus.WAITING_APPROVAL
+            ) {
+                diagnostic ?: _state.value.lastError
+            } else {
+                _state.value.lastError
+            },
+        )
+    }
+
+    private fun beginLedger(spec: LedgerOperationSpec): String? {
+        return try {
+            val record = agentTransaction.begin(spec)
+            applyLedgerState()
+            record.operationId
+        } catch (error: Exception) {
+            append(
+                AgentEventKind.ERROR,
+                "Operation ledger не разрешил запуск side effect",
+                AgentRedactor.text(
+                    error.message ?: "LEDGER_BLOCKED",
+                    MAX_ERROR_CHARS,
+                ),
+            )
+            applyLedgerState()
+            null
+        }
+    }
+
+    private fun finishLedger(
+        operationId: String,
+        phase: LedgerPhase,
+        detail: String?,
+    ) {
+        runCatching {
+            agentTransaction.finish(operationId, phase, detail)
+        }.onFailure { error ->
+            append(
+                AgentEventKind.ERROR,
+                "Terminal ledger state не подтверждён",
+                AgentRedactor.text(
+                    error.message ?: "LEDGER_TERMINAL_UNCONFIRMED",
+                    MAX_ERROR_CHARS,
+                ),
+            )
+        }
+        applyLedgerState()
+    }
+
     private fun clearPendingPatch() {
         _pendingPatch.value = null
         _pendingApproval.value = null
@@ -2859,6 +3129,7 @@ class AgentCore(context: Context) : AgentBridge {
             canApply = canApply,
             approvalToken = approvalToken.value,
             approvalExpiresAt = approvalToken.expiresAt,
+            targetSha = targetSha,
         )
     }
 
@@ -2994,6 +3265,13 @@ class AgentCore(context: Context) : AgentBridge {
         payload: String? = null,
     ) {
         eventSequence += 1
+        auditTraceStore.append(
+            sessionId = currentSessionId,
+            toolName = kind.name,
+            operationId = invocationId,
+            state = kind.name,
+            detail = payload ?: detail ?: message,
+        )
         val next = _events.value + AgentEvent(
             kind = kind,
             message = AgentRedactor.text(message, MAX_EVENT_MESSAGE_CHARS).orEmpty(),
