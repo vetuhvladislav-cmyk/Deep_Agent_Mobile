@@ -37,16 +37,22 @@ Deep Agent использует одну нативную оболочку, Agen
 
 ## Проверки
 
-Текущая визуальная адаптация и статический hardening-аудит выполнены на ветке `codex/p1-a-controlled-write-git-pr`; `main` не изменялся. В проход вошли контракт UI, permission/path guards, cancellation/recovery, Git/Actions provenance и атомарная persistence. Для текущего рабочего diff Android build/test и GitHub Actions не запускались по согласованному ограничению.
+Текущая проверка выполнена на ветке `codex/p1-a-controlled-write-git-pr`; `main` не изменялся.
 
-Ниже приведена историческая проверка базовой ветки `main`, а не результат текущего diff.
+- Commit [6176a68](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/6176a68ed0e3756fc3f3f623a270f1a8f5c09660): P0-A/P0-B test coverage, strict tool schemas и cancellation/deadline hardening.
+- [GitHub Actions run #20](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35264066884): `testDebugUnitTest` и `assembleDebug` — успешно.
+- [Release v0.1.4](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/tag/v0.1.4) опубликован из проверенного commit [84ca54b](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/84ca54b36c6ffe1ac3fb45ffbd0903275bc99ba7).
+- [APK v0.1.4](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/download/v0.1.4/deep-agent-mobile-v0.1.4-test.apk) — 9 998 464 байта.
+- SHA-256: `c6b20d9db54e5350fbacff14a8fb7cc5cde96fd09684175c366833855c0be762`.
+- Android instrumentation, реальный runtime и device lifecycle acceptance ещё не запускались; поэтому P0-A/P0-B/P0-C остаются `planned` до соответствующих exit criteria.
+
+Для сравнения остаётся историческая проверка базовой ветки `main`.
 
 Проверка выполнена на `main`, commit [35bfd00](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/commit/35bfd006342930ee7e58015578aa6e312c1f6f2a).
 
 - [GitHub Actions run #6](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35158511466): `testDebugUnitTest` и `assembleDebug` — успешно.
 - [APK v0.1.1](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/download/v0.1.1/deep-agent-mobile-v0.1.1-test.apk) — 9 670 540 байт.
 - SHA-256: `049fbad5f3e030d478260e60dabd0aa9fb7fc72e8c59134da86c5da0451ad215`.
-- Обычный Actions artifact не сохранён из-за квоты GitHub; APK доступен через Release.
 
 ## Принцип репозитория
 
