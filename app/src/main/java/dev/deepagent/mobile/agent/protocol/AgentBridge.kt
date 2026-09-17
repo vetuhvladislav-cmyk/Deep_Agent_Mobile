@@ -74,7 +74,18 @@ interface AgentBridge {
 
     suspend fun refreshWorkspace(): WorkspaceCatalogState
 
-    fun approvePendingPatch()
+    /**
+     * Подтверждает ровно тот patch preview, для которого выдан opaque token.
+     * Старый no-arg вызов сохраняется как совместимый фасад для внутренних
+     * callers, но фактическая проверка выполняется тем же token gate.
+     */
+    fun approvePendingPatch(approvalToken: String)
+
+    fun approvePendingPatch() {
+        pendingApproval.value?.approvalToken
+            ?.takeIf { it.isNotBlank() }
+            ?.let { approvePendingPatch(it) }
+    }
 
     fun rejectPendingPatch()
 
