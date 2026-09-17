@@ -405,7 +405,7 @@ class RuntimeSupervisor(
             withTimeout(STOP_TIMEOUT_MS) { provider.stop() }
         } catch (timeout: TimeoutCancellationException) {
             return RuntimeState(
-                status = RuntimeStatus.UNKNOWN,
+                status = RuntimeStatus.FAILED,
                 sessionId = sessionId,
                 version = manifest.version,
                 abi = manifest.abi,
@@ -417,7 +417,7 @@ class RuntimeSupervisor(
             throw cancelled
         } catch (error: Exception) {
             return RuntimeState(
-                status = RuntimeStatus.UNKNOWN,
+                status = RuntimeStatus.FAILED,
                 sessionId = sessionId,
                 version = manifest.version,
                 abi = manifest.abi,
