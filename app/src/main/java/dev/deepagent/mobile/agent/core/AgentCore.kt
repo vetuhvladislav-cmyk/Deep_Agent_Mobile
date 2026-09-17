@@ -3,7 +3,6 @@ package dev.deepagent.mobile.agent.core
 import android.content.Context
 import android.net.Uri
 import dev.deepagent.mobile.agent.deepseek.DeepSeekRequest
-import dev.deepagent.mobile.agent.deepseek.DeepSeekResponsesClient
 import dev.deepagent.mobile.agent.deepseek.DeepSeekStreamEvent
 import dev.deepagent.mobile.agent.deepseek.DeepSeekToolDefinition
 import dev.deepagent.mobile.agent.github.GitHubActionsClient
@@ -48,6 +47,8 @@ import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRequest
 import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.model.AgentWorkspaceSnapshot
+import dev.deepagent.mobile.agent.provider.DeepSeekLlmProvider
+import dev.deepagent.mobile.agent.provider.ProviderRegistry
 import dev.deepagent.mobile.agent.model.ApprovalToken
 import dev.deepagent.mobile.agent.model.ApprovalTokenFactory
 import dev.deepagent.mobile.agent.model.PendingPatchApproval
@@ -118,7 +119,9 @@ class AgentCore(context: Context) : AgentBridge {
     private val runtimeSupervisor = RuntimeSupervisor()
     private val interactiveSession = InteractiveCommandSession(workspaceManager)
     private val toolRouter = ToolRouter(workspaceManager)
-    private val deepSeek = DeepSeekResponsesClient()
+    private val providerRegistry = ProviderRegistry(
+        listOf(DeepSeekLlmProvider()),
+    )
     private val actionsClient = GitHubActionsClient()
     private val artifactManager = ArtifactManager()
     private val imagePipeline = ImageAnalysisPipeline(appContext)
@@ -360,7 +363,7 @@ class AgentCore(context: Context) : AgentBridge {
 
     override fun cancel() {
         activeJob?.cancel()
-        deepSeek.cancelActive()
+        providerRegistry.cancelAll()
         actionsClient.cancelActive()
         pullRequests.cancelActive()
         patchApplyJob?.cancel()
@@ -1528,7 +1531,7 @@ class AgentCore(context: Context) : AgentBridge {
         pullRequests.cancelActive()
         patchApplyJob?.cancel()
         patchApplyJob = null
-        deepSeek.cancelActive()
+        providerRegistry.cancelAll()
         interactiveSession.close()
         runtimeSupervisor.close()
         imagePipeline.clear()
@@ -1565,6 +1568,7 @@ class AgentCore(context: Context) : AgentBridge {
             target = target,
             permission = request.permission,
             workspaceId = workspaceId,
+            providerId = request.providerId.trim().takeIf { it.isNotBlank() },
             workspaceFingerprint = workspaceId?.let {
                 workspaceManager.captureIdentity(it)?.treeSha256
             },
@@ -1735,6 +1739,13 @@ class AgentCore(context: Context) : AgentBridge {
     }
 
     private suspend fun runDeepSeekAgent(request: AgentRequest) {
+        val providerId = request.providerId.trim()
+        val provider = providerRegistry.resolve(providerId)
+        if (provider == null) {
+            fail("Provider не зарегистрирован: " + providerId)
+            return
+        }
+
         val apiKey = readCredential(CredentialKind.DEEPSEEK_API_KEY).orEmpty()
         if (apiKey.isBlank()) {
             fail("DeepSeek API key не задан; выполнение остановлено")
@@ -1811,14 +1822,14 @@ class AgentCore(context: Context) : AgentBridge {
 
         append(
             AgentEventKind.SESSION,
-            "DeepSeek " + request.model + " streaming запущен",
+            providerId + " " + request.model + " streaming запущен",
         )
 
         var inputItems = emptyList<JSONObject>()
         var round = 0
 
         while (true) {
-            val result = deepSeek.streamRound(
+            val result = provider.streamRound(
                 DeepSeekRequest(
                     apiKey = apiKey,
                     baseUrl = request.deepSeekBaseUrl,
