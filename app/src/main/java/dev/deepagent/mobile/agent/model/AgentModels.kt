@@ -908,6 +908,9 @@ data class PatchRollbackResult(
 
 
 internal object AgentRedactor {
+    private val urlCredentialPattern = Regex(
+        """(?i)(https?://)[^\\s/@:]+:[^\\s/@]+@""",
+    )
     private val dataUrlPattern = Regex(
         """data:[^;\s]+;base64,[A-Za-z0-9+/=]+""",
         RegexOption.IGNORE_CASE,
@@ -941,6 +944,9 @@ internal object AgentRedactor {
         if (value == null) return null
         val limit = maxChars.coerceAtLeast(1)
         var result = value
+        result = result.replace(urlCredentialPattern) { match ->
+            match.groupValues[1] + "<redacted>@"
+        }
         result = result.replace(dataUrlPattern, "<redacted-data-url>")
         result = result.replace(bearerPattern, "Bearer <redacted>")
         result = result.replace(knownTokenPattern, "<redacted-token>")
