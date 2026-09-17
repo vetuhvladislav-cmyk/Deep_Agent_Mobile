@@ -5,16 +5,24 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import dev.deepagent.mobile.agent.ui.agentControl
 import dev.deepagent.mobile.agent.ui.AgentUiContract
+import dev.deepagent.mobile.ui.theme.DeepAgentColors
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -176,7 +185,7 @@ fun AgentConsoleScreen(
                 .onSuccess { result ->
                     if (result.status == JournalExportStatus.EXPORTED) {
                         journalExportError = null
-                        journalExportMessage = result.summary + " · " + result.bytes + " bytes"
+                        journalExportMessage = result.summary + " · " + result.bytes + " байт"
                     } else {
                         journalExportMessage = null
                         journalExportError = result.summary
@@ -184,7 +193,7 @@ fun AgentConsoleScreen(
                 }
                 .onFailure {
                     journalExportMessage = null
-                    journalExportError = it.message ?: "Не удалось экспортировать journal"
+                    journalExportError = it.message ?: "Не удалось экспортировать журнал"
                 }
         }
     }
@@ -273,7 +282,14 @@ fun AgentConsoleScreen(
                         "Вернуться назад",
                     ),
                     onClick = onBack,
-                ) { Text("Назад") }
+                ) {
+                        Icon(
+                            imageVector = Icons.Outlined.ArrowBack,
+                            contentDescription = null,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Назад")
+                    }
                 },
             )
         },
@@ -324,20 +340,20 @@ fun AgentConsoleScreen(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "Target: " + (state.target?.shortLabel() ?: target.shortLabel()) +
-                            " · permission: " + permission.shortLabel(),
+                        text = "Цель: " + (state.target?.shortLabel() ?: target.shortLabel()) +
+                            " · разрешение: " + permission.shortLabel(),
                         style = MaterialTheme.typography.labelSmall,
                     )
                     Text(
                         text = "DeepSeek: " + if (credentials.deepSeekConfigured) {
                             "ключ в памяти · TTL · " + model
                         } else {
-                            "ключ не загружен · offline prototype"
+                            "ключ не загружен · офлайн-прототип"
                         },
                         style = MaterialTheme.typography.labelSmall,
                     )
                     Text(
-                        text = "GitHub token: " + if (credentials.githubConfigured) {
+                        text = "Токен GitHub: " + if (credentials.githubConfigured) {
                             "в памяти · TTL"
                         } else {
                             "не загружен"
@@ -367,12 +383,12 @@ fun AgentConsoleScreen(
                                 journalExportPicker.launch("agent-session-journal.json")
                             },
                         ) {
-                            Text("Экспорт journal")
+                            Text("Экспорт журнала")
                         }
                         TextButton(
                             modifier = Modifier.agentControl(
                                 AgentUiContract.CLEAR_CREDENTIALS,
-                                "Очистить credentials из памяти",
+                                "Очистить учётные данные из памяти",
                             ),
                             onClick = {
                                 agent.clearCredentials()
@@ -380,7 +396,7 @@ fun AgentConsoleScreen(
                                 githubToken = ""
                             },
                         ) {
-                            Text("Очистить credentials")
+                            Text("Очистить учётные данные")
                         }
                     }
                     journalExportMessage?.let {
@@ -398,7 +414,7 @@ fun AgentConsoleScreen(
                     }
                     if (state.recoveryRequired) {
                         Text(
-                            text = "Recovery требуется: side effect не повторяется автоматически.",
+                            text = "Требуется восстановление: побочный эффект не повторяется автоматически.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                         )
@@ -411,6 +427,11 @@ fun AgentConsoleScreen(
                     enabled = pendingApproval == null,
                     onClick = submitCurrentTask,
                 ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Refresh,
+                        contentDescription = null,
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Text("Новая проверка")
                 }
             }
@@ -443,15 +464,15 @@ fun AgentConsoleScreen(
                 ) {
                     Text(
                         text = workspace?.let {
-                            "Workspace: " + it.displayName +
+                            "Рабочая область: " + it.displayName +
                                 " · " + it.fileCount + " файлов · " +
                                 formatWorkspaceBytes(it.totalBytes)
-                        } ?: "Workspace не выбран",
+                        } ?: "Рабочая область не выбрана",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "P0 read-only tools работают только с импортированной app-private копией.",
+                        text = "P0-инструменты чтения работают с импортированной копией приложения.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -462,7 +483,7 @@ fun AgentConsoleScreen(
                         OutlinedButton(
                             modifier = Modifier.agentControl(
                                 AgentUiContract.IMPORT_ZIP,
-                                "Импортировать ZIP workspace",
+                                "Импортировать ZIP рабочей области",
                             ),
                             onClick = {
                                 zipPicker.launch(
@@ -479,7 +500,7 @@ fun AgentConsoleScreen(
                         OutlinedButton(
                             modifier = Modifier.agentControl(
                                 AgentUiContract.IMPORT_FOLDER,
-                                "Импортировать папку workspace",
+                                "Импортировать папку рабочей области",
                             ),
                             onClick = { folderPicker.launch(null) },
                         ) {
@@ -511,7 +532,7 @@ fun AgentConsoleScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = "D2 Workspace Catalog · " +
+                            text = "D2 · Каталог рабочей области · " +
                                 workspaceCatalog.status.name,
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -529,7 +550,7 @@ fun AgentConsoleScreen(
                                 OutlinedButton(
                                     modifier = Modifier.agentControl(
                                         AgentUiContract.workspace(candidate.id),
-                                        "Выбрать workspace " + candidate.displayName,
+                                        "Выбрать рабочую область " + candidate.displayName,
                                     ),
                                     enabled = candidate.id != workspaceCatalog.selectedId &&
                                         state.status != AgentSessionStatus.RUNNING &&
@@ -559,7 +580,7 @@ fun AgentConsoleScreen(
                         OutlinedButton(
                             modifier = Modifier.agentControl(
                                 AgentUiContract.WORKSPACE_REFRESH,
-                                "Обновить workspace catalog",
+                                "Обновить каталог рабочей области",
                             ),
                             enabled = state.status != AgentSessionStatus.RUNNING,
                             onClick = {
@@ -574,11 +595,11 @@ fun AgentConsoleScreen(
                                 }
                             },
                         ) {
-                            Text("Обновить catalog")
+                            Text("Обновить каталог")
                         }
                         workspaceCatalog.fingerprint?.let {
                             Text(
-                                text = "Fingerprint: " + it.take(16) + "…",
+                                text = "Отпечаток: " + it.take(16) + "…",
                                 style = MaterialTheme.typography.labelSmall,
                             )
                         }
@@ -617,14 +638,14 @@ fun AgentConsoleScreen(
                         }
                         if (workspaceCatalog.entriesTruncated) {
                             Text(
-                                text = "Tree ограничен; используйте read-only tools для paging.",
+                                text = "Дерево ограничено; используйте инструменты чтения для постраничного просмотра.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         workspaceCatalog.errorCode?.let {
                             Text(
-                                text = "Ошибка catalog: " + it,
+                                text = "Ошибка каталога: " + it,
                                 color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall,
                             )
@@ -645,13 +666,13 @@ fun AgentConsoleScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = "Patch preview: " + pending.path,
+                            text = "Предпросмотр изменения: " + pending.path,
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            text = "tree SHA: " + pending.workspaceFingerprint +
-                                " · base: " +
-                                (pending.oldSha256 ?: "new") +
+                            text = "SHA дерева: " + pending.workspaceFingerprint +
+                                " · база: " +
+                                (pending.oldSha256 ?: "новый") +
                                 " → " + pending.newSha256,
                             style = MaterialTheme.typography.labelSmall,
                         )
@@ -668,17 +689,22 @@ fun AgentConsoleScreen(
                             Button(
                                 modifier = Modifier.agentControl(
                                     AgentUiContract.APPROVE_PATCH,
-                                    "Применить patch после проверки",
+                                    "Применить изменение после проверки",
                                 ),
                                 enabled = pending.canApply,
                                 onClick = { agent.approvePendingPatch() },
                             ) {
-                                Text("Применить patch")
+                                Icon(
+                                imageVector = Icons.Outlined.CheckCircle,
+                                contentDescription = null,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Применить изменение")
                             }
                             OutlinedButton(
                                 modifier = Modifier.agentControl(
                                     AgentUiContract.REJECT_PATCH,
-                                    "Отклонить patch preview",
+                                    "Отклонить предпросмотр изменения",
                                 ),
                                 onClick = { agent.rejectPendingPatch() },
                             ) {
@@ -687,7 +713,7 @@ fun AgentConsoleScreen(
                         }
                         if (!pending.canApply) {
                             Text(
-                                text = "Для применения нужен permission LOCAL_WRITE при запуске этой сессии.",
+                                text = "Для применения нужно разрешение LOCAL_WRITE при запуске этой сессии.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                             )
@@ -711,7 +737,7 @@ fun AgentConsoleScreen(
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text(
-                                text = "Patch checkpoint / recovery",
+                                text = "Контрольная точка изменения / восстановление",
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
@@ -730,7 +756,7 @@ fun AgentConsoleScreen(
                             )
                             recovery.workspaceFingerprintAfter?.let {
                                 Text(
-                                    text = "Post-write tree SHA: " + it,
+                                    text = "SHA дерева после записи: " + it,
                                     style = MaterialTheme.typography.labelSmall,
                                 )
                             }
@@ -756,12 +782,12 @@ fun AgentConsoleScreen(
                                                 }
                                                 .onFailure { error ->
                                                     patchRecoveryError = error.message
-                                                        ?: "Не удалось выполнить rollback"
+                                                        ?: "Не удалось выполнить откат"
                                                 }
                                         }
                                     },
                                 ) {
-                                    Text("Откатить patch")
+                                    Text("Откатить изменение")
                                 }
                             }
                             patchRecoveryError?.let {
@@ -772,7 +798,7 @@ fun AgentConsoleScreen(
                                 )
                             }
                             Text(
-                                text = "Rollback требует LOCAL_WRITE и выполняется только " +
+                                text = "Откат требует LOCAL_WRITE и выполняется только " +
                                     "после повторной проверки fingerprint; автоматического повтора нет.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
@@ -795,7 +821,7 @@ fun AgentConsoleScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = "P2-A RuntimeSupervisor",
+                        text = "P2-A · Супервизор среды выполнения",
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
@@ -819,7 +845,7 @@ fun AgentConsoleScreen(
                     }
                     runtimeState.heartbeatAt?.let {
                         Text(
-                            text = "Последний readiness probe: " + it,
+                            text = "Последняя проверка готовности: " + it,
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
@@ -830,7 +856,7 @@ fun AgentConsoleScreen(
                         Button(
                             modifier = Modifier.agentControl(
                                 "agent.runtime.start",
-                                "Запустить внутренний runtime",
+                                "Запустить внутреннюю среду выполнения",
                             ),
                             enabled = runtimeState.status == RuntimeStatus.EMPTY &&
                                 permission >= PermissionMode.LOCAL_WRITE &&
@@ -842,12 +868,12 @@ fun AgentConsoleScreen(
                                 }
                             },
                         ) {
-                            Text("Запустить runtime")
+                            Text("Запустить среду")
                         }
                         OutlinedButton(
                             modifier = Modifier.agentControl(
                                 "agent.runtime.stop",
-                                "Остановить внутренний runtime",
+                                "Остановить внутреннюю среду выполнения",
                             ),
                             enabled = runtimeState.status != RuntimeStatus.EMPTY &&
                                 state.status != AgentSessionStatus.RUNNING,
@@ -861,7 +887,7 @@ fun AgentConsoleScreen(
                         }
                     }
                     Text(
-                        text = "Loopback adapter работает внутри одного APK; Termux, DSH APK и внешний shell не используются.",
+                        text = "Адаптер loopback работает внутри одного APK; Termux, DSH APK и внешняя оболочка не используются.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -881,7 +907,7 @@ fun AgentConsoleScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = "P2-B Interactive command",
+                            text = "P2-B · Интерактивная команда",
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
@@ -927,7 +953,7 @@ fun AgentConsoleScreen(
                             Button(
                                 modifier = Modifier.agentControl(
                                     "agent.interactive.run",
-                                    "Запустить разрешённую интерактивную git-команду",
+                                    "Запустить разрешённую интерактивную команду Git",
                                 ),
                                 enabled = runtimeState.status == RuntimeStatus.READY &&
                                     interactiveState.status != InteractiveSessionStatus.STARTING &&
@@ -951,7 +977,7 @@ fun AgentConsoleScreen(
                                     }
                                 },
                             ) {
-                                Text("Git status")
+                                Text("Статус Git")
                             }
                             OutlinedButton(
                                 modifier = Modifier.agentControl(
@@ -967,7 +993,7 @@ fun AgentConsoleScreen(
                             }
                         }
                         Text(
-                            text = "Сейчас разрешён только прямой read-only git status/diff/log; shell, sh -c и произвольные команды заблокированы.",
+                            text = "Разрешены только прямые команды Git status/diff/log; shell, sh -c и произвольные команды заблокированы.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                         )
@@ -1003,7 +1029,7 @@ fun AgentConsoleScreen(
                         )
                         actionsState.headSha?.let {
                             Text(
-                                text = "Source SHA: " + it,
+                                text = "Исходный SHA: " + it,
                                 style = MaterialTheme.typography.labelSmall,
                             )
                         }
@@ -1037,7 +1063,7 @@ fun AgentConsoleScreen(
                             ) {
                                 Text(
                                     text = artifact.name + " · " +
-                                        artifact.sizeBytes + " bytes" +
+                                        artifact.sizeBytes + " байт" +
                                         if (artifact.verified) " · сохранён" else "",
                                     modifier = Modifier.weight(1f),
                                     style = MaterialTheme.typography.labelSmall,
@@ -1154,7 +1180,7 @@ fun AgentConsoleScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(
-                            text = "P1-A Git / ручной PR",
+                            text = "P1-A · Git / ручной PR",
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
@@ -1178,7 +1204,7 @@ fun AgentConsoleScreen(
                         gitState.headSha?.let {
                             Text(
                                 text = "HEAD: " + it +
-                                    " · branch: " + (gitState.branch ?: "DETACHED"),
+                                    " · ветка: " + (gitState.branch ?: "DETACHED"),
                                 style = MaterialTheme.typography.labelSmall,
                             )
                         }
@@ -1218,20 +1244,20 @@ fun AgentConsoleScreen(
                                 }
                             },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Новая branch") },
+                            label = { Text("Новая ветка") },
                             singleLine = true,
                         )
                         OutlinedTextField(
                             value = gitStartPoint,
                             onValueChange = { gitStartPoint = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Start point") },
+                            label = { Text("Точка старта") },
                             singleLine = true,
                         )
                         Button(
                             modifier = Modifier.agentControl(
                                 AgentUiContract.CREATE_BRANCH,
-                                "Создать branch явно",
+                                "Явно создать ветку",
                             ),
                             onClick = {
                                 gitError = null
@@ -1247,18 +1273,18 @@ fun AgentConsoleScreen(
                                         )
                                     }.onFailure { error ->
                                         gitError = error.message
-                                            ?: "Не удалось создать branch"
+                                            ?: "Не удалось создать ветку"
                                     }
                                 }
                             },
                         ) {
-                            Text("Создать branch")
+                            Text("Создать ветку")
                         }
                         OutlinedTextField(
                             value = commitPaths,
                             onValueChange = { commitPaths = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Paths для commit через запятую или новую строку") },
+                            label = { Text("Пути для коммита через запятую или новую строку") },
                             minLines = 2,
                             maxLines = 4,
                         )
@@ -1266,13 +1292,13 @@ fun AgentConsoleScreen(
                             value = commitMessage,
                             onValueChange = { commitMessage = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Commit message") },
+                            label = { Text("Сообщение коммита") },
                             singleLine = true,
                         )
                         Button(
                             modifier = Modifier.agentControl(
                                 AgentUiContract.COMMIT,
-                                "Создать commit явно",
+                                "Явно создать коммит",
                             ),
                             onClick = {
                                 gitError = null
@@ -1286,12 +1312,12 @@ fun AgentConsoleScreen(
                                         )
                                     }.onFailure { error ->
                                         gitError = error.message
-                                            ?: "Не удалось создать commit"
+                                            ?: "Не удалось создать коммит"
                                     }
                                 }
                             },
                         ) {
-                            Text("Commit выбранных paths")
+                            Text("Создать коммит выбранных путей")
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1301,21 +1327,21 @@ fun AgentConsoleScreen(
                                 value = gitRemote,
                                 onValueChange = { gitRemote = it },
                                 modifier = Modifier.weight(1f),
-                                label = { Text("Remote") },
+                                label = { Text("Удалённый репозиторий") },
                                 singleLine = true,
                             )
                             OutlinedTextField(
                                 value = pushBranch,
                                 onValueChange = { pushBranch = it },
                                 modifier = Modifier.weight(1f),
-                                label = { Text("Push branch") },
+                                label = { Text("Ветка для push") },
                                 singleLine = true,
                             )
                         }
                         Button(
                             modifier = Modifier.agentControl(
                                 AgentUiContract.PUSH,
-                                "Отправить branch через push",
+                                "Отправить ветку через push",
                             ),
                             onClick = {
                                 gitError = null
@@ -1334,13 +1360,13 @@ fun AgentConsoleScreen(
                                 }
                             },
                         ) {
-                            Text("Push")
+                            Text("Отправить")
                         }
                         OutlinedTextField(
                             value = repository,
                             onValueChange = { repository = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("PR repository owner/name") },
+                            label = { Text("Владелец/репозиторий PR") },
                             singleLine = true,
                         )
                         Row(
@@ -1351,14 +1377,14 @@ fun AgentConsoleScreen(
                                 value = pullRequestHead,
                                 onValueChange = { pullRequestHead = it },
                                 modifier = Modifier.weight(1f),
-                                label = { Text("PR head") },
+                                label = { Text("Ветка PR") },
                                 singleLine = true,
                             )
                             OutlinedTextField(
                                 value = pullRequestBase,
                                 onValueChange = { pullRequestBase = it },
                                 modifier = Modifier.weight(1f),
-                                label = { Text("PR base") },
+                                label = { Text("Базовая ветка PR") },
                                 singleLine = true,
                             )
                         }
@@ -1366,14 +1392,14 @@ fun AgentConsoleScreen(
                             value = pullRequestTitle,
                             onValueChange = { pullRequestTitle = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("PR title") },
+                            label = { Text("Заголовок PR") },
                             singleLine = true,
                         )
                         OutlinedTextField(
                             value = pullRequestBody,
                             onValueChange = { pullRequestBody = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("PR body") },
+                            label = { Text("Описание PR") },
                             minLines = 2,
                             maxLines = 5,
                         )
@@ -1417,7 +1443,7 @@ fun AgentConsoleScreen(
                                 Text("Создать PR")
                             }
                             TextButton(onClick = { pullRequestDraft = !pullRequestDraft }) {
-                                Text(if (pullRequestDraft) "Draft: да" else "Draft: нет")
+                                Text(if (pullRequestDraft) "Черновик: да" else "Черновик: нет")
                             }
                         }
                         gitError?.let {
@@ -1428,7 +1454,7 @@ fun AgentConsoleScreen(
                             )
                         }
                         Text(
-                            text = "Branch/commit/push требуют GITHUB_WRITE; PR требует PR_CREATE. " +
+                            text = "Ветка, коммит и push требуют GITHUB_WRITE; PR требует PR_CREATE. " +
                                 "Нажатие кнопки является явным approval.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -1516,8 +1542,8 @@ fun AgentConsoleScreen(
                     ) {
                         Text(
                             text = "Изображение: " +
-                                (imageState.displayName ?: "image") +
-                                " · " + (imageState.mediaType ?: "unknown"),
+                                (imageState.displayName ?: "изображение") +
+                                " · " + (imageState.mediaType ?: "неизвестный формат"),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -1535,8 +1561,8 @@ fun AgentConsoleScreen(
                             )
                         }
                         Text(
-                            text = "Перед отправкой в DeepSeek приложение покажет disclosure; " +
-                                "raw image bytes и data URL не сохраняются в journal.",
+                            text = "Перед передачей в DeepSeek приложение покажет уведомление; " +
+                                "исходные байты и data URL не сохраняются в журнале.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                         )
@@ -1563,7 +1589,7 @@ fun AgentConsoleScreen(
                         value = deepSeekKey,
                         onValueChange = { deepSeekKey = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("DeepSeek API key · только память сессии") },
+                        label = { Text("Ключ DeepSeek API · только в памяти сессии") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                     )
@@ -1575,7 +1601,7 @@ fun AgentConsoleScreen(
                             value = deepSeekBaseUrl,
                             onValueChange = { deepSeekBaseUrl = it },
                             modifier = Modifier.weight(1f),
-                            label = { Text("Base URL") },
+                            label = { Text("Базовый URL") },
                             singleLine = true,
                         )
                         OutlinedTextField(
@@ -1590,7 +1616,7 @@ fun AgentConsoleScreen(
                         value = githubToken,
                         onValueChange = { githubToken = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("GitHub token · только память сессии") },
+                        label = { Text("Токен GitHub · только в памяти сессии") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                     )
@@ -1602,14 +1628,14 @@ fun AgentConsoleScreen(
                             value = repository,
                             onValueChange = { repository = it },
                             modifier = Modifier.weight(1f),
-                            label = { Text("owner/repository") },
+                            label = { Text("владелец/репозиторий") },
                             singleLine = true,
                         )
                         OutlinedTextField(
                             value = workflow,
                             onValueChange = { workflow = it },
                             modifier = Modifier.weight(1f),
-                            label = { Text("Workflow") },
+                            label = { Text("Рабочий процесс") },
                             singleLine = true,
                         )
                     }
@@ -1643,6 +1669,11 @@ fun AgentConsoleScreen(
                     enabled = state.status != AgentSessionStatus.RUNNING && pendingApproval == null,
                     onClick = submitCurrentTask,
                 ) {
+                    Icon(
+                        imageVector = Icons.Outlined.PlayArrow,
+                        contentDescription = null,
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Text("Запустить")
                 }
                 OutlinedButton(
@@ -1718,7 +1749,7 @@ private fun AgentEventCard(event: AgentEvent) {
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text(
-                text = event.kind.name,
+                text = event.kind.shortLabel(),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = if (isError) {
@@ -1743,39 +1774,53 @@ private fun AgentEventCard(event: AgentEvent) {
     }
 }
 
+private fun AgentEventKind.shortLabel(): String = when (this) {
+    AgentEventKind.SESSION -> "Сессия"
+    AgentEventKind.PLAN -> "План"
+    AgentEventKind.REASONING -> "Рассуждение"
+    AgentEventKind.OUTPUT -> "Результат"
+    AgentEventKind.TOOL -> "Инструмент"
+    AgentEventKind.IMAGE -> "Изображение"
+    AgentEventKind.BUILD -> "Сборка"
+    AgentEventKind.APPROVAL -> "Одобрение"
+    AgentEventKind.ARTIFACT -> "Артефакт"
+    AgentEventKind.ERROR -> "Ошибка"
+    AgentEventKind.INFO -> "Информация"
+}
+
 private fun parseCommitPaths(value: String): List<String> = value
     .split(',', '\n', ';')
     .map { it.trim() }
     .filter { it.isNotBlank() }
 
 private fun formatImageBytes(bytes: Long): String {
-    if (bytes < 1024L) return bytes.toString() + " B"
+    if (bytes < 1024L) return bytes.toString() + " Б"
     if (bytes < 1024L * 1024L) {
-        return (bytes / 1024L).toString() + " KiB"
+        return (bytes / 1024L).toString() + " КиБ"
     }
-    return (bytes / (1024L * 1024L)).toString() + " MiB"
+    return (bytes / (1024L * 1024L)).toString() + " МиБ"
 }
 
 private fun formatWorkspaceBytes(bytes: Long): String {
-    if (bytes < 1024L) return bytes.toString() + " B"
+    if (bytes < 1024L) return bytes.toString() + " Б"
     if (bytes < 1024L * 1024L) {
-        return (bytes / 1024L).toString() + " KiB"
+        return (bytes / 1024L).toString() + " КиБ"
     }
-    return (bytes / (1024L * 1024L)).toString() + " MiB"
+    return (bytes / (1024L * 1024L)).toString() + " МиБ"
 }
 
 private fun ExecutionTarget.shortLabel(): String = when (this) {
-    ExecutionTarget.AUTO -> "AUTO"
-    ExecutionTarget.LOCAL_LITE -> "LOCAL"
-    ExecutionTarget.REMOTE_ACTIONS -> "ACTIONS"
+    ExecutionTarget.AUTO -> "Авто"
+    ExecutionTarget.LOCAL_LITE -> "Локально"
+    ExecutionTarget.REMOTE_ACTIONS -> "Actions"
 }
 
 private fun PermissionMode.shortLabel(): String = when (this) {
     PermissionMode.READ_ONLY -> "Только чтение"
     PermissionMode.LOCAL_WRITE -> "Локальная запись"
-    PermissionMode.GITHUB_WRITE -> "GitHub запись"
+    PermissionMode.GITHUB_WRITE -> "Запись GitHub"
     PermissionMode.PR_CREATE -> "Создание PR"
-    PermissionMode.MERGE_RELEASE -> "Merge / release"
+    PermissionMode.MERGE_RELEASE -> "Слияние / релиз"
 }
 
 private fun statusLabel(status: AgentSessionStatus): String = when (status) {
@@ -1790,9 +1835,10 @@ private fun statusLabel(status: AgentSessionStatus): String = when (status) {
 
 @Composable
 private fun statusColor(status: AgentSessionStatus) = when (status) {
-    AgentSessionStatus.FAILED -> MaterialTheme.colorScheme.error
-    AgentSessionStatus.UNKNOWN -> MaterialTheme.colorScheme.error
-    AgentSessionStatus.WAITING_APPROVAL -> MaterialTheme.colorScheme.tertiary
-    AgentSessionStatus.COMPLETED -> MaterialTheme.colorScheme.primary
-    else -> MaterialTheme.colorScheme.onSurface
+    AgentSessionStatus.FAILED,
+    AgentSessionStatus.UNKNOWN -> DeepAgentColors.Failed
+    AgentSessionStatus.WAITING_APPROVAL -> DeepAgentColors.Restricted
+    AgentSessionStatus.COMPLETED -> DeepAgentColors.Active
+    AgentSessionStatus.RUNNING -> DeepAgentColors.Cyan
+    else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
