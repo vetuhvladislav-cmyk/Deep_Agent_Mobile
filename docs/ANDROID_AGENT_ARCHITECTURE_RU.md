@@ -42,9 +42,9 @@ DeepSeek и GitHub Actions являются внешними сервисами,
 | --- | --- | --- | --- |
 | Compose UI / Agent Console | UI layer | ввод задачи, отображение состояния, approval, diff, событий и артефактов | только AgentBridge v1 |
 | AgentBridge v1 | boundary layer | стабильная граница UI ↔ Agent Core, state и ordered event stream | не вызывает providers напрямую |
-| Agent Core | orchestration layer | lifecycle сессии, target binding, маршрутизация, permission gate и нормализация результатов | владеет orchestration |
+| Agent Core | orchestration layer | lifecycle сессии, bounded planning/evaluation, target binding, маршрутизация, permission gate и нормализация результатов | владеет orchestration |
 | Permission Policy | policy layer | проверка уровня разрешения, scope, approval и запрет self-escalation | вызывается через Agent Core |
-| DeepSeek provider | model provider | Responses API, streaming, reasoning, tool rounds и image input | не владеет UI state |
+| ProviderRegistry / LlmProvider | model provider boundary | разрешение только зарегистрированных providers; Responses API, streaming, reasoning, bounded tool rounds и image input | не владеет UI state |
 | Local Lite Runtime | local execution layer | ограниченные локальные операции, RuntimeSupervisor lifecycle и readiness/health probe | не является UI API |
 | Workspace Manager | workspace layer | источники workspace, canonical paths, identity, fingerprint и checkpoints | не принимает решения о permission |
 | ToolRouter | tool layer | allowlisted typed tools, input/output validation, limits и error normalization | не выполняет произвольный shell |
@@ -158,14 +158,21 @@ AgentEvent — упорядоченное наблюдаемое событие 
 | eventId | уникальный идентификатор события |
 | sessionId | идентификатор сессии |
 | sequence | монотонный порядок внутри сессии |
+| schemaVersion | версия схемы события; текущая версия — 1 |
 | type | SESSION, PLAN, REASONING, OUTPUT, TOOL, DIFF, APPROVAL, BUILD, ARTIFACT, ERROR или INFO |
 | timestamp | время формирования |
 | workspace | identity, если событие относится к workspace |
-| payload | redacted payload без секретов |
+| payload | bounded redacted payload без секретов; текущий лимит — 12 000 символов |
 
-Live stream может содержать дополнительные диагностические поля, но durable запись сохраняет только нормализованные и redacted данные.
+Live stream может содержать дополнительные диагностические поля, но durable запись сохраняет только нормализованные и redacted данные. В текущем `SessionStore` отсутствующий `schema_version` старых записей читается как версия 1; новые записи сохраняют `schema_version` и очищенный `payload`.
 
-### 3.5 SessionRecord
+### 3.5 Provider boundary
+
+`LlmProvider` — явный контракт между Agent Core и model provider. `ProviderRegistry` разрешает только заранее зарегистрированные IDs; в текущем APK зарегистрирован `deepseek.responses`. Это не означает поддержку произвольных OpenAI-compatible endpoint. Для DeepSeek Core и transport client принимают только HTTPS host `api.deepseek.com` с default/443 port, без credentials/query/fragment; HTTP redirects отключены, чтобы Authorization не передавался на другой host.
+
+Future providers must provide a separate contract, credential policy, timeout/cancellation и host/redirect policy before registration.
+
+### 3.6 SessionRecord
 
 SessionRecord — durable состояние сессии в app-private storage.
 
@@ -209,30 +216,30 @@ interface AgentBridge {
 
 ## 4. Permission model
 
-Уровни разрешений:
+Permission presets являются capability bundles, а не линейной ordinal-иерархией:
 
-| Уровень | Разрешённая область |
+| Preset | Capability bundle |
 | --- | --- |
-| READ_ONLY | чтение, анализ, планирование, diff |
-| PLAN | формирование плана без write-исполнения |
-| WORKSPACE_WRITE | изменение локального workspace |
-| GIT_WRITE | branch, commit, push, workflow dispatch, PR |
-| REMOTE_ACTION | merge, release и финальные внешние операции |
+| READ_ONLY | чтение, анализ, планирование и diff |
+| LOCAL_WRITE | READ_ONLY + локальная запись workspace; GitHub-доступ не добавляется |
+| GITHUB_WRITE | READ_ONLY + branch, commit, push и workflow dispatch; локальная запись не добавляется |
+| PR_CREATE | READ_ONLY + GITHUB_WRITE + создание Pull Request; локальная запись не добавляется |
+| MERGE_RELEASE | полный набор предыдущих capabilities + merge/release |
 
-Permission level является атрибутом сессии и не может быть повышен текстом модели. Операции с внешним эффектом дополнительно требуют явного пользовательского approval, target binding и актуального WorkspaceIdentity.
+Permission preset является атрибутом сессии и не может быть повышен текстом модели. Операции с внешним эффектом дополнительно требуют явного пользовательского approval, target binding и актуального WorkspaceIdentity.
 
-### 4.1 Матрица операция × уровень
+### 4.1 Матрица операция × capability
 
-| Операция | READ_ONLY | PLAN | WORKSPACE_WRITE | GIT_WRITE | REMOTE_ACTION |
+| Операция | READ_ONLY | LOCAL_WRITE | GITHUB_WRITE | PR_CREATE | MERGE_RELEASE |
 | --- | --- | --- | --- | --- | --- |
 | чтение, анализ, поиск, планирование, diff | да | да | да | да | да |
-| локальная запись workspace | нет | нет | approval | approval | approval |
-| branch / commit / push | нет | нет | нет | approval | approval |
-| workflow dispatch | нет | нет | нет | approval | approval |
+| локальная запись workspace | нет | approval | нет | нет | approval |
+| branch / commit / push | нет | нет | approval | approval | approval |
+| workflow dispatch | нет | нет | approval | approval | approval |
 | создание Pull Request | нет | нет | нет | approval | approval |
 | merge / release / финальное внешнее действие | нет | нет | нет | нет | approval |
 
-Permission проверяется непосредственно перед действием. Разрешение, указанное в ToolCall, не заменяет разрешение текущей сессии.
+Capability проверяется непосредственно перед действием. Разрешение, указанное в ToolCall, не заменяет capabilities текущей сессии; model output не является permission grant.
 
 ### 4.2 ApprovalToken для controlled write
 
@@ -266,7 +273,7 @@ Durable event journal:
 
 ### 5.1 Формат durable journal и recovery
 
-Текущая реализация `SessionStore` использует versioned bounded JSON snapshot на сессию: массив событий и состояния сохраняются в `session-<id>.json`, а указатель `latest` обновляется атомарно. Это устойчивый journal-подобный формат для текущего APK, но не append-only JSONL; переход к JSONL потребует отдельной миграции и проверки recovery.
+Текущая реализация `SessionStore` использует versioned bounded JSON snapshot на сессию: массив событий и состояния сохраняются в `session-<id>.json`, а указатель `latest` обновляется атомарно. Это устойчивый journal-подобный формат для текущего APK, но не append-only JSONL; переход к JSONL потребует отдельной миграции и проверки recovery. События имеют `schemaVersion=1` и bounded redacted `payload`; прежние записи без версии читаются совместимо как версия 1.
 
 Запись выполняется через временный файл с flush/sync и atomic replacement с безопасным fallback. Размер одной записи, число session-файлов, общий retention и число событий ограничены. Восстановление нормализует повреждённые идентификаторы, не запускает повторно write/external actions и публикует неполное состояние вместо молчаливого replay.
 
