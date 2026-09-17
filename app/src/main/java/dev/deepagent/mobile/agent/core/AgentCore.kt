@@ -2203,7 +2203,10 @@ class AgentCore(context: Context) : AgentBridge {
         action: suspend () -> GitOperationResult,
     ): GitOperationResult {
         check(!closed) { "AgentCore уже закрыт" }
-        if (_state.value.status == AgentSessionStatus.RUNNING) {
+        if (
+            _state.value.status == AgentSessionStatus.RUNNING ||
+            _state.value.status == AgentSessionStatus.WAITING_APPROVAL
+        ) {
             val result = GitOperationResult(
                 operation = operation,
                 status = GitOperationStatus.FAILED,
