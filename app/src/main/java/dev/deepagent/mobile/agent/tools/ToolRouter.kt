@@ -744,9 +744,13 @@ class ToolRouter(
         )
         if (requestedPath.isNotBlank()) {
             val file = resolvePath(root, requestedPath, requireExisting = false)
+            require(!file.exists() || file.isFile) {
+                "git_diff path должен указывать на файл"
+            }
             gitArguments += relativePath(root, file)
         } else {
             gitArguments += "."
+            gitArguments += SAFE_DIFF_EXCLUDES
         }
 
         return runGit(root, TOOL_GIT_DIFF, gitArguments)
@@ -960,6 +964,29 @@ class ToolRouter(
         const val READ_BUFFER_SIZE = 16 * 1024
         const val MAX_GIT_OUTPUT_CHARS = 100_000
         const val GIT_TIMEOUT_SECONDS = 8L
+        val SAFE_DIFF_EXCLUDES = listOf(
+            ":(exclude,icase)**/.env",
+            ":(exclude,icase)**/.env.*",
+            ":(exclude,icase)**/.npmrc",
+            ":(exclude,icase)**/.netrc",
+            ":(exclude,icase)**/*.p12",
+            ":(exclude,icase)**/*.pfx",
+            ":(exclude,icase)**/*.jks",
+            ":(exclude,icase)**/*.keystore",
+            ":(exclude,icase)**/google-services.json",
+            ":(exclude,icase)**/gradle.properties",
+            ":(exclude,icase)**/local.properties",
+            ":(exclude,icase)**/id_rsa",
+            ":(exclude,icase)**/id_ed25519",
+            ":(exclude,icase)**/*.pem",
+            ":(exclude,icase)**/*.key",
+            ":(exclude,icase)**/*.der",
+            ":(exclude,icase)**/*.asc",
+            ":(exclude,icase)**/*.gpg",
+            ":(exclude,icase)**/*credential*",
+            ":(exclude,icase)**/*secret*",
+            ":(exclude,icase)**/*password*",
+        )
         val IGNORED_DIRECTORIES = setOf(".git", ".gradle", "build", "node_modules")
 
         fun definitions(): List<AgentToolDefinition> = listOf(
