@@ -82,7 +82,7 @@ data class GitOperationResult(
         .put("status", status.name)
         .put("summary", AgentRedactor.text(summary, MAX_SUMMARY_CHARS))
         .put("content", AgentRedactor.text(content, MAX_CONTENT_CHARS))
-        .put("error_code", errorCode)
+        .put("error_code", AgentRedactor.text(errorCode, MAX_IDENTIFIER_CHARS))
         .put("branch", AgentRedactor.text(branch, MAX_IDENTIFIER_CHARS))
         .put("head_sha", AgentRedactor.text(headSha, MAX_IDENTIFIER_CHARS))
         .put(
