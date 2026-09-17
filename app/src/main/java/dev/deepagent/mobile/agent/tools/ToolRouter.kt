@@ -998,9 +998,26 @@ class ToolRouter(
                     .put(
                         "properties",
                         JSONObject()
-                            .put("path", JSONObject().put("type", "string"))
-                            .put("max_depth", JSONObject().put("type", "integer"))
-                            .put("max_entries", JSONObject().put("type", "integer"))
+                            .put(
+                                "path",
+                                JSONObject()
+                                    .put("type", "string")
+                                    .put("maxLength", 512),
+                            )
+                            .put(
+                                "max_depth",
+                                JSONObject()
+                                    .put("type", "integer")
+                                    .put("minimum", 0)
+                                    .put("maximum", MAX_DEPTH),
+                            )
+                            .put(
+                                "max_entries",
+                                JSONObject()
+                                    .put("type", "integer")
+                                    .put("minimum", 1)
+                                    .put("maximum", MAX_ENTRIES_LIMIT),
+                            )
                             .put("include_hidden", JSONObject().put("type", "boolean")),
                     ),
             ),
@@ -1012,9 +1029,20 @@ class ToolRouter(
                     .put(
                         "properties",
                         JSONObject()
-                            .put("path", JSONObject().put("type", "string"))
-                            .put("max_bytes", JSONObject().put("type", "integer")),
-                        )
+                            .put(
+                                "path",
+                                JSONObject()
+                                    .put("type", "string")
+                                    .put("maxLength", 512),
+                            )
+                            .put(
+                                "max_bytes",
+                                JSONObject()
+                                    .put("type", "integer")
+                                    .put("minimum", 1)
+                                    .put("maximum", MAX_READ_BYTES),
+                            ),
+                    )
                     .put("required", JSONArray().put("path")),
             ),
             AgentToolDefinition(
@@ -1025,20 +1053,42 @@ class ToolRouter(
                     .put(
                         "properties",
                         JSONObject()
-                            .put("query", JSONObject().put("type", "string"))
-                            .put("path", JSONObject().put("type", "string"))
-                            .put("max_results", JSONObject().put("type", "integer"))
-                            .put("max_file_bytes", JSONObject().put("type", "integer")),
-                        )
+                            .put(
+                                "query",
+                                JSONObject()
+                                    .put("type", "string")
+                                    .put("minLength", 1)
+                                    .put("maxLength", MAX_QUERY_LENGTH),
+                            )
+                            .put(
+                                "path",
+                                JSONObject()
+                                    .put("type", "string")
+                                    .put("maxLength", 512),
+                            )
+                            .put(
+                                "max_results",
+                                JSONObject()
+                                    .put("type", "integer")
+                                    .put("minimum", 1)
+                                    .put("maximum", MAX_RESULTS_LIMIT),
+                            )
+                            .put(
+                                "max_file_bytes",
+                                JSONObject()
+                                    .put("type", "integer")
+                                    .put("minimum", 1)
+                                    .put("maximum", MAX_SEARCH_FILE_BYTES),
+                            ),
+                    )
                     .put("required", JSONArray().put("query")),
             ),
             AgentToolDefinition(
                 name = TOOL_GIT_STATUS,
                 description = "Read git branch and working tree status without changing files.",
-                parameters = JSONObject().put("type", "object").put(
-                    "properties",
-                    JSONObject(),
-                ),
+                parameters = JSONObject()
+                    .put("type", "object")
+                    .put("properties", JSONObject()),
             ),
             AgentToolDefinition(
                 name = TOOL_GIT_DIFF,
@@ -1047,7 +1097,12 @@ class ToolRouter(
                     .put("type", "object")
                     .put(
                         "properties",
-                        JSONObject().put("path", JSONObject().put("type", "string")),
+                        JSONObject().put(
+                            "path",
+                            JSONObject()
+                                .put("type", "string")
+                                .put("maxLength", 512),
+                        ),
                     ),
             ),
             AgentToolDefinition(
@@ -1058,10 +1113,31 @@ class ToolRouter(
                     .put(
                         "properties",
                         JSONObject()
-                            .put("path", JSONObject().put("type", "string"))
-                            .put("expected_sha256", JSONObject().put("type", "string"))
-                            .put("patch", JSONObject().put("type", "string"))
-                            .put("replacement", JSONObject().put("type", "string"))
+                            .put(
+                                "path",
+                                JSONObject()
+                                    .put("type", "string")
+                                    .put("maxLength", 512),
+                            )
+                            .put(
+                                "expected_sha256",
+                                JSONObject()
+                                    .put("type", "string")
+                                    .put("minLength", 1)
+                                    .put("maxLength", 128),
+                            )
+                            .put(
+                                "patch",
+                                JSONObject()
+                                    .put("type", "string")
+                                    .put("maxLength", MAX_PATCH_CHARS),
+                            )
+                            .put(
+                                "replacement",
+                                JSONObject()
+                                    .put("type", "string")
+                                    .put("maxLength", MAX_PATCH_CHARS),
+                            )
                             .put("create", JSONObject().put("type", "boolean")),
                     )
                     .put(
@@ -1072,5 +1148,6 @@ class ToolRouter(
                     ),
             ),
         )
+
     }
 }
