@@ -1195,11 +1195,50 @@ class AgentCore(context: Context) : AgentBridge {
         request: ActionsRunRequest,
     ): ActionsOperationState {
         val sessionId = request.sessionId ?: currentSessionId
+        val workspaceId = currentRequestSummary?.workspaceId
+            ?: workspaceManager.current.value?.id
+        val suppliedSha = request.expectedCommitSha
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        if (suppliedSha != null && !SHA_PATTERN.matches(suppliedSha)) {
+            val rejected = ActionsOperationState(
+                sessionId = sessionId,
+                repository = request.repository.trim(),
+                workflow = request.workflow.trim(),
+                ref = request.ref.trim(),
+                status = ActionsOperationStatus.FAILED,
+                summary = "Ожидаемый commit SHA имеет недопустимый формат",
+                errorCode = "ACTIONS_SOURCE_SHA_INVALID",
+            )
+            _actionsState.value = rejected
+            append(AgentEventKind.ERROR, rejected.summary.orEmpty(), rejected.toJson().toString())
+            return rejected
+        }
+        val expectedCommitSha = suppliedSha
+            ?: toolRouter.currentGitHeadSha(workspaceId)
+        if (expectedCommitSha == null || !SHA_PATTERN.matches(expectedCommitSha)) {
+            val rejected = ActionsOperationState(
+                sessionId = sessionId,
+                repository = request.repository.trim(),
+                workflow = request.workflow.trim(),
+                ref = request.ref.trim(),
+                status = ActionsOperationStatus.FAILED,
+                summary = "Не удалось получить ожидаемый Git HEAD SHA; Actions не запущен",
+                errorCode = "ACTIONS_SOURCE_SHA_REQUIRED",
+            )
+            _actionsState.value = rejected
+            append(AgentEventKind.ERROR, rejected.summary.orEmpty(), rejected.toJson().toString())
+            return rejected
+        }
+        val effectiveRequest = request.copy(
+            sessionId = sessionId,
+            expectedCommitSha = expectedCommitSha,
+        )
         val initial = ActionsOperationState(
             sessionId = sessionId,
-            repository = request.repository.trim(),
-            workflow = request.workflow.trim(),
-            ref = request.ref.trim(),
+            repository = effectiveRequest.repository.trim(),
+            workflow = effectiveRequest.workflow.trim(),
+            ref = effectiveRequest.ref.trim(),
             status = ActionsOperationStatus.DISPATCHING,
             summary = "GitHub Actions запускается",
         )
@@ -1208,10 +1247,10 @@ class AgentCore(context: Context) : AgentBridge {
         append(
             AgentEventKind.BUILD,
             "GitHub Actions workflow dispatch",
-            request.toAuditJson().toString(),
+            effectiveRequest.toAuditJson().toString(),
         )
         val result = actionsClient.observe(
-            request.copy(sessionId = sessionId),
+            effectiveRequest,
         ) { update ->
             _actionsState.value = update.copy(sessionId = sessionId)
             persistAsync()
