@@ -88,7 +88,14 @@ data class AgentEvent(
     val sequence: Long = 0L,
     val workspaceId: String? = null,
     val invocationId: String? = null,
-)
+    val schemaVersion: Int = SCHEMA_VERSION,
+    val payload: String? = null,
+) {
+    companion object {
+        const val SCHEMA_VERSION = 1
+        const val MAX_PAYLOAD_CHARS = 12_000
+    }
+}
 
 data class AgentSessionState(
     val status: AgentSessionStatus = AgentSessionStatus.IDLE,
