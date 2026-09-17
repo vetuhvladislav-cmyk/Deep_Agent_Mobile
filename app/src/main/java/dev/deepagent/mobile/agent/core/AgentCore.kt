@@ -2393,42 +2393,72 @@ class AgentCore(context: Context) : AgentBridge {
         )
         _state.value = recoveredState
         val restoredGitResult = restored.gitOperationResult
-        lastGitResult = restoredGitResult
+        val gitRecoveryRequired = requiresRecovery ||
+            restoredGitResult?.status == GitOperationStatus.RUNNING
+        val recoveredGitResult = if (
+            restoredGitResult?.status == GitOperationStatus.RUNNING
+        ) {
+            restoredGitResult.copy(
+                status = GitOperationStatus.UNKNOWN,
+                summary = "Git-операция была прервана при остановке процесса; требуется re-check",
+                errorCode = "GIT_RECOVERY_REQUIRED",
+            )
+        } else {
+            restoredGitResult
+        }
+        lastGitResult = recoveredGitResult
         if (
-            !requiresRecovery &&
-            restoredGitResult != null &&
+            !gitRecoveryRequired &&
+            recoveredGitResult != null &&
             (
-                restoredGitResult.status == GitOperationStatus.SUCCEEDED ||
-                    restoredGitResult.status == GitOperationStatus.UNKNOWN
+                recoveredGitResult.status == GitOperationStatus.SUCCEEDED ||
+                    recoveredGitResult.status == GitOperationStatus.UNKNOWN
             )
         ) {
-            cacheGitResult(restoredGitResult)
+            cacheGitResult(recoveredGitResult)
         }
         _gitState.value = when {
-            requiresRecovery -> GitOperationState(
+            gitRecoveryRequired -> GitOperationState(
                 status = GitOperationStatus.UNKNOWN,
                 sessionId = restored.sessionId,
-                operationId = restoredGitResult?.operationId,
-                operation = restoredGitResult?.operation?.name,
+                operationId = recoveredGitResult?.operationId,
+                operation = recoveredGitResult?.operation?.name,
                 summary = "Git-операция была прервана при остановке процесса; требуется re-check",
                 errorCode = "GIT_RECOVERY_REQUIRED",
                 updatedAt = System.currentTimeMillis(),
             )
-            restoredGitResult != null -> restoredGitResult.toState(restored.sessionId)
+            recoveredGitResult != null -> recoveredGitResult.toState(restored.sessionId)
             else -> GitOperationState(sessionId = restored.sessionId)
         }
         val restoredActionsState = restored.actionsState
             ?: ActionsOperationState(sessionId = restored.sessionId)
-        _actionsState.value = restoredActionsState
+        val actionsRecoveryRequired = requiresRecovery ||
+            restoredActionsState.status == ActionsOperationStatus.DISPATCHING ||
+            restoredActionsState.status == ActionsOperationStatus.DISCOVERING_RUN ||
+            restoredActionsState.status == ActionsOperationStatus.RUNNING
+        val recoveredActionsState = if (
+            restoredActionsState.status == ActionsOperationStatus.DISPATCHING ||
+            restoredActionsState.status == ActionsOperationStatus.DISCOVERING_RUN ||
+            restoredActionsState.status == ActionsOperationStatus.RUNNING
+        ) {
+            restoredActionsState.copy(
+                status = ActionsOperationStatus.UNKNOWN,
+                summary = "Actions-операция была прервана при остановке процесса; требуется re-check",
+                errorCode = "ACTIONS_RECOVERY_REQUIRED",
+            )
+        } else {
+            restoredActionsState
+        }
+        _actionsState.value = recoveredActionsState
         if (
-            !requiresRecovery &&
-            restoredActionsState.operationId != null &&
+            !actionsRecoveryRequired &&
+            recoveredActionsState.operationId != null &&
             (
-                restoredActionsState.status == ActionsOperationStatus.SUCCEEDED ||
-                    restoredActionsState.status == ActionsOperationStatus.UNKNOWN
+                recoveredActionsState.status == ActionsOperationStatus.SUCCEEDED ||
+                    recoveredActionsState.status == ActionsOperationStatus.UNKNOWN
             )
         ) {
-            cacheActionsResult(restoredActionsState)
+            cacheActionsResult(recoveredActionsState)
         }
         val restoredInteractive = restored.interactiveState
         _interactiveState.value = restoredInteractive
@@ -2612,6 +2642,14 @@ class AgentCore(context: Context) : AgentBridge {
                 summary = description,
                 updatedAt = System.currentTimeMillis(),
             )
+            lastGitResult = GitOperationResult(
+                operation = operation,
+                sessionId = currentSessionId,
+                operationId = operationId,
+                status = GitOperationStatus.RUNNING,
+                summary = description,
+            )
+            persistAsync()
 
             val result = try {
                 action()
