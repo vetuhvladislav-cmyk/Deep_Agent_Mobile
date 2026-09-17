@@ -61,6 +61,9 @@ jobs:
       - name: Модульные тесты
         run: ./gradlew --no-daemon testDebugUnitTest
 
+      - name: Компиляция instrumentation tests
+        run: ./gradlew --no-daemon assembleDebugAndroidTest
+
       - name: Сборка APK
         run: ./gradlew --no-daemon assembleDebug
 
