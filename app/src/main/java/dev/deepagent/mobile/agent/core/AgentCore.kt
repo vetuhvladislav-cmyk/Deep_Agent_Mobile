@@ -2419,11 +2419,25 @@ class AgentCore(context: Context) : AgentBridge {
                 return@launch
             }
 
-            val result = toolRouter.applyPatch(
-                argumentsJson = pending.argumentsJson,
-                workspaceId = pending.workspaceId,
-                expectedWorkspaceFingerprint = pending.preview.workspaceFingerprint,
-            )
+            val result = try {
+                toolRouter.applyPatch(
+                    argumentsJson = pending.argumentsJson,
+                    workspaceId = pending.workspaceId,
+                    expectedWorkspaceFingerprint = pending.preview.workspaceFingerprint,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                ToolExecutionResult(
+                    toolName = ToolRouter.TOOL_APPLY_PATCH,
+                    ok = false,
+                    summary = AgentRedactor.text(
+                        error.message ?: "Patch apply завершился с ошибкой",
+                        MAX_ERROR_CHARS,
+                    ).orEmpty(),
+                    errorCode = "PATCH_APPLY_FAILED",
+                )
+            }
             if (!result.ok) {
                 finishLedger(
                     operationId = ledgerOperationId,
