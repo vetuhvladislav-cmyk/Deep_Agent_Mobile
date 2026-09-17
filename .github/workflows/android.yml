@@ -1,5 +1,5 @@
 name: Deep Agent Mobile
-run-name: "Deep Agent Mobile / ${{ inputs.agent_session_id || 'manual' }}"
+run-name: "Deep Agent Mobile / ${{ inputs.agent_session_id || 'manual' }} / ${{ inputs.operation_id || 'unknown' }}"
 
 concurrency:
   group: deep-agent-mobile-${{ github.ref }}
@@ -20,6 +20,11 @@ on:
         type: string
       agent_session_id:
         description: "Correlation ID сессии Agent Core"
+        required: false
+        default: ""
+        type: string
+      operation_id:
+        description: "Correlation ID операции Agent Core"
         required: false
         default: ""
         type: string
