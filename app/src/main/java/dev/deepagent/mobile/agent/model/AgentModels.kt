@@ -465,6 +465,7 @@ data class ActionsRunRequest(
     val workflow: String,
     val ref: String = "main",
     val sessionId: String? = null,
+    val operationId: String? = null,
     val expectedCommitSha: String? = null,
     val inputs: Map<String, String> = emptyMap(),
     val pollTimeoutMs: Long = 5 * 60 * 1_000L,
@@ -475,6 +476,7 @@ data class ActionsRunRequest(
         .put("workflow", AgentRedactor.text(workflow, 160))
         .put("ref", AgentRedactor.text(ref, 160))
         .put("session_id", AgentRedactor.text(sessionId, 160))
+        .put("operation_id", AgentRedactor.text(operationId, 160))
         .put("expected_commit_sha", AgentRedactor.text(expectedCommitSha, 80))
         .put(
             "inputs",
@@ -560,6 +562,7 @@ data class ActionsArtifactState(
 
 data class ActionsOperationState(
     val sessionId: String? = null,
+    val operationId: String? = null,
     val repository: String? = null,
     val workflow: String? = null,
     val ref: String? = null,
@@ -578,6 +581,7 @@ data class ActionsOperationState(
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("session_id", AgentRedactor.text(sessionId, 160))
+        .put("operation_id", AgentRedactor.text(operationId, 160))
         .put("repository", AgentRedactor.text(repository, 160))
         .put("workflow", AgentRedactor.text(workflow, 160))
         .put("ref", AgentRedactor.text(ref, 160))
@@ -695,6 +699,7 @@ data class ActionsOperationState(
             }
             return ActionsOperationState(
                 sessionId = safeText(value.optString("session_id"), 160),
+                operationId = safeText(value.optString("operation_id"), 160),
                 repository = safeText(value.optString("repository"), 160),
                 workflow = safeText(value.optString("workflow"), 160),
                 ref = safeText(value.optString("ref"), 160),
