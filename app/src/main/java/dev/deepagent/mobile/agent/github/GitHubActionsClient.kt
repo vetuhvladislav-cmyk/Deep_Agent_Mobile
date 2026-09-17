@@ -59,6 +59,13 @@ sealed interface ArtifactDownloadResult {
 
 class GitHubActionsClient {
 
+    @Volatile
+    private var activeConnection: HttpURLConnection? = null
+
+    fun cancelActive() {
+        activeConnection?.disconnect()
+    }
+
     suspend fun dispatch(request: GitHubActionsRequest): GitHubActionsResult =
         withContext(Dispatchers.IO) {
             val validation = validateRequest(
@@ -92,6 +99,7 @@ class GitHubActionsClient {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
                 GitHubActionsResult.Failed(
                     safeError(error.message, "Не удалось запустить workflow"),
                 )
@@ -328,6 +336,7 @@ class GitHubActionsClient {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
             publish(
                 current.copy(
                     status = ActionsOperationStatus.UNKNOWN,
@@ -383,13 +392,40 @@ class GitHubActionsClient {
             }
             val metadata = JSONObject(metadataResponse.body.toUtf8())
             val name = metadata.optString("name").trim()
+            val metadataId = metadata.optLong("id", 0L)
+            if (metadataId != request.artifactId) {
+                return@withContext ArtifactDownloadResult.Failed(
+                    "Artifact metadata id не совпал с запросом",
+                    "ARTIFACT_ID_MISMATCH",
+                )
+            }
+            if (name.isBlank()) {
+                return@withContext ArtifactDownloadResult.Unknown(
+                    "Artifact metadata не содержит имени",
+                    "ARTIFACT_NAME_UNKNOWN",
+                )
+            }
             if (metadata.optBoolean("expired", false)) {
                 return@withContext ArtifactDownloadResult.Failed(
                     "Artifact истёк",
                     "ARTIFACT_EXPIRED",
                 )
             }
-            val sourceSha = metadata.optJSONObject("workflow_run")
+            val workflowRun = metadata.optJSONObject("workflow_run")
+            val workflowRunId = workflowRun?.optLong("id", 0L) ?: 0L
+            if (workflowRunId <= 0L) {
+                return@withContext ArtifactDownloadResult.Unknown(
+                    "Artifact metadata не содержит workflow run id",
+                    "ARTIFACT_RUN_UNKNOWN",
+                )
+            }
+            if (workflowRunId != request.runId) {
+                return@withContext ArtifactDownloadResult.Failed(
+                    "Artifact не принадлежит ожидаемому workflow run",
+                    "ARTIFACT_RUN_MISMATCH",
+                )
+            }
+            val sourceSha = workflowRun
                 ?.optString("head_sha")
                 ?.trim()
                 .orEmpty()
@@ -425,6 +461,7 @@ class GitHubActionsClient {
                 error.errorCode,
             )
         } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
             ArtifactDownloadResult.Unknown(
                 safeError(error.message, "Artifact не удалось проверить"),
                 "ARTIFACT_VERIFY_UNKNOWN",
@@ -463,7 +500,6 @@ class GitHubActionsClient {
                         run.headSha.equals(expectedCommitSha, ignoreCase = true) &&
                         (
                             expectedSessionId == null ||
-                                run.displayName.isBlank() ||
                                 run.displayName.contains(expectedSessionId)
                         )
                 }
@@ -569,6 +605,7 @@ class GitHubActionsClient {
         var payload: Pair<String, ByteArray>? = null
         val checksums = mutableMapOf<String, String>()
         var provenanceSha: String? = null
+        var provenanceCount = 0
         val archivePaths = mutableSetOf<String>()
         var entryCount = 0
         var totalEntryBytes = 0L
@@ -628,6 +665,13 @@ class GitHubActionsClient {
                             match.groupValues[1].lowercase()
                     }
                     lower.endsWith("deep-agent-provenance.json") -> {
+                        provenanceCount += 1
+                        if (provenanceCount > 1) {
+                            throw ArtifactVerificationException(
+                                "Artifact содержит несколько provenance sidecar",
+                                "ARTIFACT_PROVENANCE_AMBIGUOUS",
+                            )
+                        }
                         provenanceSha = runCatching {
                             JSONObject(bytes.toUtf8())
                                 .optString("source_sha")
@@ -768,6 +812,7 @@ class GitHubActionsClient {
             setRequestProperty("Authorization", "Bearer " + token)
             if (body != null) setRequestProperty("Content-Type", "application/json")
         }
+        activeConnection = connection
         try {
             if (body != null) {
                 connection.outputStream.use { output ->
@@ -787,6 +832,9 @@ class GitHubActionsClient {
                 contentType = connection.getHeaderField("Content-Type"),
             )
         } finally {
+            if (activeConnection === connection) {
+                activeConnection = null
+            }
             connection.disconnect()
         }
     }
@@ -814,10 +862,11 @@ class GitHubActionsClient {
                 instanceFollowRedirects = false
                 setRequestProperty("Accept", "application/vnd.github+json")
                 setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
-                if (url.host == API_HOST) {
+                if (url.host.equals(API_HOST, ignoreCase = true)) {
                     setRequestProperty("Authorization", "Bearer " + token)
                 }
             }
+            activeConnection = connection
             try {
                 val status = connection.responseCode
                 if (status in 300..399) {
@@ -841,6 +890,9 @@ class GitHubActionsClient {
                     contentType = connection.getHeaderField("Content-Type"),
                 )
             } finally {
+                if (activeConnection === connection) {
+                    activeConnection = null
+                }
                 connection.disconnect()
             }
         }
