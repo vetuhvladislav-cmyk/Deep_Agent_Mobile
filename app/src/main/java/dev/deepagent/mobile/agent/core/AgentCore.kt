@@ -2557,95 +2557,95 @@ class AgentCore(context: Context) : AgentBridge {
                 return blocked
             }
             if (
-            _state.value.status == AgentSessionStatus.RUNNING ||
-            _state.value.status == AgentSessionStatus.WAITING_APPROVAL
-        ) {
-            val result = GitOperationResult(
-                operation = operation,
-                operationId = operationId,
-                status = GitOperationStatus.FAILED,
-                summary = "Сначала завершите текущую сессию Agent Core",
-                errorCode = "SESSION_BUSY",
-            )
-            val boundResult = result.copy(sessionId = currentSessionId)
-            publishGitResult(boundResult)
-            return boundResult
-        }
+                _state.value.status == AgentSessionStatus.RUNNING ||
+                _state.value.status == AgentSessionStatus.WAITING_APPROVAL
+            ) {
+                val result = GitOperationResult(
+                    operation = operation,
+                    operationId = operationId,
+                    status = GitOperationStatus.FAILED,
+                    summary = "Сначала завершите текущую сессию Agent Core",
+                    errorCode = "SESSION_BUSY",
+                )
+                val boundResult = result.copy(sessionId = currentSessionId)
+                publishGitResult(boundResult)
+                return boundResult
+            }
 
-        val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
-        if (!permission.allows(requiredPermission)) {
-            val result = GitOperationResult(
-                operation = operation,
-                operationId = operationId,
-                status = GitOperationStatus.FAILED,
-                summary = "Для операции нужен permission " + requiredPermission.name,
-                errorCode = "PERMISSION_REQUIRED",
-            )
+            val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
+            if (!permission.allows(requiredPermission)) {
+                val result = GitOperationResult(
+                    operation = operation,
+                    operationId = operationId,
+                    status = GitOperationStatus.FAILED,
+                    summary = "Для операции нужен permission " + requiredPermission.name,
+                    errorCode = "PERMISSION_REQUIRED",
+                )
+                recordDecision(
+                    kind = "GIT",
+                    state = "DENIED",
+                    detail = operation.name +
+                        "; operation_id=" + operationId +
+                        "; required=" + requiredPermission.name,
+                )
+                val boundResult = result.copy(sessionId = currentSessionId)
+                publishGitResult(boundResult)
+                return boundResult
+            }
+
             recordDecision(
                 kind = "GIT",
-                state = "DENIED",
+                state = "APPROVED",
                 detail = operation.name +
                     "; operation_id=" + operationId +
-                    "; required=" + requiredPermission.name,
+                    "; user_action=true",
             )
-            val boundResult = result.copy(sessionId = currentSessionId)
-            publishGitResult(boundResult)
-            return boundResult
-        }
-
-        recordDecision(
-            kind = "GIT",
-            state = "APPROVED",
-            detail = operation.name +
-                "; operation_id=" + operationId +
-                "; user_action=true",
-        )
-        append(
-            AgentEventKind.APPROVAL,
-            "Пользователь подтвердил Git-операцию",
-            "operation=" + operation.name + "; operation_id=" + operationId,
-        )
-        _gitState.value = GitOperationState(
-            status = GitOperationStatus.RUNNING,
-            operationId = operationId,
-            operation = operation.name,
-            summary = description,
-            updatedAt = System.currentTimeMillis(),
-        )
-
-        val result = try {
-            action()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            GitOperationResult(
-                operation = operation,
+            append(
+                AgentEventKind.APPROVAL,
+                "Пользователь подтвердил Git-операцию",
+                "operation=" + operation.name + "; operation_id=" + operationId,
+            )
+            _gitState.value = GitOperationState(
+                status = GitOperationStatus.RUNNING,
                 operationId = operationId,
-                status = GitOperationStatus.FAILED,
-                summary = AgentRedactor.text(
-                    error.message ?: "Git-операция завершилась с ошибкой",
-                    MAX_ERROR_CHARS,
-                ).orEmpty(),
-                errorCode = "GIT_OPERATION_FAILED",
+                operation = operation.name,
+                summary = description,
+                updatedAt = System.currentTimeMillis(),
             )
-        }
-        val boundResult = result.copy(
-            sessionId = result.sessionId ?: currentSessionId,
-            operationId = result.operationId ?: operationId,
-        )
-        if (
-            boundResult.status == GitOperationStatus.SUCCEEDED ||
-            boundResult.status == GitOperationStatus.UNKNOWN
-        ) {
-            cacheGitResult(boundResult)
-        }
-        publishGitResult(boundResult)
-        if (boundResult.status == GitOperationStatus.UNKNOWN) {
-            markUnknown(
-                boundResult.summary + "; повтор запрещён до re-check",
+
+            val result = try {
+                action()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                GitOperationResult(
+                    operation = operation,
+                    operationId = operationId,
+                    status = GitOperationStatus.FAILED,
+                    summary = AgentRedactor.text(
+                        error.message ?: "Git-операция завершилась с ошибкой",
+                        MAX_ERROR_CHARS,
+                    ).orEmpty(),
+                    errorCode = "GIT_OPERATION_FAILED",
+                )
+            }
+            val boundResult = result.copy(
+                sessionId = result.sessionId ?: currentSessionId,
+                operationId = result.operationId ?: operationId,
             )
-        }
-        return boundResult
+            if (
+                boundResult.status == GitOperationStatus.SUCCEEDED ||
+                boundResult.status == GitOperationStatus.UNKNOWN
+            ) {
+                cacheGitResult(boundResult)
+            }
+            publishGitResult(boundResult)
+            if (boundResult.status == GitOperationStatus.UNKNOWN) {
+                markUnknown(
+                    boundResult.summary + "; повтор запрещён до re-check",
+                )
+            }
+            return boundResult
         } finally {
             externalMutationMutex.unlock()
         }
