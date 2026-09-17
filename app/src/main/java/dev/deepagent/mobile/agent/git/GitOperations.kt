@@ -651,6 +651,13 @@ class GitRepositoryClient(
  */
 class GitHubPullRequestClient {
 
+    @Volatile
+    private var activeConnection: HttpURLConnection? = null
+
+    fun cancelActive() {
+        activeConnection?.disconnect()
+    }
+
     suspend fun create(
         request: GitPullRequestRequest,
         token: String,
@@ -681,6 +688,7 @@ class GitHubPullRequestClient {
             setRequestProperty("Content-Type", "application/json")
         }
 
+        activeConnection = connection
         try {
             val body = JSONObject()
                 .put("title", validated.title)
@@ -781,6 +789,9 @@ class GitHubPullRequestClient {
                 "GITHUB_PR_UNKNOWN",
             )
         } finally {
+            if (activeConnection === connection) {
+                activeConnection = null
+            }
             connection.disconnect()
         }
     }
