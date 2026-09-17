@@ -967,12 +967,23 @@ class AgentCore(context: Context) : AgentBridge {
         request: ActionsRunRequest,
     ): ActionsOperationState {
         check(!closed) { "AgentCore уже закрыт" }
+        val boundRequest = request.copy(
+            sessionId = request.sessionId
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: currentSessionId,
+            operationId = request.operationId
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: UUID.randomUUID().toString(),
+        )
         if (
             _state.value.status == AgentSessionStatus.RUNNING ||
             _state.value.status == AgentSessionStatus.WAITING_APPROVAL
         ) {
             val busy = ActionsOperationState(
-                sessionId = currentSessionId,
+                sessionId = boundRequest.sessionId,
+                operationId = boundRequest.operationId,
                 repository = request.repository,
                 workflow = request.workflow,
                 ref = request.ref,
@@ -987,7 +998,8 @@ class AgentCore(context: Context) : AgentBridge {
         val permission = currentRequestSummary?.permission ?: PermissionMode.READ_ONLY
         if (!permission.allows(PermissionMode.GITHUB_WRITE)) {
             val denied = ActionsOperationState(
-                sessionId = currentSessionId,
+                sessionId = boundRequest.sessionId,
+                operationId = boundRequest.operationId,
                 repository = request.repository,
                 workflow = request.workflow,
                 ref = request.ref,
@@ -1013,14 +1025,13 @@ class AgentCore(context: Context) : AgentBridge {
         append(
             AgentEventKind.APPROVAL,
             "Пользователь подтвердил запуск GitHub Actions",
-            request.toAuditJson().toString(),
+            boundRequest.toAuditJson().toString(),
         )
         val actionToken = request.token.trim().takeIf { it.isNotBlank() }
             ?: readCredential(CredentialKind.GITHUB_TOKEN).orEmpty()
         val result = runActionsInternal(
-            request.copy(
+            boundRequest.copy(
                 token = actionToken,
-                sessionId = request.sessionId ?: currentSessionId,
             ),
         )
         when (result.status) {
@@ -1204,7 +1215,42 @@ class AgentCore(context: Context) : AgentBridge {
     private suspend fun runActionsInternal(
         request: ActionsRunRequest,
     ): ActionsOperationState {
-        val sessionId = request.sessionId ?: currentSessionId
+        val sessionId = request.sessionId
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: currentSessionId
+        val operationId = request.operationId
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString()
+        val correlationError = when {
+            sessionId.isNullOrBlank() -> "Для Actions нужен обязательный agent_session_id"
+            !SESSION_ID_PATTERN.matches(sessionId.orEmpty()) ->
+                "Session correlation id имеет недопустимый формат"
+            !OPERATION_ID_PATTERN.matches(operationId) ->
+                "Operation correlation id имеет недопустимый формат"
+            else -> null
+        }
+        if (correlationError != null) {
+            val rejected = ActionsOperationState(
+                sessionId = sessionId,
+                operationId = operationId,
+                repository = request.repository.trim(),
+                workflow = request.workflow.trim(),
+                ref = request.ref.trim(),
+                status = ActionsOperationStatus.FAILED,
+                summary = correlationError,
+                errorCode = when {
+                    sessionId.isNullOrBlank() -> "ACTIONS_SESSION_ID_REQUIRED"
+                    !SESSION_ID_PATTERN.matches(sessionId.orEmpty()) ->
+                        "ACTIONS_SESSION_ID_INVALID"
+                    else -> "ACTIONS_OPERATION_ID_INVALID"
+                },
+            )
+            _actionsState.value = rejected
+            append(AgentEventKind.ERROR, rejected.summary.orEmpty(), rejected.toJson().toString())
+            return rejected
+        }
         val workspaceId = currentRequestSummary?.workspaceId
             ?: workspaceManager.current.value?.id
         val suppliedSha = request.expectedCommitSha
@@ -1213,6 +1259,7 @@ class AgentCore(context: Context) : AgentBridge {
         if (suppliedSha != null && !SHA_PATTERN.matches(suppliedSha)) {
             val rejected = ActionsOperationState(
                 sessionId = sessionId,
+                operationId = operationId,
                 repository = request.repository.trim(),
                 workflow = request.workflow.trim(),
                 ref = request.ref.trim(),
@@ -1228,6 +1275,7 @@ class AgentCore(context: Context) : AgentBridge {
         if (currentHeadSha == null || !SHA_PATTERN.matches(currentHeadSha)) {
             val rejected = ActionsOperationState(
                 sessionId = sessionId,
+                operationId = operationId,
                 repository = request.repository.trim(),
                 workflow = request.workflow.trim(),
                 ref = request.ref.trim(),
@@ -1245,6 +1293,7 @@ class AgentCore(context: Context) : AgentBridge {
         ) {
             val rejected = ActionsOperationState(
                 sessionId = sessionId,
+                operationId = operationId,
                 repository = request.repository.trim(),
                 workflow = request.workflow.trim(),
                 ref = request.ref.trim(),
@@ -1259,10 +1308,12 @@ class AgentCore(context: Context) : AgentBridge {
         val expectedCommitSha = currentHeadSha
         val effectiveRequest = request.copy(
             sessionId = sessionId,
+            operationId = operationId,
             expectedCommitSha = expectedCommitSha,
         )
         val initial = ActionsOperationState(
             sessionId = sessionId,
+            operationId = operationId,
             repository = effectiveRequest.repository.trim(),
             workflow = effectiveRequest.workflow.trim(),
             ref = effectiveRequest.ref.trim(),
@@ -1279,9 +1330,15 @@ class AgentCore(context: Context) : AgentBridge {
         val result = actionsClient.observe(
             effectiveRequest,
         ) { update ->
-            _actionsState.value = update.copy(sessionId = sessionId)
+            _actionsState.value = update.copy(
+                sessionId = sessionId,
+                operationId = operationId,
+            )
             persistAsync()
-        }.copy(sessionId = sessionId)
+        }.copy(
+            sessionId = sessionId,
+            operationId = operationId,
+        )
         _actionsState.value = result
         append(
             if (result.status == ActionsOperationStatus.SUCCEEDED) {
@@ -2621,6 +2678,7 @@ class AgentCore(context: Context) : AgentBridge {
         const val MAX_ERROR_CHARS = 4_000
         const val MAX_BASE_URL_CHARS = 512
         val SESSION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
+        val OPERATION_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
         val SHA_PATTERN = Regex("[A-Fa-f0-9]{40,64}")
     }
 }
