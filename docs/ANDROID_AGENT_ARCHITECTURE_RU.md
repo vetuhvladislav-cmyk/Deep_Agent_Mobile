@@ -75,7 +75,7 @@ Tree paging использует canonical path boundary, лимит глуби�
 
 ### 2.4 Credentials, Session Journal и PR provenance
 
-EphemeralCredentialVault является единственным владельцем provider secrets в runtime. UI вводит DeepSeek API key и GitHub token в memory-only state; AgentBridge публикует только CredentialState с boolean-признаками configured и timestamp. Vault хранит значения в wipeable char arrays, автоматически очищает их после bounded TTL и очищается при закрытии AgentCore. Legacy credential fields входного AgentRequest санитизируются до запуска сессии; секреты не проходят в события, SessionStore или redacted result.
+EphemeralCredentialVault является единственным владельцем provider secrets в runtime. UI вводит DeepSeek API key и GitHub token в memory-only state; AgentBridge публикует только CredentialState с boolean-признаками configured и timestamp. Vault хранит значения в wipeable char arrays, автоматически очищает их после bounded TTL и очищается при закрытии AgentCore. Legacy credential fields входного AgentRequest санитизируются до запуска сессии; секреты не проходят в события, SessionStore или redacted result. Явное сохранение или экспорт preset — отдельная user-initiated операция: credential fields шифруются AES-GCM ключом Android Keystore, а runtime vault при этом не становится persistent.
 
 Session Journal остаётся владельцем AgentCore/SessionStore: каждая запись ограничена по размеру, число старых session-файлов и общий объём retention ограничены, запись выполняется atomically. Пользовательский export идёт через SAF destination и содержит только PersistedAgentSession.toJson() с redaction; JournalExportResult возвращает sessionId/status/size/error code без URI, содержимого credentials или raw provider response.
 
