@@ -203,6 +203,7 @@ class AgentCore(context: Context) : AgentBridge {
                 deepSeekApiKey = null,
                 githubToken = null,
             )
+            actionsClient.cancelActive()
             activeJob?.cancelAndJoin()
             patchApplyJob?.cancelAndJoin()
             activeJob = null
@@ -355,6 +356,7 @@ class AgentCore(context: Context) : AgentBridge {
     override fun cancel() {
         activeJob?.cancel()
         deepSeek.cancelActive()
+        actionsClient.cancelActive()
         patchApplyJob?.cancel()
         patchApplyJob = null
         interactiveSession.cancelActive()
@@ -1213,9 +1215,8 @@ class AgentCore(context: Context) : AgentBridge {
             append(AgentEventKind.ERROR, rejected.summary.orEmpty(), rejected.toJson().toString())
             return rejected
         }
-        val expectedCommitSha = suppliedSha
-            ?: toolRouter.currentGitHeadSha(workspaceId)
-        if (expectedCommitSha == null || !SHA_PATTERN.matches(expectedCommitSha)) {
+        val currentHeadSha = toolRouter.currentGitHeadSha(workspaceId)
+        if (currentHeadSha == null || !SHA_PATTERN.matches(currentHeadSha)) {
             val rejected = ActionsOperationState(
                 sessionId = sessionId,
                 repository = request.repository.trim(),
@@ -1229,6 +1230,24 @@ class AgentCore(context: Context) : AgentBridge {
             append(AgentEventKind.ERROR, rejected.summary.orEmpty(), rejected.toJson().toString())
             return rejected
         }
+        if (
+            suppliedSha != null &&
+            !suppliedSha.equals(currentHeadSha, ignoreCase = true)
+        ) {
+            val rejected = ActionsOperationState(
+                sessionId = sessionId,
+                repository = request.repository.trim(),
+                workflow = request.workflow.trim(),
+                ref = request.ref.trim(),
+                status = ActionsOperationStatus.FAILED,
+                summary = "Git HEAD изменился относительно ожидаемого SHA; сначала выполните re-check",
+                errorCode = "ACTIONS_SOURCE_SHA_MISMATCH",
+            )
+            _actionsState.value = rejected
+            append(AgentEventKind.ERROR, rejected.summary.orEmpty(), rejected.toJson().toString())
+            return rejected
+        }
+        val expectedCommitSha = currentHeadSha
         val effectiveRequest = request.copy(
             sessionId = sessionId,
             expectedCommitSha = expectedCommitSha,
@@ -1439,6 +1458,7 @@ class AgentCore(context: Context) : AgentBridge {
     override fun close() {
         if (closed) return
         activeJob?.cancel()
+        actionsClient.cancelActive()
         patchApplyJob?.cancel()
         patchApplyJob = null
         deepSeek.cancelActive()
