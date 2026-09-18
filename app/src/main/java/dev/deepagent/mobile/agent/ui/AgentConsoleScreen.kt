@@ -4,17 +4,38 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.RadioButtonChecked
+import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -51,6 +72,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import dev.deepagent.mobile.agent.ui.agentControl
 import dev.deepagent.mobile.agent.ui.AgentUiContract
 import dev.deepagent.mobile.ui.theme.DeepAgentColors
@@ -136,6 +158,7 @@ fun AgentConsoleScreen(
     var workflow by rememberSaveable { mutableStateOf(DEFAULT_WORKFLOW) }
     var ref by rememberSaveable { mutableStateOf(DEFAULT_REF) }
     var showConfig by rememberSaveable { mutableStateOf(false) }
+    var showExecutionDetails by rememberSaveable { mutableStateOf(false) }
     var permissionMenuOpen by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
     var workspaceError by remember { mutableStateOf<String?>(null) }
@@ -373,14 +396,29 @@ fun AgentConsoleScreen(
         Unit
     }
 
+    val activeStage = when {
+        state.status == AgentSessionStatus.UNKNOWN ||
+            state.ledgerUnknownCount > 0 ||
+            patchRecovery?.status == PatchRecoveryStatus.UNKNOWN -> 4
+        pendingApproval != null ||
+            state.status == AgentSessionStatus.WAITING_APPROVAL -> 2
+        patchRecovery?.status == PatchRecoveryStatus.APPLIED ||
+            state.status == AgentSessionStatus.COMPLETED -> 3
+        else -> 1
+    }
+
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text("Agent Core")
                         Text(
-                            text = "один APK · AgentBridge v1",
+                            text = "Deep_Agent",
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            text = "Workspace Control Deck",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -388,12 +426,12 @@ fun AgentConsoleScreen(
                 },
                 navigationIcon = {
                     TextButton(
-                    modifier = Modifier.agentControl(
-                        AgentUiContract.BACK,
-                        "Вернуться назад",
-                    ),
-                    onClick = onBack,
-                ) {
+                        modifier = Modifier.agentControl(
+                            AgentUiContract.BACK,
+                            "Вернуться назад",
+                        ),
+                        onClick = onBack,
+                    ) {
                         Icon(
                             imageVector = Icons.Outlined.ArrowBack,
                             contentDescription = null,
@@ -402,6 +440,9 @@ fun AgentConsoleScreen(
                         Text("Назад")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
@@ -410,143 +451,351 @@ fun AgentConsoleScreen(
                 .fillMaxSize()
                 .imePadding()
                 .padding(padding)
-                .padding(horizontal = 14.dp, vertical = 8.dp)
-                .agentControl(AgentUiContract.ROOT, "Консоль Agent Core"),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .agentControl(
+                    AgentUiContract.ROOT,
+                    "Консоль Agent Core",
+                ),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                top = 8.dp,
+                end = 16.dp,
+                bottom = 28.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-            Text(
-                modifier = Modifier.agentControl(
-                    AgentUiContract.SESSION_STATUS,
-                    "Статус сессии Agent Core",
-                ),
-                text = statusLabel(state.status),
-                style = MaterialTheme.typography.labelLarge,
-                color = statusColor(state.status),
-                fontWeight = FontWeight.SemiBold,
-            )
-
-            state.lastError?.takeIf { it.isNotBlank() }?.let { error ->
                 Text(
-                    text = error,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = statusColor(state.status),
+                    text = "ЦЕНТРАЛЬНЫЙ ОПЕРАЦИОННЫЙ КОНТУР",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = DeepAgentColors.Cyan,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp,
                 )
             }
 
-            if (
-                state.ledgerHealth != "CLEAN" ||
-                    state.ledgerUnknownCount > 0
-            ) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .agentControl(
-                            AgentUiContract.LEDGER_UNKNOWN,
-                            "Неизвестные операции и восстановление",
-                        ),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                    ),
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Column(
-                        modifier = Modifier.padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        Text(
-                            text = "Operation Ledger: UNKNOWN / " +
-                                state.ledgerHealth,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                        Text(
-                            text = "Неизвестных операций: " +
-                                state.ledgerUnknownCount +
-                                ". Автоматический retry запрещён.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                        state.ledgerDiagnostic?.takeIf { it.isNotBlank() }?.let {
+                    DeckContextTile(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.Folder,
+                        label = "Рабочая папка",
+                        value = workspace?.displayName ?: "Не выбрана",
+                        detail = workspace?.let {
+                            it.fileCount.toString() + " файлов · " +
+                                formatWorkspaceBytes(it.totalBytes)
+                        } ?: "Импортируйте ZIP или папку",
+                        accent = DeepAgentColors.Cyan,
+                    )
+                    DeckContextTile(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.Security,
+                        label = "Режим доступа",
+                        value = permission.shortLabel(),
+                        detail = if (permission.allows(PermissionMode.LOCAL_WRITE)) {
+                            "Локальные изменения"
+                        } else {
+                            "Требуется одобрение"
+                        },
+                        accent = if (permission.allows(PermissionMode.LOCAL_WRITE)) {
+                            DeepAgentColors.Active
+                        } else {
+                            DeepAgentColors.Restricted
+                        },
+                    )
+                    DeckContextTile(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.RadioButtonChecked,
+                        label = "Сессия",
+                        value = statusLabel(state.status),
+                        detail = state.sessionId?.take(8) ?: "Новая сессия",
+                        accent = statusColor(state.status),
+                    )
+                }
+            }
+
+            item {
+                DeckSectionCard(
+                    title = "Задача для агента",
+                    subtitle = "Один явный запуск · без скрытых мутаций",
+                    accent = DeepAgentColors.Violet,
+                ) {
+                    OutlinedTextField(
+                        value = task,
+                        onValueChange = { task = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 112.dp)
+                            .agentControl(
+                                AgentUiContract.TASK_INPUT,
+                                "Задача агенту",
+                            ),
+                        label = { Text("Что нужно сделать") },
+                        placeholder = {
                             Text(
-                                text = it,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                "Например: проверить ошибку, предложить patch " +
+                                    "и подготовить описание изменений",
+                            )
+                        },
+                        minLines = 4,
+                        maxLines = 7,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedButton(
+                            modifier = Modifier.weight(0.9f).agentControl(
+                                AgentUiContract.IMAGE_PICKER,
+                                "Добавить изображение к задаче",
+                            ),
+                            onClick = { imagePicker.launch("image/*") },
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.AttachFile,
+                                contentDescription = null,
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                if (imageState.status == ImageAnalysisStatus.IDLE) {
+                                    "Контекст"
+                                } else {
+                                    "Изображение"
+                                },
                             )
                         }
+                        Button(
+                            modifier = Modifier.weight(1.1f).agentControl(
+                                AgentUiContract.SUBMIT,
+                                "Запустить задачу Agent Core",
+                            ),
+                            enabled = state.status != AgentSessionStatus.RUNNING &&
+                                pendingApproval == null,
+                            onClick = submitCurrentTask,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.PlayArrow,
+                                contentDescription = null,
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text("Запустить агента")
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        ExecutionTarget.entries.forEach { candidate ->
+                            FilterChip(
+                                selected = target == candidate,
+                                onClick = { target = candidate },
+                                label = { Text(candidate.shortLabel()) },
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Text(
-                            text = "Проверьте target/operation ID и экспортируйте redacted journal.",
+                            text = "Разрешение текущей сессии",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        state.ledgerUnknownOperations.take(4).forEach { unknown ->
-                            Text(
-                                text = "• " + unknown.operationId.take(12) +
-                                    " · " + unknown.operation +
-                                    " · " + unknown.resolution,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                            )
-                            Text(
-                                text = "Последнее подтверждённое состояние: " +
-                                    (unknown.lastConfirmedState ?: "не подтверждено") +
-                                    " · " + (unknown.detail ?: "причина не записана"),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                            )
+                        Box {
+                            OutlinedButton(
+                                modifier = Modifier.agentControl(
+                                    AgentUiContract.PERMISSION_MENU,
+                                    "Выбрать разрешение текущей сессии",
+                                ),
+                                onClick = { permissionMenuOpen = true },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Security,
+                                    contentDescription = null,
+                                )
+                                Spacer(Modifier.width(5.dp))
+                                Text(permission.shortLabel())
+                            }
+                            DropdownMenu(
+                                expanded = permissionMenuOpen,
+                                onDismissRequest = { permissionMenuOpen = false },
+                            ) {
+                                PermissionMode.entries.forEach { candidate ->
+                                    DropdownMenuItem(
+                                        text = { Text(candidate.shortLabel()) },
+                                        onClick = {
+                                            permission = candidate
+                                            permissionMenuOpen = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (imageState.status != ImageAnalysisStatus.IDLE) {
+                        TextButton(onClick = { agent.clearImage() }) {
+                            Text("Убрать прикреплённое изображение")
                         }
                     }
                 }
             }
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-            ) {
-                Column(
-                    modifier = Modifier.padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
+            item {
+                DeckExecutionSteps(activeStage = activeStage)
+            }
+
+            item {
+                DeckSectionCard(
+                    title = "Состояние сессии",
+                    subtitle = statusLabel(state.status),
+                    accent = statusColor(state.status),
                 ) {
-                    Text(
-                        text = "Сессия: " + (state.sessionId ?: "новая") +
-                            " · событие #" + state.eventCursor,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = "Цель: " + (state.target?.shortLabel() ?: target.shortLabel()) +
-                            " · разрешение: " + permission.shortLabel(),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                    Text(
-                        text = "DeepSeek: " + if (credentials.deepSeekConfigured) {
-                            "ключ в памяти · TTL · " + model
-                        } else {
-                            "ключ не загружен · офлайн-прототип"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                    Text(
-                        text = "Токен GitHub: " + if (credentials.githubConfigured) {
-                            "в памяти · TTL"
-                        } else {
-                            "не загружен"
-                        } +
-                            " · Actions: " + if (
-                                repository.isNotBlank() &&
-                                workflow.isNotBlank()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(statusColor(state.status)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            when (state.status) {
+                                AgentSessionStatus.UNKNOWN -> Icon(
+                                    imageVector = Icons.Outlined.Refresh,
+                                    contentDescription = null,
+                                    tint = DeepAgentColors.NearBlack,
+                                )
+                                AgentSessionStatus.WAITING_APPROVAL -> Icon(
+                                    imageVector = Icons.Outlined.CheckCircle,
+                                    contentDescription = null,
+                                    tint = DeepAgentColors.NearBlack,
+                                )
+                                AgentSessionStatus.RUNNING -> Icon(
+                                    imageVector = Icons.Outlined.PlayArrow,
+                                    contentDescription = null,
+                                    tint = DeepAgentColors.NearBlack,
+                                )
+                                AgentSessionStatus.FAILED -> Icon(
+                                    imageVector = Icons.Outlined.Close,
+                                    contentDescription = null,
+                                    tint = DeepAgentColors.NearBlack,
+                                )
+                                else -> Icon(
+                                    imageVector = Icons.Outlined.CheckCircle,
+                                    contentDescription = null,
+                                    tint = DeepAgentColors.NearBlack,
+                                )
+                            }
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Text(
+                                text = statusLabel(state.status),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = statusColor(state.status),
+                            )
+                            Text(
+                                text = "AgentBridge v1 · событие #" +
+                                    state.eventCursor,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            state.lastError?.takeIf { it.isNotBlank() }?.let {
+                                Text(
+                                    text = it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    }
+                    if (
+                        state.ledgerHealth != "CLEAN" ||
+                            state.ledgerUnknownCount > 0
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    MaterialTheme.colorScheme.errorContainer,
+                                    RoundedCornerShape(14.dp),
+                                )
+                                .padding(12.dp),
+                        ) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                "конфигурация заполнена"
-                            } else {
-                                "не настроен"
-                            },
-                        style = MaterialTheme.typography.labelSmall,
-                    )
+                                Text(
+                                    modifier = Modifier.agentControl(
+                                        AgentUiContract.LEDGER_UNKNOWN,
+                                        "Неизвестные операции и восстановление",
+                                    ),
+                                    text = "Operation Ledger · UNKNOWN / " +
+                                        state.ledgerHealth,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                                Text(
+                                    text = "Неизвестных операций: " +
+                                        state.ledgerUnknownCount +
+                                        ". Автоматический retry запрещён.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                                state.ledgerDiagnostic
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?.let {
+                                        Text(
+                                            text = it,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                        )
+                                    }
+                                state.ledgerUnknownOperations
+                                    .take(3)
+                                    .forEach { unknown ->
+                                        Text(
+                                            text = unknown.operationId.take(12) +
+                                                " · " + unknown.operation +
+                                                " · " + unknown.resolution,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                        )
+                                    }
+                            }
+                        }
+                    }
+                    if (
+                        state.recoveryRequired ||
+                            state.status == AgentSessionStatus.UNKNOWN
+                    ) {
+                        OutlinedButton(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.RECHECK,
+                                "Повторно проверить состояние операции",
+                            ),
+                            enabled = pendingApproval == null,
+                            onClick = submitCurrentTask,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Refresh,
+                                contentDescription = null,
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text("Проверить состояние заново")
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -559,7 +808,9 @@ fun AgentConsoleScreen(
                             onClick = {
                                 journalExportMessage = null
                                 journalExportError = null
-                                journalExportPicker.launch("agent-session-journal.json")
+                                journalExportPicker.launch(
+                                    "agent-session-journal.json",
+                                )
                             },
                         ) {
                             Text("Экспорт журнала")
@@ -575,13 +826,14 @@ fun AgentConsoleScreen(
                                 githubToken = ""
                             },
                         ) {
-                            Text("Очистить учётные данные")
+                            Text("Очистить секреты")
                         }
                     }
                     journalExportMessage?.let {
                         Text(
                             text = it,
                             style = MaterialTheme.typography.labelSmall,
+                            color = DeepAgentColors.Active,
                         )
                     }
                     journalExportError?.let {
@@ -591,51 +843,20 @@ fun AgentConsoleScreen(
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
-                    if (state.recoveryRequired) {
-                        Text(
-                            text = "Требуется восстановление: побочный эффект не повторяется автоматически.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
                 }
             }
 
-            if (state.recoveryRequired || state.status == AgentSessionStatus.UNKNOWN) {
-                OutlinedButton(
-                    modifier = Modifier.agentControl(
-                        AgentUiContract.RECHECK,
-                        "Повторно проверить состояние операции",
-                    ),
-                    enabled = pendingApproval == null,
-                    onClick = submitCurrentTask,
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Refresh,
-                        contentDescription = null,
+                    Text(
+                        text = "Рабочая область",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
                     )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Новая проверка")
-                }
-            }
-
-            OutlinedTextField(
-                value = task,
-                onValueChange = { task = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 112.dp)
-                    .agentControl(
-                        AgentUiContract.TASK_INPUT,
-                        "Задача агенту",
-                    ),
-                label = { Text("Задача агенту") },
-                placeholder = { Text("Написать код, проанализировать ошибку, собрать APK…") },
-                minLines = 4,
-                maxLines = 7,
-            )
-
-            Card(
+                                Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -836,8 +1057,84 @@ fun AgentConsoleScreen(
                     }
                 }
             }
+                }
+            }
 
-            pendingApproval?.let { pending ->
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Контекст изображения",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                                if (imageState.status != ImageAnalysisStatus.IDLE) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Text(
+                            text = "Изображение: " +
+                                (imageState.displayName ?: "изображение") +
+                                " · " + (imageState.mediaType ?: "неизвестный формат"),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Состояние: " + imageState.status.name +
+                                " · " + formatImageBytes(imageState.sizeBytes ?: 0L) +
+                                " · " + (imageState.width ?: 0) + "×" +
+                                (imageState.height ?: 0),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        imageState.checksum?.let {
+                            Text(
+                                text = "SHA-256: " + it.take(16) + "…",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        Text(
+                            text = "Перед передачей в DeepSeek приложение покажет уведомление; " +
+                                "исходные байты и data URL не сохраняются в журнале.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        imageState.summary?.takeIf { it.isNotBlank() }?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+                }
+            }
+
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Patch · preview / approval / rollback",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (pendingApproval != null) {
+                            DeepAgentColors.Restricted
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                                pendingApproval?.let { pending ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1007,11 +1304,57 @@ fun AgentConsoleScreen(
                         }
                     }
                 }
+                }
+            }
 
-
-
-
-            Card(
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column {
+                            Text(
+                                text = "Инструменты P1 / P2",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = "Actions · runtime · interactive · Git",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                showExecutionDetails = !showExecutionDetails
+                            },
+                        ) {
+                            Icon(
+                                imageVector = if (showExecutionDetails) {
+                                    Icons.Outlined.ExpandLess
+                                } else {
+                                    Icons.Outlined.ExpandMore
+                                },
+                                contentDescription = null,
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                if (showExecutionDetails) "Скрыть" else "Открыть",
+                            )
+                        }
+                    }
+                    if (
+                        showExecutionDetails ||
+                            actionsState.status != ActionsOperationStatus.IDLE ||
+                            runtimeState.status != RuntimeStatus.EMPTY ||
+                            interactiveState.status != InteractiveSessionStatus.IDLE
+                    ) {
+                                    Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .agentControl(
@@ -1682,121 +2025,16 @@ fun AgentConsoleScreen(
                     }
                 }
             }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                ExecutionTarget.entries.forEach { candidate ->
-                    FilterChip(
-                        selected = target == candidate,
-                        onClick = { target = candidate },
-                        label = { Text(candidate.shortLabel()) },
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Box {
-                    OutlinedButton(
-                        modifier = Modifier.agentControl(
-                            AgentUiContract.PERMISSION_MENU,
-                            "Выбрать разрешение текущей сессии",
-                        ),
-                        onClick = { permissionMenuOpen = true },
-                    ) {
-                        Text(permission.shortLabel())
-                    }
-                    DropdownMenu(
-                        expanded = permissionMenuOpen,
-                        onDismissRequest = { permissionMenuOpen = false },
-                    ) {
-                        PermissionMode.entries.forEach { candidate ->
-                            DropdownMenuItem(
-                                text = { Text(candidate.shortLabel()) },
-                                onClick = {
-                                    permission = candidate
-                                    permissionMenuOpen = false
-                                },
-                            )
-                        }
-                    }
-                }
-                OutlinedButton(
-                    modifier = Modifier.agentControl(
-                        AgentUiContract.IMAGE_PICKER,
-                        "Добавить изображение к задаче",
-                    ),
-                    onClick = { imagePicker.launch("image/*") },
-                ) {
-                    Text(
-                        if (imageState.status == ImageAnalysisStatus.IDLE) {
-                            "Добавить изображение"
-                        } else {
-                            "Изображение выбрано"
-                        },
-                    )
-                }
-                if (imageState.status != ImageAnalysisStatus.IDLE) {
-                    TextButton(
-                        onClick = { agent.clearImage() },
-                    ) {
-                        Text("Убрать")
                     }
                 }
             }
 
-            if (imageState.status != ImageAnalysisStatus.IDLE) {
-                Card(
+            item {
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    ),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Column(
-                        modifier = Modifier.padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        Text(
-                            text = "Изображение: " +
-                                (imageState.displayName ?: "изображение") +
-                                " · " + (imageState.mediaType ?: "неизвестный формат"),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = "Состояние: " + imageState.status.name +
-                                " · " + formatImageBytes(imageState.sizeBytes ?: 0L) +
-                                " · " + (imageState.width ?: 0) + "×" +
-                                (imageState.height ?: 0),
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                        imageState.checksum?.let {
-                            Text(
-                                text = "SHA-256: " + it.take(16) + "…",
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        }
-                        Text(
-                            text = "Перед передачей в DeepSeek приложение покажет уведомление; " +
-                                "исходные байты и data URL не сохраняются в журнале.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
-                        imageState.summary?.takeIf { it.isNotBlank() }?.let {
-                            Text(
-                                text = it,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                    }
-                }
-            }
-
-            TextButton(onClick = { showConfig = !showConfig }) {
+                                TextButton(onClick = { showConfig = !showConfig }) {
                 Text(if (showConfig) "Скрыть настройки исполнителей" else "Настройки DeepSeek / GitHub")
             }
 
@@ -1973,67 +2211,62 @@ fun AgentConsoleScreen(
                     }
                 }
             }
-
-            localError?.let {
-                Text(
-                    text = it,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Button(
-                    modifier = Modifier.agentControl(
-                        AgentUiContract.SUBMIT,
-                        "Запустить задачу Agent Core",
-                    ),
-                    enabled = state.status != AgentSessionStatus.RUNNING && pendingApproval == null,
-                    onClick = submitCurrentTask,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.PlayArrow,
-                        contentDescription = null,
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Запустить")
-                }
-                OutlinedButton(
-                    modifier = Modifier.agentControl(
-                        AgentUiContract.CANCEL,
-                        "Остановить текущую сессию",
-                    ),
-                    enabled = state.status == AgentSessionStatus.RUNNING,
-                    onClick = { agent.cancel() },
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = null,
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Остановить")
-                }
-                TextButton(
-                    modifier = Modifier.agentControl(
-                        AgentUiContract.CLEAR_EVENTS,
-                        "Очистить активные события",
-                    ),
-                    onClick = { agent.clearEvents() },
-                ) {
-                    Text("Очистить")
-                }
-                if (state.status == AgentSessionStatus.RUNNING) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.padding(8.dp),
-                        strokeWidth = 2.dp,
+            item {
+                localError?.let {
+                    Text(
+                        text = it,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme.errorContainer,
+                                RoundedCornerShape(14.dp),
+                            )
+                            .padding(12.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
 
-            HorizontalDivider()
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedButton(
+                        modifier = Modifier.agentControl(
+                            AgentUiContract.CANCEL,
+                            "Остановить текущую сессию",
+                        ),
+                        enabled = state.status == AgentSessionStatus.RUNNING,
+                        onClick = { agent.cancel() },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = null,
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text("Остановить")
+                    }
+                    TextButton(
+                        modifier = Modifier.agentControl(
+                            AgentUiContract.CLEAR_EVENTS,
+                            "Очистить активные события",
+                        ),
+                        onClick = { agent.clearEvents() },
+                    ) {
+                        Text("Очистить события")
+                    }
+                    if (state.status == AgentSessionStatus.RUNNING) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
                 }
             }
 
@@ -2041,7 +2274,7 @@ fun AgentConsoleScreen(
                 Text(
                     text = "События Agent Core",
                     style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                 )
             }
 
@@ -2053,6 +2286,246 @@ fun AgentConsoleScreen(
             }
         }
     }
+
+}
+
+@Composable
+private fun DeckContextTile(
+    modifier: Modifier = Modifier,
+    icon: ImageVector,
+    label: String,
+    value: String,
+    detail: String,
+    accent: Color,
+) {
+    Card(
+        modifier = modifier.heightIn(min = 104.dp),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(20.dp),
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeckSectionCard(
+    title: String,
+    subtitle: String? = null,
+    accent: Color = DeepAgentColors.Violet,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    subtitle?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(accent),
+                )
+            }
+            content()
+        }
+    }
+}
+
+@Composable
+private fun DeckExecutionSteps(activeStage: Int) {
+    DeckSectionCard(
+        title = "Этапы выполнения",
+        subtitle = "Безопасное внесение изменений",
+        accent = DeepAgentColors.Cyan,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+        ) {
+            DeckStep(
+                modifier = Modifier.weight(1f),
+                number = 1,
+                title = "Просмотр",
+                detail = "Предложение patch",
+                active = activeStage == 1,
+                complete = activeStage > 1,
+            )
+            DeckStepConnector(
+                modifier = Modifier.weight(0.35f),
+                complete = activeStage > 1,
+            )
+            DeckStep(
+                modifier = Modifier.weight(1f),
+                number = 2,
+                title = "Одобрение",
+                detail = "Проверка",
+                active = activeStage == 2,
+                complete = activeStage > 2,
+            )
+            DeckStepConnector(
+                modifier = Modifier.weight(0.35f),
+                complete = activeStage > 2,
+            )
+            DeckStep(
+                modifier = Modifier.weight(1f),
+                number = 3,
+                title = "Запись",
+                detail = "Checkpoint",
+                active = activeStage == 3,
+                complete = activeStage > 3,
+            )
+            DeckStepConnector(
+                modifier = Modifier.weight(0.35f),
+                complete = activeStage > 3,
+            )
+            DeckStep(
+                modifier = Modifier.weight(1f),
+                number = 4,
+                title = "Восстановление",
+                detail = "Только вручную",
+                active = activeStage == 4,
+                complete = false,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeckStep(
+    modifier: Modifier,
+    number: Int,
+    title: String,
+    detail: String,
+    active: Boolean,
+    complete: Boolean,
+) {
+    val color = when {
+        active && number == 4 -> DeepAgentColors.Failed
+        active -> DeepAgentColors.Restricted
+        complete -> DeepAgentColors.Active
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.background)
+                .border(2.dp, color, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = number.toString(),
+                color = color,
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = if (active) color else MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+        )
+        Text(
+            text = detail,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+        )
+    }
+}
+
+@Composable
+private fun DeckStepConnector(
+    modifier: Modifier,
+    complete: Boolean,
+) {
+    Box(
+        modifier = modifier
+            .padding(top = 14.dp)
+            .height(2.dp)
+            .background(
+                if (complete) {
+                    DeepAgentColors.Active
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                },
+            ),
+    )
 }
 
 @Composable
