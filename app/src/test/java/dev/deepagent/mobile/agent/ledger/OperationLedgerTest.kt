@@ -344,13 +344,15 @@ class OperationLedgerTest {
         assertNotNull(first.previousChainHash)
         // execute() пишет три кадра: PREPARED, STARTED и терминальный.
         assertEquals(3L, ledger.chainLength())
-        val last = ledger.attempts("op.x").last()
 
         ledger.execute(spec("op.y", LedgerResolution.QUERYABLE)) {}
-        val next = ledger.attempts("op.y").first()
-        assertEquals(last.chainHash, next.previousChainHash)
+        // Терминальный кадр "op.y" ссылается на терминальный кадр "op.x":
+        // это и есть сцепление записей в одну цепочку.
+        val next = ledger.attempts("op.y").single()
+        assertEquals(first.chainHash, next.previousChainHash)
         assertNotNull(next.chainHash)
-        assertFalse(last.chainHash == next.chainHash)
+        assertFalse(first.chainHash == next.chainHash)
+        assertEquals(6L, ledger.chainLength())
     }
 
     /**
