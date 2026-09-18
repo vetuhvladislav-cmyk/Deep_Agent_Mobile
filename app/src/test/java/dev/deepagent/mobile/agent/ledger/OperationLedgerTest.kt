@@ -25,14 +25,14 @@ class OperationLedgerTest {
         val file = temporaryFolder.newFile("ledger.bin")
         val ledger = OperationLedger(file)
         var effects = 0
-        val spec = spec("op.1", LedgerResolution.IDEMPOTENT)
+        val spec = spec("op.one", LedgerResolution.IDEMPOTENT)
 
         ledger.execute(spec) {
             effects += 1
         }
 
         assertEquals(1, effects)
-        assertEquals(LedgerPhase.SUCCEEDED, ledger.record("op.1")?.phase)
+        assertEquals(LedgerPhase.SUCCEEDED, ledger.record("op.one")?.phase)
 
         val reopened = OperationLedger(file)
         try {
@@ -48,13 +48,14 @@ class OperationLedgerTest {
     @Test
     fun interruptedOperationsBecomeUnknownWithDifferentRecoveryPolicies() {
         LedgerResolution.values().forEachIndexed { index, resolution ->
-            val file = temporaryFolder.newFile(pending.$index.bin")
-            OperationLedger(file).begin(spec(pending.$index", resolution))
+            val operationId = "pending.$index"
+            val file = temporaryFolder.newFile("pending-$index.bin")
+            OperationLedger(file).begin(spec(operationId, resolution))
 
             val recovered = OperationLedger(file)
             val snapshot = recovered.snapshot()
             assertEquals(LedgerHealth.RECOVERY_REQUIRED, snapshot.health)
-            assertTrue(snapshot.unknownOperationIds.contains(pending.$index"))
+            assertTrue(snapshot.unknownOperationIds.contains(operationId))
             assertEquals(
                 when (resolution) {
                     LedgerResolution.QUERYABLE -> LedgerRecoveryAction.RECHECK_REQUIRED
@@ -62,17 +63,18 @@ class OperationLedgerTest {
                         LedgerRecoveryAction.EXPLICIT_RETRY_WITH_SAME_OPERATION_ID
                     LedgerResolution.BLIND -> LedgerRecoveryAction.MANUAL_RECONCILIATION
                 },
-                snapshot.recoveryActions[pending.$index"],
+                snapshot.recoveryActions[operationId],
             )
-            assertEquals(LedgerPhase.UNKNOWN, recovered.record(pending.$index")?.phase)
+            assertEquals(LedgerPhase.UNKNOWN, recovered.record(operationId)?.phase)
         }
     }
 
     @Test
     fun explicitRetryUsesSameIdOnlyForIdempotentOperations() {
         LedgerResolution.values().forEachIndexed { index, resolution ->
-            val file = temporaryFolder.newFile(retry.$index.bin")
-            val spec = spec(retry.$index", resolution)
+            val operationId = "retry.$index"
+            val file = temporaryFolder.newFile("retry-$index.bin")
+            val spec = spec(operationId, resolution)
             OperationLedger(file).begin(spec)
             val recovered = OperationLedger(file)
 
@@ -186,7 +188,7 @@ class OperationLedgerTest {
     @Test
     fun batchedDurabilityCannotBeUsedForSideEffects() {
         try {
-            spec("batched-side-effect", LedgerResolution.QUERYABLE).copy(
+            spec("batched.side.effect", LedgerResolution.QUERYABLE).copy(
                 durability = LedgerDurability.BATCHED,
             )
             throw AssertionError("side-effect BATCHED must be rejected")
@@ -238,7 +240,7 @@ class OperationLedgerTest {
     /** SEC-03: retry по-прежнему запрещён для не-UNKNOWN и не-IDEMPOTENT. */
     @Test
     fun retryUnknownStillRejectsNonIdempotentAndNonUnknown() {
-        val file = temporaryFolder.newFile(retry.guard.bin")
+        val file = temporaryFolder.newFile("retry-guard.bin")
         val idempotent = spec("op.guard", LedgerResolution.IDEMPOTENT)
 
         val successful = OperationLedger(file)
@@ -247,8 +249,8 @@ class OperationLedgerTest {
         assertFalse(retryAfterSuccess.isSuccess)
         assertEquals(1, successful.attemptCount(idempotent.operationId))
 
-        val otherFile = temporaryFolder.newFile(retry.guard-blind.bin")
-        val blind = spec("op.guard-blind", LedgerResolution.BLIND)
+        val otherFile = temporaryFolder.newFile("retry-guard-blind.bin")
+        val blind = spec("op.guard.blind", LedgerResolution.BLIND)
         OperationLedger(otherFile).begin(blind)
         val recoveredBlind = OperationLedger(otherFile)
         val retryBlind = runCatching { recoveredBlind.retryUnknown(blind) }
@@ -265,8 +267,8 @@ class OperationLedgerTest {
     fun chainIntegrityDetectsRewrittenRecord() {
         val file = temporaryFolder.newFile("chain-rewrite.bin")
         val ledger = OperationLedger(file)
-        ledger.execute(spec("op.a", LedgerResolution.QUERYABLE)) {}
-        ledger.execute(spec("op.b", LedgerResolution.QUERYABLE)) {}
+        ledger.execute(spec("op.ra", LedgerResolution.QUERYABLE)) {}
+        ledger.execute(spec("op.rb", LedgerResolution.QUERYABLE)) {}
 
         val bytes = Files.readAllBytes(file.toPath())
         val detailMarker = "effect completed".toByteArray(Charsets.UTF_8)
@@ -282,7 +284,7 @@ class OperationLedgerTest {
             recovered.snapshot().blocked,
         )
         try {
-            recovered.begin(spec("op.d", LedgerResolution.QUERYABLE))
+            recovered.begin(spec("op.rd", LedgerResolution.QUERYABLE))
             throw AssertionError("повреждённая цепочка должна блокировать запись")
         } catch (_: LedgerBlockedException) {
             // Expected.
@@ -323,7 +325,11 @@ class OperationLedgerTest {
         Files.write(file.toPath(), withoutMiddle)
 
         val recovered = OperationLedger(file)
-        assertTrue(recovered.snapshot().blocked)
+        assertTrue(
+            "удаление записи должно блокировать ledger; diagnostics=" +
+                recovered.snapshot().diagnostics,
+            recovered.snapshot().blocked,
+        )
         assertTrue(
             recovered.snapshot().diagnostics.any {
                 it == "LEDGER_SEQUENCE_GAP" || it == "LEDGER_CHAIN_HASH_MISMATCH"
