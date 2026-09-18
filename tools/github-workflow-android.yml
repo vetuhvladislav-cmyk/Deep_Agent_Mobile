@@ -107,7 +107,7 @@ jobs:
   ui-runtime:
     name: Android UI runtime acceptance
     timeout-minutes: 30
-    runs-on: macos-15
+    runs-on: macos-15-large
     permissions:
       contents: read
     steps:
@@ -164,7 +164,7 @@ jobs:
           nohup "$emulator_bin" -avd deep-agent-api-35 \
             -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader \
-            -accel off \
+            -accel auto \
             > "${RUNNER_TEMP}/deep-agent-emulator.log" 2>&1 &
           trap "adb emu kill >/dev/null 2>&1 || true" EXIT
           wait_for_device_deadline=$((SECONDS + 300))
@@ -288,7 +288,7 @@ jobs:
           files: dist/*
           generate_release_notes: true
           body: |
-            APK подготовлен после успешных Linux build и macOS ARM64 host with x86_64 guest UI runtime gates.
+            APK подготовлен после успешных Linux build и Intel macOS x86_64 UI runtime gates UI runtime gates.
             Release job собирает APK из того же commit после прохождения обоих gates.
             Модульные тесты, instrumentation tests и Android UI runtime acceptance завершены до публикации.
             Сборка отладочная и предназначена для тестирования на Android.
