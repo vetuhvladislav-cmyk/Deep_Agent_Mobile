@@ -337,12 +337,13 @@ class OperationLedgerTest {
         val ledger = OperationLedger(file)
         ledger.execute(spec("op.x", LedgerResolution.QUERYABLE)) {}
 
-        // Первая запись операции — PREPARED: она открывает цепочку.
-        val first = ledger.attempts("op.x").first()
+        // attempts() возвращает последний кадр попытки, то есть терминальный:
+        // он и продолжает глобальную цепочку.
+        val first = ledger.attempts("op.x").single()
         assertNotNull(first.chainHash)
-        assertEquals(null, first.previousChainHash)
-        // Последняя запись операции — терминальная: именно она связана со
-        // следующей операцией.
+        assertNotNull(first.previousChainHash)
+        // execute() пишет три кадра: PREPARED, STARTED и терминальный.
+        assertEquals(3L, ledger.chainLength())
         val last = ledger.attempts("op.x").last()
 
         ledger.execute(spec("op.y", LedgerResolution.QUERYABLE)) {}

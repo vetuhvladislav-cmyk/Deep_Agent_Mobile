@@ -372,6 +372,14 @@ class OperationLedger(
     @Synchronized
     fun attemptCount(operationId: String): Int = attempts(operationId).size
 
+    /**
+     * Число кадров в цепочке ledger. Каждый переход фазы добавляет кадр, поэтому
+     * значение растёт быстрее числа операций: execute() пишет PREPARED, STARTED
+     * и терминальный кадр. Нужно для проверок целостности и диагностики.
+     */
+    @Synchronized
+    fun chainLength(): Long = nextSequence - 1L
+
     @Synchronized
     fun prepare(spec: LedgerOperationSpec): LedgerRecord {
         ensureWritable()
