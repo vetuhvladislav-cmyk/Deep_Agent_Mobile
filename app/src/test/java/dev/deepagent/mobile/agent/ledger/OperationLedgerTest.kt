@@ -25,14 +25,14 @@ class OperationLedgerTest {
         val file = temporaryFolder.newFile("ledger.bin")
         val ledger = OperationLedger(file)
         var effects = 0
-        val spec = spec("op-1", LedgerResolution.IDEMPOTENT)
+        val spec = spec("op.1", LedgerResolution.IDEMPOTENT)
 
         ledger.execute(spec) {
             effects += 1
         }
 
         assertEquals(1, effects)
-        assertEquals(LedgerPhase.SUCCEEDED, ledger.record("op-1")?.phase)
+        assertEquals(LedgerPhase.SUCCEEDED, ledger.record("op.1")?.phase)
 
         val reopened = OperationLedger(file)
         try {
@@ -48,13 +48,13 @@ class OperationLedgerTest {
     @Test
     fun interruptedOperationsBecomeUnknownWithDifferentRecoveryPolicies() {
         LedgerResolution.values().forEachIndexed { index, resolution ->
-            val file = temporaryFolder.newFile("pending-$index.bin")
-            OperationLedger(file).begin(spec("pending-$index", resolution))
+            val file = temporaryFolder.newFile(pending.$index.bin")
+            OperationLedger(file).begin(spec(pending.$index", resolution))
 
             val recovered = OperationLedger(file)
             val snapshot = recovered.snapshot()
             assertEquals(LedgerHealth.RECOVERY_REQUIRED, snapshot.health)
-            assertTrue(snapshot.unknownOperationIds.contains("pending-$index"))
+            assertTrue(snapshot.unknownOperationIds.contains(pending.$index"))
             assertEquals(
                 when (resolution) {
                     LedgerResolution.QUERYABLE -> LedgerRecoveryAction.RECHECK_REQUIRED
@@ -62,17 +62,17 @@ class OperationLedgerTest {
                         LedgerRecoveryAction.EXPLICIT_RETRY_WITH_SAME_OPERATION_ID
                     LedgerResolution.BLIND -> LedgerRecoveryAction.MANUAL_RECONCILIATION
                 },
-                snapshot.recoveryActions["pending-$index"],
+                snapshot.recoveryActions[pending.$index"],
             )
-            assertEquals(LedgerPhase.UNKNOWN, recovered.record("pending-$index")?.phase)
+            assertEquals(LedgerPhase.UNKNOWN, recovered.record(pending.$index")?.phase)
         }
     }
 
     @Test
     fun explicitRetryUsesSameIdOnlyForIdempotentOperations() {
         LedgerResolution.values().forEachIndexed { index, resolution ->
-            val file = temporaryFolder.newFile("retry-$index.bin")
-            val spec = spec("retry-$index", resolution)
+            val file = temporaryFolder.newFile(retry.$index.bin")
+            val spec = spec(retry.$index", resolution)
             OperationLedger(file).begin(spec)
             val recovered = OperationLedger(file)
 
@@ -94,7 +94,7 @@ class OperationLedgerTest {
     @Test
     fun trailingCorruptionIsTruncatedAndStartedOperationBecomesUnknown() {
         val file = temporaryFolder.newFile("trailing.bin")
-        OperationLedger(file).begin(spec("op-trailing", LedgerResolution.QUERYABLE))
+        OperationLedger(file).begin(spec("op.trailing", LedgerResolution.QUERYABLE))
         val validLength = file.length()
         FileOutputStream(file, true).use { it.write(byteArrayOf(0x44, 0x41, 0x4d)) }
 
@@ -107,15 +107,15 @@ class OperationLedgerTest {
                 validLength.toInt() + 3,
             ).contentEquals(byteArrayOf(0x44, 0x41, 0x4D))
         assertFalse(trailingMarkerPresent)
-        assertEquals(LedgerPhase.UNKNOWN, recovered.record("op-trailing")?.phase)
+        assertEquals(LedgerPhase.UNKNOWN, recovered.record("op.trailing")?.phase)
     }
 
     @Test
     fun corruptedMiddleBlocksAutomaticContinuation() {
         val file = temporaryFolder.newFile("middle.bin")
         val ledger = OperationLedger(file)
-        ledger.execute(spec("op-a", LedgerResolution.QUERYABLE)) {}
-        ledger.execute(spec("op-b", LedgerResolution.QUERYABLE)) {}
+        ledger.execute(spec("op.a", LedgerResolution.QUERYABLE)) {}
+        ledger.execute(spec("op.b", LedgerResolution.QUERYABLE)) {}
 
         val bytes = Files.readAllBytes(file.toPath())
         bytes[30] = (bytes[30].toInt() xor 0x01).toByte()
@@ -125,7 +125,7 @@ class OperationLedgerTest {
         assertEquals(LedgerHealth.CORRUPT, recovered.snapshot().health)
         assertTrue(recovered.snapshot().blocked)
         try {
-            recovered.begin(spec("op-c", LedgerResolution.QUERYABLE))
+            recovered.begin(spec("op.c", LedgerResolution.QUERYABLE))
             throw AssertionError("corrupted ledger must reject new side effects")
         } catch (_: LedgerBlockedException) {
             // Expected.
@@ -136,23 +136,23 @@ class OperationLedgerTest {
     fun corruptedTerminalRecordDoesNotLookSuccessful() {
         val file = temporaryFolder.newFile("terminal.bin")
         val ledger = OperationLedger(file)
-        ledger.begin(spec("op-terminal", LedgerResolution.QUERYABLE))
-        ledger.terminal("op-terminal", LedgerPhase.SUCCEEDED, "success")
+        ledger.begin(spec("op.terminal", LedgerResolution.QUERYABLE))
+        ledger.terminal("op.terminal", LedgerPhase.SUCCEEDED, "success")
 
         val bytes = Files.readAllBytes(file.toPath())
         bytes[bytes.lastIndex] = (bytes[bytes.lastIndex].toInt() xor 0x01).toByte()
         Files.write(file.toPath(), bytes)
 
         val recovered = OperationLedger(file)
-        assertEquals(LedgerPhase.UNKNOWN, recovered.record("op-terminal")?.phase)
-        assertTrue(recovered.snapshot().unknownOperationIds.contains("op-terminal"))
+        assertEquals(LedgerPhase.UNKNOWN, recovered.record("op.terminal")?.phase)
+        assertTrue(recovered.snapshot().unknownOperationIds.contains("op.terminal"))
     }
 
     @Test
     fun hmacKeyLossBlocksReadInsteadOfDowngradingIntegrity() {
         val file = temporaryFolder.newFile("hmac.bin")
         val key = "ledger-test-key".toByteArray()
-        val spec = spec("op-hmac", LedgerResolution.BLIND).copy(
+        val spec = spec("op.hmac", LedgerResolution.BLIND).copy(
             integrityMode = LedgerIntegrityMode.HMAC_SHA256,
             keyVersion = 1,
         )
@@ -166,7 +166,7 @@ class OperationLedgerTest {
     @Test
     fun olderFormatRequiresExplicitExportImport() {
         val file = temporaryFolder.newFile("downgrade.bin")
-        OperationLedger(file).begin(spec("op-downgrade", LedgerResolution.QUERYABLE))
+        OperationLedger(file).begin(spec("op.downgrade", LedgerResolution.QUERYABLE))
 
         val bytes = Files.readAllBytes(file.toPath())
         // Frame format version is the second big-endian int.
@@ -202,7 +202,7 @@ class OperationLedgerTest {
     @Test
     fun explicitRetryPreservesUnknownAttemptHistory() {
         val file = temporaryFolder.newFile("attempt-history.bin")
-        val spec = spec("op-attempts", LedgerResolution.IDEMPOTENT)
+        val spec = spec("op.attempts", LedgerResolution.IDEMPOTENT)
         OperationLedger(file).begin(spec)
 
         val recovered = OperationLedger(file)
@@ -238,8 +238,8 @@ class OperationLedgerTest {
     /** SEC-03: retry по-прежнему запрещён для не-UNKNOWN и не-IDEMPOTENT. */
     @Test
     fun retryUnknownStillRejectsNonIdempotentAndNonUnknown() {
-        val file = temporaryFolder.newFile("retry-guard.bin")
-        val idempotent = spec("op-guard", LedgerResolution.IDEMPOTENT)
+        val file = temporaryFolder.newFile(retry.guard.bin")
+        val idempotent = spec("op.guard", LedgerResolution.IDEMPOTENT)
 
         val successful = OperationLedger(file)
         successful.execute(idempotent) {}
@@ -247,8 +247,8 @@ class OperationLedgerTest {
         assertFalse(retryAfterSuccess.isSuccess)
         assertEquals(1, successful.attemptCount(idempotent.operationId))
 
-        val otherFile = temporaryFolder.newFile("retry-guard-blind.bin")
-        val blind = spec("op-guard-blind", LedgerResolution.BLIND)
+        val otherFile = temporaryFolder.newFile(retry.guard-blind.bin")
+        val blind = spec("op.guard-blind", LedgerResolution.BLIND)
         OperationLedger(otherFile).begin(blind)
         val recoveredBlind = OperationLedger(otherFile)
         val retryBlind = runCatching { recoveredBlind.retryUnknown(blind) }
@@ -265,8 +265,8 @@ class OperationLedgerTest {
     fun chainIntegrityDetectsRewrittenRecord() {
         val file = temporaryFolder.newFile("chain-rewrite.bin")
         val ledger = OperationLedger(file)
-        ledger.execute(spec("op-a", LedgerResolution.QUERYABLE)) {}
-        ledger.execute(spec("op-b", LedgerResolution.QUERYABLE)) {}
+        ledger.execute(spec("op.a", LedgerResolution.QUERYABLE)) {}
+        ledger.execute(spec("op.b", LedgerResolution.QUERYABLE)) {}
 
         val bytes = Files.readAllBytes(file.toPath())
         val detailMarker = "effect completed".toByteArray(Charsets.UTF_8)
@@ -282,7 +282,7 @@ class OperationLedgerTest {
             recovered.snapshot().blocked,
         )
         try {
-            recovered.begin(spec("op-d", LedgerResolution.QUERYABLE))
+            recovered.begin(spec("op.d", LedgerResolution.QUERYABLE))
             throw AssertionError("повреждённая цепочка должна блокировать запись")
         } catch (_: LedgerBlockedException) {
             // Expected.
@@ -297,9 +297,9 @@ class OperationLedgerTest {
     fun chainIntegrityDetectsRemovedMiddleRecord() {
         val file = temporaryFolder.newFile("chain-removed.bin")
         val ledger = OperationLedger(file)
-        ledger.execute(spec("op-m1", LedgerResolution.QUERYABLE)) {}
-        ledger.execute(spec("op-m2", LedgerResolution.QUERYABLE)) {}
-        ledger.execute(spec("op-m3", LedgerResolution.QUERYABLE)) {}
+        ledger.execute(spec("op.m1", LedgerResolution.QUERYABLE)) {}
+        ledger.execute(spec("op.m2", LedgerResolution.QUERYABLE)) {}
+        ledger.execute(spec("op.m3", LedgerResolution.QUERYABLE)) {}
 
         val bytes = Files.readAllBytes(file.toPath())
         val magic = byteArrayOf(0x44, 0x41, 0x4C, 0x47)
@@ -336,14 +336,14 @@ class OperationLedgerTest {
     fun chainHashesLinkConsecutiveRecords() {
         val file = temporaryFolder.newFile("chain-links.bin")
         val ledger = OperationLedger(file)
-        ledger.execute(spec("op-x", LedgerResolution.QUERYABLE)) {}
+        ledger.execute(spec("op.x", LedgerResolution.QUERYABLE)) {}
 
-        val first = ledger.attempts("op-x").first()
+        val first = ledger.attempts("op.x").first()
         assertNotNull(first.chainHash)
         assertEquals(null, first.previousChainHash)
 
-        ledger.execute(spec("op-y", LedgerResolution.QUERYABLE)) {}
-        val second = ledger.attempts("op-y").first()
+        ledger.execute(spec("op.y", LedgerResolution.QUERYABLE)) {}
+        val second = ledger.attempts("op.y").first()
         assertEquals(first.chainHash, second.previousChainHash)
         assertNotNull(second.chainHash)
         assertFalse(first.chainHash == second.chainHash)
@@ -359,9 +359,9 @@ class OperationLedgerTest {
     fun chainDetectsReframedRecordWithValidChecksum() {
         val file = temporaryFolder.newFile("chain-forged.bin")
         val ledger = OperationLedger(file)
-        ledger.execute(spec("op-real", LedgerResolution.QUERYABLE)) {}
+        ledger.execute(spec("op.real", LedgerResolution.QUERYABLE)) {}
 
-        val original = ledger.attempts("op-real").first()
+        val original = ledger.attempts("op.real").first()
         // Подменяем поле, не входящее в checksum-контракт вызывающей стороны,
         // и пересчитываем CRC32C — кадр становится формально валидным.
         val forged = original.copy(
