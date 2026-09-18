@@ -105,6 +105,10 @@ data class LedgerUnknownOperation(
     val lastConfirmedState: String?,
     val updatedAt: Long,
     val detail: String?,
+    /** Номер текущей попытки: 1 — первая, >1 — после explicit retry. */
+    val attempt: Int = 1,
+    /** Сколько попыток сохранено в ledger по этому operation ID. */
+    val attemptCount: Int = 1,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("operation_id", AgentRedactor.text(operationId, 160))
@@ -113,6 +117,8 @@ data class LedgerUnknownOperation(
         .put("last_confirmed_state", AgentRedactor.text(lastConfirmedState, 64))
         .put("updated_at", updatedAt)
         .put("detail", AgentRedactor.text(detail, 2_000))
+        .put("attempt", attempt)
+        .put("attempt_count", attemptCount)
 
     companion object {
         private val IDENTIFIER_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
@@ -144,6 +150,8 @@ data class LedgerUnknownOperation(
                     value.optString("detail"),
                     2_000,
                 )?.takeIf { it.isNotBlank() },
+                attempt = value.optInt("attempt", 1).coerceAtLeast(1),
+                attemptCount = value.optInt("attempt_count", 1).coerceAtLeast(1),
             )
         }
     }

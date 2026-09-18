@@ -19,6 +19,12 @@ class AgentTransaction(
 
     fun begin(spec: LedgerOperationSpec): LedgerRecord = ledger.begin(spec)
 
+    /**
+     * Число сохранённых попыток операции. Растёт при explicit retry: история
+     * предыдущей UNKNOWN-попытки не удаляется.
+     */
+    fun attemptCount(operationId: String): Int = ledger.attemptCount(operationId)
+
     fun finish(
         operationId: String,
         phase: LedgerPhase,

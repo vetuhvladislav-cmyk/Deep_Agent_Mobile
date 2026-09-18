@@ -85,7 +85,11 @@ import dev.deepagent.mobile.agent.session.SessionStore
 import dev.deepagent.mobile.agent.tools.AgentToolDefinition
 import dev.deepagent.mobile.agent.tools.ToolExecutionResult
 import dev.deepagent.mobile.agent.security.AuditTraceStore
+import dev.deepagent.mobile.agent.security.AgentTimeSource
+import dev.deepagent.mobile.agent.security.ApprovalConsumptionRegistry
+import dev.deepagent.mobile.agent.security.ApprovalState
 import dev.deepagent.mobile.agent.security.InMemoryAuditTraceStore
+import dev.deepagent.mobile.agent.security.ProcessAgentTimeSource
 import dev.deepagent.mobile.agent.tools.ToolInvoker
 import dev.deepagent.mobile.agent.tools.ToolRouter
 import dev.deepagent.mobile.agent.tools.ToolRegistry
@@ -163,6 +167,8 @@ class AgentCore(context: Context) : AgentBridge {
     private val submitMutex = Mutex()
     private val journalMutex = Mutex()
     private val externalMutationMutex = Mutex()
+    private val agentTimeSource: AgentTimeSource = ProcessAgentTimeSource()
+    private val approvalConsumptions = ApprovalConsumptionRegistry(agentTimeSource)
     private val gitOperationCache = LinkedHashMap<String, GitOperationResult>()
     private val actionsOperationCache = LinkedHashMap<String, ActionsOperationState>()
     private var lastGitResult: GitOperationResult? = null
@@ -2314,6 +2320,7 @@ class AgentCore(context: Context) : AgentBridge {
                                 oldSha256 = preview.oldSha256,
                                 newSha256 = preview.newSha256,
                                 argumentsJson = call.arguments,
+                                timeSource = agentTimeSource,
                                 operationId = invocationId,
                             ),
                             invocationId = invocationId,
@@ -2422,7 +2429,9 @@ class AgentCore(context: Context) : AgentBridge {
         if (_state.value.status != AgentSessionStatus.WAITING_APPROVAL) return
         val pending = _pendingPatch.value ?: return
         val expectedToken = pending.approvalToken
-        val now = System.currentTimeMillis()
+        val now = agentTimeSource.monotonicMillis()
+        val bootId = agentTimeSource.bootId
+        val priorState = approvalConsumptions.stateOf(expectedToken.value)
         val tokenValid = expectedToken.matches(
             presentedValue = approvalToken,
             operation = ApprovalTokenFactory.APPLY_PATCH_OPERATION,
@@ -2436,34 +2445,41 @@ class AgentCore(context: Context) : AgentBridge {
             argumentsJson = pending.argumentsJson,
             now = now,
             operationId = pending.invocationId,
+            bootId = bootId,
         )
-        if (!tokenValid) {
+        if (!tokenValid || priorState != ApprovalState.ISSUED) {
             val expired = expectedToken.isExpired(now)
+            val bootMismatch = !expectedToken.binding.bootIdMatches(bootId)
+            val reason = when {
+                priorState == ApprovalState.CONSUMED ->
+                    "Approval token уже использован; повторный side effect запрещён"
+                priorState == ApprovalState.REVOKED ->
+                    "Approval token отозван; side effect запрещён"
+                bootMismatch ->
+                    "Approval token выдан в прошлом запуске процесса; нужен новый preview"
+                expired -> "Approval token истёк"
+                else -> "Approval token не совпадает с текущей операцией"
+            }
             recordDecision(
                 kind = "PATCH",
                 state = "DENIED",
-                detail = if (expired) {
-                    "Approval token истёк"
-                } else {
-                    "Approval token не совпадает с текущей операцией"
-                },
+                detail = reason,
             )
-            append(
-                AgentEventKind.ERROR,
-                if (expired) {
-                    "Patch approval истёк; нужен новый preview"
-                } else {
-                    "Patch approval отклонён: token не соответствует текущей операции"
-                },
-            )
-            if (expired) {
+            append(AgentEventKind.ERROR, "Patch approval отклонён: " + reason)
+            if (priorState != ApprovalState.ISSUED) {
+                // Повторное предъявление уже отработавшего токена — это не
+                // истечение и не рассинхронизация preview: side effect по нему
+                // не начинался, поэтому операция не переводится в UNKNOWN.
+                return
+            }
+            if (expired || bootMismatch) {
                 completeInvocation(
                     invocationId = pending.invocationId,
                     state = "UNKNOWN",
-                    summary = "Approval token истёк до применения patch",
+                    summary = reason,
                 )
                 clearPendingPatch()
-                markUnknown("Approval token истёк; выполните новый preview перед продолжением")
+                markUnknown(reason + "; выполните новый preview перед продолжением")
             }
             return
         }
@@ -2474,6 +2490,33 @@ class AgentCore(context: Context) : AgentBridge {
             )
             return
         }
+
+        // Одноразовость фиксируется до любого side effect. Без этого второй
+        // вызов с тем же токеном прошёл бы проверку binding, потому что сам
+        // binding остаётся валидным до истечения TTL.
+        val consumption = approvalConsumptions.consume(
+            tokenValue = expectedToken.value,
+            operation = ApprovalTokenFactory.APPLY_PATCH_OPERATION,
+            sessionId = pending.sessionId,
+            operationId = pending.invocationId,
+        )
+        if (consumption == null) {
+            recordDecision(
+                kind = "PATCH",
+                state = "DENIED",
+                detail = "Approval token уже потреблён; повторный side effect запрещён",
+            )
+            append(
+                AgentEventKind.ERROR,
+                "Patch approval отклонён: token уже потреблён",
+            )
+            return
+        }
+        append(
+            AgentEventKind.INFO,
+            "Approval token потреблён",
+            consumption.redactedSummary(),
+        )
 
         _state.value = _state.value.copy(
             status = AgentSessionStatus.RUNNING,
@@ -3320,6 +3363,8 @@ class AgentCore(context: Context) : AgentBridge {
                     lastConfirmedState = interrupted ?: LedgerPhase.STARTED.name,
                     updatedAt = record.updatedAt,
                     detail = record.detail,
+                    attempt = record.attempt,
+                    attemptCount = agentTransaction.attemptCount(record.operationId),
                 )
             }
         val diagnosticParts = buildList {
