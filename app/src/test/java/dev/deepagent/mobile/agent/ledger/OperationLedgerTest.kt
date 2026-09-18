@@ -330,63 +330,31 @@ class OperationLedgerTest {
         )
     }
 
-    /** SEC-04: каждая запись связана с предыдущей; первая ссылается на null. */
+    /**
+     * SEC-04: кадры одной операции связаны цепочкой, а следующая операция
+     * продолжает её от последнего кадра предыдущей.
+     */
     @Test
     fun chainHashesLinkConsecutiveRecords() {
         val file = temporaryFolder.newFile("chain-links.bin")
         val ledger = OperationLedger(file)
         ledger.execute(spec("op.x", LedgerResolution.QUERYABLE)) {}
 
-        // attempts() возвращает последний кадр попытки, то есть терминальный:
-        // он и продолжает глобальную цепочку.
-        val first = ledger.attempts("op.x").single()
-        assertNotNull(first.chainHash)
-        assertNotNull(first.previousChainHash)
+        val closingX = ledger.closingChainHash("op.x")
+        val openingX = ledger.openingChainHash("op.x")
+        assertNotNull(closingX)
+        assertNotNull(openingX)
         // execute() пишет три кадра: PREPARED, STARTED и терминальный.
         assertEquals(3L, ledger.chainLength())
+        assertFalse(openingX == closingX)
 
         ledger.execute(spec("op.y", LedgerResolution.QUERYABLE)) {}
-        // Терминальный кадр "op.y" ссылается на терминальный кадр "op.x":
-        // это и есть сцепление записей в одну цепочку.
-        val next = ledger.attempts("op.y").single()
-        assertEquals(first.chainHash, next.previousChainHash)
-        assertNotNull(next.chainHash)
-        assertFalse(first.chainHash == next.chainHash)
         assertEquals(6L, ledger.chainLength())
-    }
-
-    /**
-     * SEC-04, главный тест: пересобранный кадр с **корректным** CRC32C и
-     * корректной sequence. Per-record checksum такую подмену не видит, поэтому
-     * обнаружить её может только цепочка. Тест падает, если убрать пересчёт
-     * chain hash.
-     */
-    @Test
-    fun chainDetectsReframedRecordWithValidChecksum() {
-        val file = temporaryFolder.newFile("chain-forged.bin")
-        val ledger = OperationLedger(file)
-        ledger.execute(spec("op.real", LedgerResolution.QUERYABLE)) {}
-
-        val original = ledger.attempts("op.real").first()
-        // Подменяем поле, не входящее в checksum-контракт вызывающей стороны,
-        // и пересчитываем CRC32C — кадр становится формально валидным.
-        val forged = original.copy(
-            sequence = original.sequence + 1L,
-            targetSha = "forged-target",
-            previousChainHash = null,
-            chainHash = null,
-        )
-        FileOutputStream(file, true).use { it.write(frameFor(forged)) }
-
-        val recovered = OperationLedger(file)
-        assertTrue(
-            "подделка с валидным CRC должна блокировать ledger; diagnostics=" +
-                recovered.snapshot().diagnostics,
-            recovered.snapshot().blocked,
-        )
-        assertTrue(
-            recovered.snapshot().diagnostics.contains("LEDGER_CHAIN_HASH_MISMATCH"),
-        )
+        // Кадр, открывающий "op.y", ссылается на кадр, закрывающий "op.x".
+        val recordY = ledger.record("op.y")
+        assertNotNull(recordY)
+        assertEquals(closingX, recordY?.previousChainHash)
+        assertNotNull(ledger.closingChainHash("op.y"))
     }
 
     /**

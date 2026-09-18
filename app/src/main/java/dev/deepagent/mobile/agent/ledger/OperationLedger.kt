@@ -380,6 +380,18 @@ class OperationLedger(
     @Synchronized
     fun chainLength(): Long = nextSequence - 1L
 
+    /** Хеш первого кадра операции: он открывает её цепочку. */
+    @Synchronized
+    fun openingChainHash(operationId: String): String? = attempts(operationId)
+        .firstOrNull()
+        ?.chainHash
+
+    /** Хеш последнего кадра операции: он продолжает глобальную цепочку. */
+    @Synchronized
+    fun closingChainHash(operationId: String): String? = attempts(operationId)
+        .lastOrNull()
+        ?.chainHash
+
     @Synchronized
     fun prepare(spec: LedgerOperationSpec): LedgerRecord {
         ensureWritable()
