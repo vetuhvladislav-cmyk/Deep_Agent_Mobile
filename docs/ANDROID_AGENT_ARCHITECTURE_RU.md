@@ -384,7 +384,7 @@ Agent Console использует собственную визуальную �
 
 - **Дата:** 2026-09-17.
 - **Статус:** accepted.
-- Approval связывает session ID, tool/operation name, canonical args SHA-256, workspace ID, workspace fingerprint, target SHA и expiry.
+- Approval связывает session ID, tool name, operation ID, canonical args SHA-256, workspace ID, workspace fingerprint, target SHA, old/new content SHA и expiry; изменение любого binding-поля инвалидирует approval.
 - Raw JSON с duplicate keys, invalid numbers или невалидной структурой отклоняется.
 - Golden vectors находятся в `app/src/test/resources/canonical_args_v1_vectors.json`.
 - Kotlin-реализация и независимый reference находятся в `tools/canonical_args_reference.py`.
@@ -393,13 +393,13 @@ Agent Console использует собственную визуальную �
 
 - **Дата:** 2026-09-17.
 - **Статус:** accepted.
-- Tool output передаётся модели только как typed envelope с `schema_version`, capability, trust, `content_is_data` и `instructions_are_data`.
+- Tool output передаётся модели только как typed envelope с `schema_version`, capability, trust, `content_is_data`, `instructions_are_data`, session ID, operation ID и canonical args SHA-256.
 - Workspace/provider output считается untrusted content и не может расширить capability set.
 - Tool definitions фильтруются до передачи модели по текущему permission.
 - Router отвергает неизвестный или запрещённый tool даже при прямом сфабрикованном вызове.
 - UI и Agent Core не получают capability через текстовый XML/Markdown-маркер; такие маркеры являются только данными.
 - Structural seams выделены без изменения AgentBridge v1: `AgentTransaction`, `ToolRegistry`, `ToolInvoker`, `ToolVerifier`, `EnvelopePolicy`, `ApprovalBinding`, `AuditTraceStore` и `ProcessCleanupController`.
-- UNKNOWN отображается отдельной карточкой с ledger health, числом операций, diagnostic reason и запретом automatic retry; export journal включает redacted ledger snapshot и audit trace.
+- UNKNOWN отображается отдельной карточкой с ledger health, числом операций, operation ID, типом resolution, последним подтверждённым состоянием, diagnostic reason и запретом automatic retry; export journal включает структурированный redacted ledger diagnostic и audit trace.
 
 ### ADR-004 — Threat model
 
@@ -409,7 +409,7 @@ Agent Console использует собственную визуальную �
 - **Trust boundaries:** пользовательский UI → AgentBridge; AgentBridge → Agent Core; Agent Core → ToolRouter; ToolRouter → workspace/Git/Actions/provider; untrusted workspace/tool/provider output → model context; app-private persistence → exported diagnostic bundle.
 - **Malicious inputs:** prompt injection в workspace rules, Markdown/XML, source comments, tool output, CI logs, provider response и forged function call.
 - **Data flow control:** canonical args и typed envelope до model context; permission/capability check до invocation; approval binding до side effect; redaction до journal, snapshot, trace и UI; provenance/checksum до artifact acceptance.
-- **P0 controls:** fail-closed permission policy, unavailable tools omitted from model context, direct forged tool rejection, fingerprint/target SHA binding, durable ledger, UNKNOWN recovery, no automatic replay, secret redaction и HMAC profile.
+- **P0 controls:** fail-closed permission policy, unavailable tools omitted from model context, CanonicalArgs rejection before dispatch, direct forged tool rejection, fingerprint/target SHA/operation binding, durable ledger, UNKNOWN recovery, no automatic replay, secret redaction и HMAC profile.
 - **Automatic tests:** CanonicalArgs golden/negative vectors, ledger torn-write/middle-corruption/key-loss/replay tests, capability filtering, forged-tool rejection, typed-envelope injection fixture и approval binding tests.
 - **Residual risks:** Android process death между effect и terminal frame, compromise of the host OS/Keystore, malicious content that is not recognized as a secret, и correctness of external GitHub/Actions state until re-check.
 - **Privileged mode:** отдельная capability profile с теми же approval, ledger, provenance и redaction invariants; privileged mode не может быть получен моделью самостоятельно.

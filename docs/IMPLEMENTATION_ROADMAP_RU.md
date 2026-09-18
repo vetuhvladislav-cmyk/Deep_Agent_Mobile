@@ -25,13 +25,21 @@
 Последний подтверждённый baseline прошёл unit-тесты, компиляцию instrumentation APK и debug APK в [GitHub Actions run #27](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35269039901) на commit `aa6b7a3`. После него bounded Planner/Evaluator, DeepSeek host-policy и operation-bound Git/PR/Actions recovery изменены в коммитах `b056589`, `82b29ba`, `0e751ed`, `2ab6f1f`, `d9744b7`, `eb15608`, `5b93dcd`, `a184072`, `3f0dcf5`, `8eb357b`, `17f926e`, `70629ea`, `b5d7071`, `b9bdf4a`, `a1646ca` и `4668d3e`; по текущему ограничению пользователя новая компиляция и тесты не запускались. Android device execution, реальный runtime и device lifecycle acceptance ещё не запускались, поэтому соответствующие exit criteria остаются открытыми.
 
 
+### Текущий implementation-slice (2026-09-18)
+
+- **Входной SHA:** `87badbf147e402e02a0ea43894891aaf85ec28bf`.
+- **Реализованный production-срез:** P0-A/P0-B/P0-C hardening seams и H0–H2 recovery/security controls на ветке `codex/p1-a-controlled-write-git-pr`; AgentBridge v1 сохранён.
+- **Зафиксированные изменения:** operation ID добавлен в approval binding и typed tool envelope; CanonicalArgs проверяется до tool invocation; UNKNOWN операции сохраняются как структурированный redacted diagnostic record в SessionStore и отображаются в Agent Console; ledger валидирует persisted side-effect profile и fsync-ит усечение trailing corruption.
+- **Статус приёмки:** capabilityStatus не повышается без recovery/security tests, Android/runtime acceptance и независимого review. В этом цикле намеренно не запускались компиляция, Gradle/JVM/Android-тесты и CI.
+- **Граница:** P1/P2 и любые новые capability не начинались.
+
 ## 1A. MVP hardening gate
 
 ### H0 — Подтверждение фактической структуры
 
 - **Статус:** capabilityStatus: implemented.
-- **Входной SHA:** `156d845cb3d06fa9110996a709875160a6f89caa`.
-- **Результат:** подтверждены реальные файлы, symbol map, AgentBridge boundary, persistence boundary, policy boundary и execution boundary; размеры файлов не используются как контракт.
+- **Входной SHA:** `3ec72c607b70953aa78b893c56c1c7773c86e291`.
+- **Результат:** подтверждены реальные файлы, symbol map на текущем source SHA, AgentBridge boundary, persistence boundary, policy boundary и execution boundary; размеры файлов не используются как контракт.
 - **Ограничение:** AgentBridge v1 и существующие публичные операции сохраняются.
 - **Exit criterion:** фактическая структура и контрольный SHA зафиксированы до hardening-изменений.
 
@@ -53,7 +61,7 @@
 ### H2 — Threat model, capabilities и prompt-injection defense
 
 - **Статус:** capabilityStatus: implemented; validation: security tests.
-- Реализованы CanonicalArgs v1, golden vectors, approval binding с target SHA, typed untrusted envelope, capability filtering и direct forged-tool rejection.
+- Реализованы CanonicalArgs v1, golden vectors, approval binding с session/tool/operation ID, target SHA и canonical args hash, typed untrusted envelope, capability filtering и direct forged-tool rejection.
 - Secrets redacted до model context, snapshot, trace и UI; UNKNOWN отображается в Agent Console и экспортируется вместе с redacted ledger/audit trace.
 - Threat model и ADR зафиксированы в канонической архитектуре без создания отдельного Markdown-файла.
 - **Exit criterion:** модель получает только доступные tools; изменение args invalidates approval; injection fixtures проходят отрицательные тесты.
@@ -135,7 +143,7 @@ H0–H2 являются обязательным hardening-gate. P1/P2 не з�
 - **Redacted audit trail:** invocation ID, tool name, workspace ID, input summary, output size, truncation, fingerprint и redacted error.
 - **Cancellation / timeout:** отдельный deadline для каждого tool; Git timeout и cancellation возвращают нормализованный результат; generic shell не добавляется.
 - **Recovery rule:** running без подтверждённого результата переводится в UNKNOWN; автоматический replay запрещён, выполняется re-check.
-- **Результат текущей реализации:** пять allowlisted read-only entry points и fail-closed guards присутствуют в едином ToolRouter; добавлены JVM-тесты на workspace path policy, fingerprint, пять read-only операций, no-git, unknown arguments и строгие bounded schemas. `testDebugUnitTest` и `assembleDebug` прошли в [run #27](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35269039901).
+- **Результат текущей реализации:** пять allowlisted read-only entry points, CanonicalArgs gate и fail-closed guards присутствуют в едином ToolRouter; typed envelope несёт session/operation/canonical-args correlation, а forbidden/unknown tools отвергаются до dispatch. Существующая автоматическая проверка остаётся историческим baseline; в текущем implementation-slice новые тесты, компиляция и CI не запускались.
 - **Acceptance gate:** capabilityStatus остаётся `planned` до Android/runtime-проверки пяти tools на реально импортированном workspace, включая path/symlink escape, sensitive files, overflow, no-git и неизменность workspace; instrumentation и SAF import fixture ещё не запускались.
 - **Exit criterion:** все пять tools работают через единый router contract; path escape, symlink escape, sensitive files, output overflow и отсутствие git обрабатываются fail-closed; workspace не изменяется.
 
@@ -150,7 +158,7 @@ H0–H2 являются обязательным hardening-gate. P1/P2 не з�
 - **Redacted audit trail:** journal сохраняет состояние вызовов, event sequence, decisions и provider references без tokens, cookies и Authorization headers.
 - **Cancellation / timeout:** journal write атомарен; recovery имеет bounded timeout и сообщает неполное состояние вместо зависания.
 - **Recovery rule:** завершённые side effects не повторяются; незавершённые операции получают UNKNOWN и требуют re-check.
-- **Результат текущей реализации:** кодовая часть P0-B внесена: versioned bounded journal v6 с чтением версий 1–6, per-session JSON snapshots, атомарная запись session/latest, сохранение events/invocations/decisions и последнего Git mutation result, redaction и recovery без автоматического replay; AgentEvent хранит schema version и bounded redacted payload; после process death завершённый Git result можно вернуть по session/operation ID, а незавершённый Git/Actions side effect остаётся UNKNOWN и блокирует replay; статическая согласованность изменённых файлов проверена.
+- **Результат текущей реализации:** кодовая часть P0-B расширена: versioned bounded journal v7 с чтением версий 1–7, per-session JSON snapshots, атомарная запись session/latest, сохранение events/invocations/decisions, последнего Git mutation result и структурированных UNKNOWN diagnostics, redaction и recovery без автоматического replay; AgentEvent хранит schema version и bounded redacted payload; после process death завершённый Git result можно вернуть по session/operation ID, а незавершённый Git/Actions side effect остаётся UNKNOWN и блокирует replay; статическая согласованность изменённых файлов проверена.
 - **Validation:** добавлены JVM-тесты на versioned atomic journal snapshot, redaction, latest pointer и отбрасывание неподдерживаемых recovery inputs; [run #27](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35269039901) прошёл. Android-проверка background/process death/rotation и отсутствие replay на device ещё не выполнялись.
 - **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки восстановления после background/process death/rotation и подтверждения отсутствия replay; JVM coverage не заменяет instrumentation gate.
 - **Exit criterion:** сессия восстанавливается без повторения завершённых tool/build/write операций, сохраняет correlation IDs и объясняет неизвестное состояние.

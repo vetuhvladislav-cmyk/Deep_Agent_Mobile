@@ -1,56 +1,197 @@
 # H0 symbol map
-source_sha=156d845cb3d06fa9110996a709875160a6f89caa
+source_sha=3ec72c607b70953aa78b893c56c1c7773c86e291
 branch=codex/p1-a-controlled-write-git-pr
-mode=read-only pre-gate; generated before hardening changes
+generated_at=2026-09-18
+mode=static source scan; no behavior/runtime validation performed
+
+app/src/main/java/dev/deepagent/mobile/AgentMobileApp.kt
+  lines: 36
+  classes: DeepAgentApplication@16
+  public_methods: onCreate@20, AgentMobileApp@27
+
+app/src/main/java/dev/deepagent/mobile/MainActivity.kt
+  lines: 20
+  classes: MainActivity@9
+  public_methods: onCreate@10
+
+app/src/main/java/dev/deepagent/mobile/agent/artifact/ArtifactManager.kt
+  lines: 160
+  classes: ArtifactManager@13
+  public_methods: save@15
 
 app/src/main/java/dev/deepagent/mobile/agent/core/AgentCore.kt
-  declarations: data class PendingPatch, class AgentCore
-  methods: submit, configureCredentials, clearCredentials, exportJournal, cancel, clearEvents, importWorkspace, prepareImage, clearImage, selectWorkspace, refreshWorkspace, inspectGit, createGitBranch, commitGit, pushGit, createPullRequest, runInteractive, sendInteractiveInput, cancelInteractive, interactiveFailure, startRuntime, stopRuntime, runActions, runActionsLocked, saveVerifiedArtifact, runActionsInternal, artifactSaveFailure, rollbackLastPatch, close, execute, validateRequest, validateDeepSeekBaseUrl, executeLocal, executeRemote, runDeepSeekAgent, appendToolResult, responseOutputItems, approvePendingPatch, rejectPendingPatch, restoreLatestSession, buildPersistedSnapshot, persistAsync, persistOnClose, runGitWrite, publishGitResult, cachedGitResult, cacheGitResult, cachedActionsResult, cacheActionsResult, normalizeOperationId, readCredential, workspaceIdForActions, updatePatchRecovery, recordPatchRollbackFailure, clearPendingPatch, completeOpenInvocations, beginInvocation, completeInvocation, recordDecision, resolveTarget, fail, markUnknown, append
-  lines: 3047
+  lines: 3412
+  classes: PendingPatch@116, AgentCore@135
+  public_methods: submit@239, configureCredentials@276, clearCredentials@293, exportJournal@306, cancel@404, clearEvents@426, importWorkspace@431, prepareImage@450, clearImage@500, selectWorkspace@515, refreshWorkspace@537, inspectGit@604, createGitBranch@612, commitGit@629, pushGit@646, createPullRequest@663, runInteractive@805, sendInteractiveInput@898, cancelInteractive@913, startRuntime@953, stopRuntime@1009, runActions@1027, saveVerifiedArtifact@1212, rollbackLastPatch@1537, close@1686, approvePendingPatch@2340, rejectPendingPatch@2538
 
-app/src/main/java/dev/deepagent/mobile/agent/tools/ToolRouter.kt
-  declarations: data class AgentToolDefinition, data class ToolExecutionResult, class ToolRouter, data class ArgumentSchema, data class BoundedRead, data class CapturedOutput
-  methods: toModelJson, previewPatch, applyPatch, rollbackPatch, readProjectRules, inspectGit, currentGitHeadSha, createGitBranch, commitGit, pushGit, execute, validateArguments, requireString, requireOptionalString, requireOptionalInt, requireOptionalBoolean, listFiles, readFile, searchCode, gitStatus, gitDiff, hasSafeGitMetadata, runGit, captureOutput, resolvePath, relativePath, visitTree, visit, isIgnoredDirectory, isSensitiveFile, readBounded, definitions
-  lines: 1154
+app/src/main/java/dev/deepagent/mobile/agent/core/AgentTransaction.kt
+  lines: 28
+  classes: AgentTransaction@15
+  public_methods: snapshot@18, begin@20, finish@22
 
-app/src/main/java/dev/deepagent/mobile/agent/protocol/AgentBridge.kt
-  declarations: interface AgentBridge, object AgentBridgeProtocol
-  methods: submit, configureCredentials, clearCredentials, exportJournal, importWorkspace, prepareImage, clearImage, selectWorkspace, refreshWorkspace, approvePendingPatch, rejectPendingPatch, inspectGit, createGitBranch, commitGit, pushGit, createPullRequest, startRuntime, runInteractive, sendInteractiveInput, cancelInteractive, stopRuntime, runActions, saveVerifiedArtifact, rollbackLastPatch, cancel, clearEvents, close
-  lines: 151
+app/src/main/java/dev/deepagent/mobile/agent/credential/EphemeralCredentialVault.kt
+  lines: 93
+  classes: CredentialKind@5, EphemeralCredentialVault@16
+  public_methods: replace@25, read@39, state@47, clearAll@52
 
-app/src/main/java/dev/deepagent/mobile/agent/session/SessionStore.kt
-  declarations: data class SessionRequestSummary, data class SessionInvocationRecord, data class SessionDecisionRecord, data class PersistedAgentSession, class SessionStore
-  methods: toJson, fromJson, parseInvocations, parseDecisions, loadLatest, load, save, pruneLocked, readPointerLocked, loadLocked, fileFor, writeAtomically, moveAtomically, isValidJournalIdentifier
-  lines: 634
+app/src/main/java/dev/deepagent/mobile/agent/deepseek/DeepSeekResponsesClient.kt
+  lines: 387
+  classes: DeepSeekImage@24, DeepSeekToolDefinition@29, DeepSeekFunctionCall@35, DeepSeekRoundResult@42, DeepSeekRequest@48, DeepSeekStreamEvent@62, ReasoningDelta@63, OutputDelta@64, ToolArgumentsDelta@65, Completed@66, Failed@67, DeepSeekResponsesClient@76
+  public_methods: cancelActive@85, stream@89, streamRound@96, dispatchEvent@158
 
-app/src/main/java/dev/deepagent/mobile/agent/workspace/WorkspaceManager.kt
-  declarations: data class WorkspaceSummary, class WorkspaceManager, class ImportBudget
-  methods: toJson, fromJson, list, select, resolveRoot, captureIdentity, checkpointDirectory, refresh, treePage, visit, normalizeTreePrefix, importUri, copyZip, copyDocumentTree, copyDocumentDirectory, copyBounded, resolveChild, normalizeRelativePath, summarizeTree, isTreeUri, queryDisplayName, loadEntries, loadSelectedId, readIndexText, findSelected, pruneMissingEntries, persistIndexLocked, claimPath, beginFile, addBytes
-  lines: 642
+app/src/main/java/dev/deepagent/mobile/agent/git/GitOperations.kt
+  lines: 1019
+  classes: GitOperation@21, GitOperationStatus@29, GitOperationState@37, GitOperationResult@56, GitBranchRequest@208, GitCommitRequest@214, GitPushRequest@220, GitPullRequestRequest@226, GitHubPullRequestResult@238, Created@239, Failed@248, GitRepositoryClient@262, HeadSnapshot@737, CommandResult@742, CapturedOutput@750, GitHubPullRequestClient@773
+  public_methods: toJson@75, toState@103, fromJson@129, status@266, createBranch@322, commit@373, push@451, cancelActive@778, create@782
 
-app/src/main/java/dev/deepagent/mobile/agent/workspace/WorkspaceIdentity.kt
-  declarations: data class WorkspaceIdentity, data class TreeEntry, class CaptureBudget
-  methods: toJson, capture, collect, digestFile, updateField, safeAdd
-  lines: 187
+app/src/main/java/dev/deepagent/mobile/agent/github/GitHubActionsClient.kt
+  lines: 1265
+  classes: GitHubActionsRequest@31, GitHubActionsResult@39, Dispatched@40, NotConfigured@41, Failed@42, VerifiedArtifact@45, ArtifactDownloadResult@54, Verified@55, Failed@56, Unknown@57, GitHubActionsClient@60, HttpResponse@1100, DownloadResponse@1111, RunInfo@1116, JobInfo@1127, StepInfo@1136, ArtifactInfo@1144, ActionsHttpException@1153, ArtifactVerificationException@1158
+  public_methods: cancelActive@65, dispatch@69, observe@109, publish@168, downloadAndVerifyArtifact@365, extractPayload@609, errorSuffix@1106
 
-app/src/main/java/dev/deepagent/mobile/agent/workspace/WorkspacePathPolicy.kt
-  declarations: object WorkspacePathPolicy
-  methods: resolve, isSensitiveFile, isBlockedRelativePath, isSensitiveName
-  lines: 113
+app/src/main/java/dev/deepagent/mobile/agent/image/ImageAnalysisPipeline.kt
+  lines: 268
+  classes: PreparedImageAsset@21, ImageAnalysisPipeline@44
+  public_methods: toState@31, prepare@67, toDeepSeekImage@144, clear@173
+
+app/src/main/java/dev/deepagent/mobile/agent/ledger/OperationLedger.kt
+  lines: 850
+  classes: LedgerDurability@26, LedgerResolution@31, LedgerPhase@37, LedgerIntegrityMode@46, LedgerHealth@51, LedgerRecoveryAction@58, LedgerOperationSpec@64, LedgerRecord@96, LedgerRecoverySnapshot@215, LedgerBlockedException@248, LedgerReplayBlockedException@250, LedgerDowngradeException@252, IntegrityKeyProvider@256, StaticHmacKeyProvider@260, AndroidKeystoreHmacKeyProvider@266, OperationLedger@298, FrameRead@700, ReadError@707, IntegrityKeyUnavailableException@838
+  public_methods: toJson@116, fromJson@140, toJson@225, key@257, key@263, key@269, snapshot@322, record@325, prepare@328, start@360, begin@378, retryUnknown@388, terminal@420, recover@472
 
 app/src/main/java/dev/deepagent/mobile/agent/model/AgentModels.kt
-  declarations: enum class ExecutionTarget, enum class PermissionMode, enum class AgentEventKind, enum class AgentSessionStatus, data class ImageAttachment, data class AgentRequest, data class AgentEvent, data class AgentSessionState, data class CredentialState, enum class JournalExportStatus, data class JournalExportResult, data class AgentWorkspaceSnapshot, data class PendingPatchApproval, enum class ImageAnalysisStatus, data class ImageAnalysisState, enum class WorkspaceCatalogStatus, data class WorkspaceFileEntry, data class WorkspaceTreePage, data class WorkspaceRulesMetadata, data class WorkspaceCatalogState, enum class InteractiveSessionStatus, data class InteractiveCommandRequest, data class InteractiveSessionState, enum class RuntimeStatus, data class RuntimeState, enum class ActionsOperationStatus, data class ActionsRunRequest, data class ActionsStepState, data class ActionsJobState, data class ActionsArtifactState, data class ActionsOperationState, data class ActionsArtifactRequest, enum class ActionsArtifactSaveStatus, data class ActionsArtifactSaveResult, enum class PatchRecoveryStatus, data class PatchRecoveryState, enum class PatchRollbackStatus, data class PatchRollbackResult, object AgentRedactor
-  methods: allows, toJson, toAuditJson, fromJson, safeText, optionalLong, safeSha, inputValue, text
-  lines: 981
+  lines: 1038
+  classes: ExecutionTarget@7, PermissionMode@13, AgentEventKind@33, AgentSessionStatus@47, ImageAttachment@57, AgentRequest@64, AgentEvent@82, LedgerUnknownOperation@101, AgentSessionState@152, CredentialState@170, JournalExportStatus@181, JournalExportResult@187, AgentWorkspaceSnapshot@202, PendingPatchApproval@215, ImageAnalysisStatus@236, ImageAnalysisState@246, WorkspaceCatalogStatus@275, WorkspaceFileEntry@282, WorkspaceTreePage@295, WorkspaceRulesMetadata@309, WorkspaceCatalogState@316, InteractiveSessionStatus@358, InteractiveCommandRequest@368, InteractiveSessionState@399, RuntimeStatus@483, RuntimeState@493, ActionsOperationStatus@516, ActionsRunRequest@527, ActionsStepState@562, ActionsJobState@577, ActionsArtifactState@603, ActionsOperationState@628, ActionsArtifactRequest@810, ActionsArtifactSaveStatus@820, ActionsArtifactSaveResult@826, PatchRecoveryStatus@862, PatchRecoveryState@868, PatchRollbackStatus@956, PatchRollbackResult@962, AgentRedactor@982
+  public_methods: allows@24, toJson@109, fromJson@120, toJson@175, toJson@194, toJson@259, toJson@288, toJson@299, toJson@328, toAuditJson@378, toJson@414, fromJson@439, toJson@504, toAuditJson@539, toJson@569, toJson@585, toJson@615, toJson@647, fromJson@684, toJson@840, toJson@881, fromJson@898, toJson@971, inputValue@1007, text@1015
 
 app/src/main/java/dev/deepagent/mobile/agent/model/ApprovalToken.kt
-  declarations: data class ApprovalToken, object ApprovalTokenFactory
-  methods: isExpired, matches, issue, argumentsDigest, sha256
-  lines: 109
+  lines: 171
+  classes: ApprovalBinding@6, ApprovalToken@55, ApprovalTokenFactory@120
+  public_methods: isExpired@19, matches@21, isExpired@85, matches@89, issue@124, argumentsDigest@166
 
+app/src/main/java/dev/deepagent/mobile/agent/patch/PatchEngine.kt
+  lines: 941
+  classes: PatchPreview@17, PatchCheckpointStatus@40, PatchCheckpoint@50, PatchApplyResult@143, PatchEngine@168, Hunk@922
+  public_methods: toJson@27, toJson@64, fromJson@82, toJson@149, preview@172, apply@265, markCheckpointApplied@350, markCheckpointUnknown@378, rollback@393, flush@798
+
+app/src/main/java/dev/deepagent/mobile/agent/plan/BoundedPlanning.kt
+  lines: 201
+  classes: BoundedPlanStepKind@14, BoundedPlanStep@22, BoundedPlan@33, BoundedPlanner@55, CompletionDecision@126, CompletionEvaluation@132, CompletionEvaluator@137
+  public_methods: toJson@27, toJson@38, create@56, evaluate@138
+
+app/src/main/java/dev/deepagent/mobile/agent/preset/AgentPresetStore.kt
+  lines: 290
+  classes: AgentPreset@23, AgentPresetPayload@90, AgentPresetStore@106
+  public_methods: toJson@33, fromJson@49, encode@110, decode@131, saveLocal@148, loadLocal@190
+
+app/src/main/java/dev/deepagent/mobile/agent/protocol/AgentBridge.kt
+  lines: 151
+  classes: AgentBridge@36, AgentBridgeProtocol@136
+  public_methods: submit@50, configureCredentials@52, clearCredentials@57, exportJournal@59, importWorkspace@61, prepareImage@66, clearImage@71, selectWorkspace@73, refreshWorkspace@75, approvePendingPatch@82, approvePendingPatch@84, rejectPendingPatch@90, inspectGit@92, createGitBranch@94, commitGit@96, pushGit@98, createPullRequest@100, startRuntime@105, runInteractive@107, sendInteractiveInput@111, cancelInteractive@113, stopRuntime@115, runActions@117, saveVerifiedArtifact@119, rollbackLastPatch@123, cancel@125, clearEvents@127, close@129
+
+app/src/main/java/dev/deepagent/mobile/agent/provider/LlmProvider.kt
+  lines: 69
+  classes: LlmProvider@14, DeepSeekLlmProvider@25, ProviderRegistry@44
+  public_methods: streamRound@17, cancel@22, streamRound@30, cancel@35, resolve@57, ids@61, cancelAll@63
+
+app/src/main/java/dev/deepagent/mobile/agent/runtime/InteractiveCommandSession.kt
+  lines: 487
+  classes: InteractiveCommandSession@31, CapturedOutput@443
+  public_methods: requiredPermission@42, run@53, sendInput@251, cancelActive@265, close@281
+
+app/src/main/java/dev/deepagent/mobile/agent/runtime/LocalLiteRunner.kt
+  lines: 115
+  classes: LocalLiteRunner@21, ProbeResult@31
+  public_methods: probe@39
+
+app/src/main/java/dev/deepagent/mobile/agent/runtime/ProcessCleanupController.kt
+  lines: 20
+  classes: ProcessCleanupStatus@3, ProcessCleanupResult@8, ProcessCleanupController@14
+  public_methods: cleanup@15
+
+app/src/main/java/dev/deepagent/mobile/agent/runtime/RuntimeSupervisor.kt
+  lines: 487
+  classes: RuntimeManifest@21, RuntimeProviderResult@39, RuntimeProbe@45, HeadlessRuntimeProvider@51, LoopbackHeadlessRuntimeProvider@63, RuntimeSupervisor@122
+  public_methods: loopback@31, install@52, start@53, probe@54, stop@55, install@66, start@81, probe@96, stop@109, start@132, probe@269, stop@309, close@371
+
+app/src/main/java/dev/deepagent/mobile/agent/security/AuditTraceStore.kt
+  lines: 79
+  classes: AuditTraceRecord@7, AuditTraceStore@16, InMemoryAuditTraceStore@30
+  public_methods: append@17, snapshot@25, exportRedacted@27, append@35, snapshot@59, exportRedacted@63
+
+app/src/main/java/dev/deepagent/mobile/agent/security/CanonicalArgs.kt
+  lines: 342
+  classes: CanonicalArgsException@9, CanonicalArgs@14, Value@51, Null@52, BooleanValue@53, NumberValue@54, StringValue@55, ArrayValue@56, ObjectValue@57, Parser@126
+  public_methods: canonicalize@20, canonicalString@35, sha256@38, hex@46, parseDocument@131
+
+app/src/main/java/dev/deepagent/mobile/agent/security/EnvelopePolicy.kt
+  lines: 31
+  classes: EnvelopePolicy@6
+  public_methods: untrusted@7
+
+app/src/main/java/dev/deepagent/mobile/agent/security/ToolSecurity.kt
+  lines: 111
+  classes: ToolCapability@7, ToolAuthorization@17, ToolTrust@32, ToolOutputEnvelope@38
+  public_methods: toJson@24, toModelJson@51, untrusted@83
+
+app/src/main/java/dev/deepagent/mobile/agent/session/SessionStore.kt
+  lines: 700
+  classes: SessionRequestSummary@25, SessionInvocationRecord@115, SessionDecisionRecord@173, PersistedAgentSession@215, SessionStore@504
+  public_methods: toJson@40, fromJson@59, toJson@124, fromJson@139, toJson@180, fromJson@192, toJson@231, fromJson@305, loadLatest@516, load@539, save@544
+
+app/src/main/java/dev/deepagent/mobile/agent/tools/ToolInvoker.kt
+  lines: 34
+  classes: ToolInvoker@9
+  public_methods: execute@12, previewPatch@24
+
+app/src/main/java/dev/deepagent/mobile/agent/tools/ToolRegistry.kt
+  lines: 17
+  classes: ToolRegistry@9
+  public_methods: definitions@10, definition@14
+
+app/src/main/java/dev/deepagent/mobile/agent/tools/ToolRouter.kt
+  lines: 1259
+  classes: AgentToolDefinition@33, ToolExecutionResult@47, ToolRouter@107, ArgumentSchema@632, BoundedRead@1003, CapturedOutput@1008
+  public_methods: toModelJson@58, previewPatch@114, applyPatch@189, rollbackPatch@337, readProjectRules@378, inspectGit@391, currentGitHeadSha@394, createGitBranch@401, commitGit@406, pushGit@411, execute@416, visit@946, definitions@1234, definition@1239, authorize@1252
+
+app/src/main/java/dev/deepagent/mobile/agent/tools/ToolVerifier.kt
+  lines: 32
+  classes: ToolVerifier@9
+  public_methods: authorize@10
+
+app/src/main/java/dev/deepagent/mobile/agent/ui/AgentConsoleScreen.kt
+  lines: 2155
+  classes: (none)
+  public_methods: AgentConsoleScreen@109, currentPreset@178, applyPreset@189, persistReadPermission@214
+
+app/src/main/java/dev/deepagent/mobile/agent/ui/AgentUiContract.kt
+  lines: 57
+  classes: AgentUiContract@15
+  public_methods: workspace@40, workspaceEntry@41, event@48, Modifier@51
+
+app/src/main/java/dev/deepagent/mobile/agent/workspace/WorkspaceIdentity.kt
+  lines: 187
+  classes: WorkspaceIdentity@15, TreeEntry@165, CaptureBudget@172
+  public_methods: toJson@22, capture@29
+
+app/src/main/java/dev/deepagent/mobile/agent/workspace/WorkspaceManager.kt
+  lines: 642
+  classes: WorkspaceSummary@28, WorkspaceManager@83, ImportBudget@600
+  public_methods: toJson@41, fromJson@55, list@100, select@104, resolveRoot@114, captureIdentity@119, checkpointDirectory@127, refresh@135, treePage@154, visit@177, importUri@230, claimPath@605, beginFile@611, addBytes@618
+
+app/src/main/java/dev/deepagent/mobile/agent/workspace/WorkspacePathPolicy.kt
+  lines: 113
+  classes: WorkspacePathPolicy@12
+  public_methods: resolve@29, isSensitiveFile@85, isBlockedRelativePath@89
+
+app/src/main/java/dev/deepagent/mobile/ui/theme/Theme.kt
+  lines: 94
+  classes: DeepAgentColors@20
+  public_methods: DeepAgentTheme@84
 
 H0 boundaries
-- persistence: SessionStore JSON snapshots + atomic replacement; operation side effects have in-memory caches only at baseline
-- policy: PermissionMode, ApprovalToken and ToolRouter allowlist
-- execution: AgentCore orchestration, ToolRouter read/write gates, Git/Actions/runtime adapters
+- persistence: SessionStore JSON snapshots + atomic replacement; OperationLedger framed durable records
+- policy: PermissionMode, ToolVerifier, ApprovalBinding, CanonicalArgs and WorkspacePathPolicy
+- execution: AgentCore orchestration, ToolRouter/Invoker, Git/Actions/runtime adapters
 - preserved public boundary: AgentBridge v1
+- P0/P1/P2 boundary: this map records seams only; P1/P2 execution is not started by this change
