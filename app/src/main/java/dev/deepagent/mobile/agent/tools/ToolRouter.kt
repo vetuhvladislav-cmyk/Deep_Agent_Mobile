@@ -12,6 +12,7 @@ import dev.deepagent.mobile.agent.git.GitPushRequest
 import dev.deepagent.mobile.agent.git.GitRepositoryClient
 import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.model.PermissionMode
+import dev.deepagent.mobile.agent.security.CanonicalArgs
 import dev.deepagent.mobile.agent.security.EnvelopePolicy
 import dev.deepagent.mobile.agent.security.ToolAuthorization
 import dev.deepagent.mobile.agent.security.ToolCapability
@@ -54,7 +55,11 @@ data class ToolExecutionResult(
     val patchCheckpointId: String? = null,
     val workspaceFingerprintAfter: String? = null,
 ) {
-    fun toModelJson(): String {
+    fun toModelJson(
+        sessionId: String? = null,
+        operationId: String? = null,
+        canonicalArgsSha256: String? = null,
+    ): String {
         val definition = ToolRegistry.definition(toolName)
         return EnvelopePolicy.untrusted(
             toolName = toolName,
@@ -75,6 +80,9 @@ data class ToolExecutionResult(
                 .toString(),
             truncated = truncated || content.length > MAX_CONTENT_CHARS,
             errorCode = errorCode,
+            operationId = operationId,
+            sessionId = sessionId,
+            canonicalArgsSha256 = canonicalArgsSha256,
         ).toModelJson()
     }
 
@@ -108,6 +116,15 @@ class ToolRouter(
         workspaceId: String? = null,
         permission: PermissionMode = PermissionMode.READ_ONLY,
     ): ToolExecutionResult = withContext(Dispatchers.IO) {
+        if (!canonicalArgsValid(argumentsJson)) {
+            return@withContext ToolExecutionResult(
+                toolName = TOOL_APPLY_PATCH,
+                ok = false,
+                summary = "Аргументы не прошли CanonicalArgs policy",
+                errorCode = "CANONICAL_ARGS_INVALID",
+            )
+        }
+
         val authorization = authorize(TOOL_APPLY_PATCH, permission)
         if (!authorization.allowed) {
             return@withContext ToolExecutionResult(
@@ -174,6 +191,14 @@ class ToolRouter(
         workspaceId: String? = null,
         expectedWorkspaceFingerprint: String,
     ): ToolExecutionResult = withContext(Dispatchers.IO) {
+        if (!canonicalArgsValid(argumentsJson)) {
+            return@withContext ToolExecutionResult(
+                toolName = TOOL_APPLY_PATCH,
+                ok = false,
+                summary = "Аргументы не прошли CanonicalArgs policy",
+                errorCode = "CANONICAL_ARGS_INVALID",
+            )
+        }
         require(expectedWorkspaceFingerprint.isNotBlank()) {
             "Для apply_patch нужен workspace fingerprint"
         }
@@ -394,6 +419,14 @@ class ToolRouter(
         workspaceId: String? = null,
         permission: PermissionMode = PermissionMode.READ_ONLY,
     ): ToolExecutionResult = withContext(Dispatchers.IO) {
+        if (!canonicalArgsValid(argumentsJson)) {
+            return@withContext ToolExecutionResult(
+                toolName = toolName,
+                ok = false,
+                summary = "Аргументы не прошли CanonicalArgs policy",
+                errorCode = "CANONICAL_ARGS_INVALID",
+            )
+        }
         val authorization = authorize(toolName, permission)
         if (!authorization.allowed) {
             return@withContext ToolExecutionResult(
@@ -464,6 +497,12 @@ class ToolRouter(
                 errorCode = "TOOL_FAILED",
             )
         }
+    }
+
+    private fun canonicalArgsValid(argumentsJson: String): Boolean {
+        return runCatching {
+            CanonicalArgs.canonicalize(argumentsJson.ifBlank { "{}" })
+        }.isSuccess
     }
 
     private fun validateArguments(toolName: String, arguments: JSONObject) {

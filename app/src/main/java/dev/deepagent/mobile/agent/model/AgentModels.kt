@@ -98,6 +98,57 @@ data class AgentEvent(
     }
 }
 
+data class LedgerUnknownOperation(
+    val operationId: String,
+    val operation: String,
+    val resolution: String,
+    val lastConfirmedState: String?,
+    val updatedAt: Long,
+    val detail: String?,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("operation_id", AgentRedactor.text(operationId, 160))
+        .put("operation", AgentRedactor.text(operation, 160))
+        .put("resolution", AgentRedactor.text(resolution, 64))
+        .put("last_confirmed_state", AgentRedactor.text(lastConfirmedState, 64))
+        .put("updated_at", updatedAt)
+        .put("detail", AgentRedactor.text(detail, 2_000))
+
+    companion object {
+        private val IDENTIFIER_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
+
+        fun fromJson(value: JSONObject): LedgerUnknownOperation? {
+            val operationId = AgentRedactor.text(
+                value.optString("operation_id"),
+                160,
+            )?.trim()?.takeIf { IDENTIFIER_PATTERN.matches(it) }
+                ?: return null
+            val operation = AgentRedactor.text(
+                value.optString("operation"),
+                160,
+            )?.trim()?.takeIf { it.isNotBlank() }
+                ?: return null
+            return LedgerUnknownOperation(
+                operationId = operationId,
+                operation = operation,
+                resolution = AgentRedactor.text(
+                    value.optString("resolution"),
+                    64,
+                ).orEmpty(),
+                lastConfirmedState = AgentRedactor.text(
+                    value.optString("last_confirmed_state"),
+                    64,
+                )?.takeIf { it.isNotBlank() },
+                updatedAt = value.optLong("updated_at", 0L).coerceAtLeast(0L),
+                detail = AgentRedactor.text(
+                    value.optString("detail"),
+                    2_000,
+                )?.takeIf { it.isNotBlank() },
+            )
+        }
+    }
+}
+
 data class AgentSessionState(
     val status: AgentSessionStatus = AgentSessionStatus.IDLE,
     val target: ExecutionTarget? = null,
@@ -112,6 +163,7 @@ data class AgentSessionState(
     val ledgerHealth: String = "CLEAN",
     val ledgerUnknownCount: Int = 0,
     val ledgerDiagnostic: String? = null,
+    val ledgerUnknownOperations: List<LedgerUnknownOperation> = emptyList(),
 )
 
     
@@ -172,6 +224,7 @@ data class PendingPatchApproval(
     val approvalToken: String = "",
     val approvalExpiresAt: Long = 0L,
     val targetSha: String? = null,
+    val operationId: String? = null,
 )
 
 

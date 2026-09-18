@@ -14,11 +14,13 @@ import dev.deepagent.mobile.agent.ledger.LedgerOperationSpec
 import dev.deepagent.mobile.agent.ledger.LedgerPhase
 import dev.deepagent.mobile.agent.ledger.LedgerResolution
 import dev.deepagent.mobile.agent.ledger.OperationLedger
+import dev.deepagent.mobile.agent.security.CanonicalArgs
 import dev.deepagent.mobile.agent.credential.CredentialKind
 import dev.deepagent.mobile.agent.credential.EphemeralCredentialVault
 import dev.deepagent.mobile.agent.model.CredentialState
 import dev.deepagent.mobile.agent.model.JournalExportResult
 import dev.deepagent.mobile.agent.model.JournalExportStatus
+import dev.deepagent.mobile.agent.model.LedgerUnknownOperation
 import dev.deepagent.mobile.agent.model.WorkspaceCatalogState
 import dev.deepagent.mobile.agent.model.WorkspaceCatalogStatus
 import dev.deepagent.mobile.agent.model.WorkspaceRulesMetadata
@@ -2143,24 +2145,43 @@ class AgentCore(context: Context) : AgentBridge {
             val nextInput = responseOutputItems(response).toMutableList()
             for (call in result.functionCalls) {
                 val invocationId = beginInvocation(call.name, call.callId)
+                val canonicalArgsSha256 = runCatching {
+                    CanonicalArgs.sha256(call.arguments)
+                }.getOrNull()
                 val authorization = ToolVerifier.authorize(call.name, request.permission)
-                if (!authorization.allowed) {
+                if (!authorization.allowed || canonicalArgsSha256 == null) {
                     val denied = ToolExecutionResult(
                         toolName = call.name,
                         ok = false,
-                        summary = "Tool запрещён текущей capability policy",
-                        errorCode = authorization.errorCode,
+                        summary = if (!authorization.allowed) {
+                            "Tool запрещён текущей capability policy"
+                        } else {
+                            "Аргументы tool не прошли CanonicalArgs policy"
+                        },
+                        errorCode = authorization.errorCode
+                            ?: "CANONICAL_ARGS_INVALID",
                     )
                     completeInvocation(
                         invocationId = invocationId,
                         state = "DENIED",
                         summary = denied.summary,
                     )
-                    appendToolResult(denied, invocationId)
+                    appendToolResult(
+                        result = denied,
+                        invocationId = invocationId,
+                        canonicalArgsSha256 = canonicalArgsSha256,
+                    )
                     nextInput += JSONObject()
                         .put("type", "function_call_output")
                         .put("call_id", call.callId)
-                        .put("output", denied.toModelJson())
+                        .put(
+                            "output",
+                            denied.toModelJson(
+                                sessionId = currentSessionId,
+                                operationId = invocationId,
+                                canonicalArgsSha256 = canonicalArgsSha256,
+                            ),
+                        )
                     continue
                 }
                 append(
@@ -2185,7 +2206,11 @@ class AgentCore(context: Context) : AgentBridge {
                         },
                         summary = previewResult.summary,
                     )
-                    appendToolResult(previewResult, invocationId)
+                    appendToolResult(
+                        result = previewResult,
+                        invocationId = invocationId,
+                        canonicalArgsSha256 = canonicalArgsSha256,
+                    )
                     val preview = previewResult.patchPreview
                     if (previewResult.ok && preview != null) {
                         val permission = currentRequestSummary?.permission
@@ -2208,6 +2233,7 @@ class AgentCore(context: Context) : AgentBridge {
                                 oldSha256 = preview.oldSha256,
                                 newSha256 = preview.newSha256,
                                 argumentsJson = call.arguments,
+                                operationId = invocationId,
                             ),
                             invocationId = invocationId,
                         )
@@ -2237,7 +2263,14 @@ class AgentCore(context: Context) : AgentBridge {
                     nextInput += JSONObject()
                         .put("type", "function_call_output")
                         .put("call_id", call.callId)
-                        .put("output", previewResult.toModelJson())
+                        .put(
+                            "output",
+                            previewResult.toModelJson(
+                                sessionId = currentSessionId,
+                                operationId = invocationId,
+                                canonicalArgsSha256 = canonicalArgsSha256,
+                            ),
+                        )
                     continue
                 }
 
@@ -2252,11 +2285,22 @@ class AgentCore(context: Context) : AgentBridge {
                     state = if (toolResult.ok) "SUCCEEDED" else "FAILED",
                     summary = toolResult.summary,
                 )
-                appendToolResult(toolResult, invocationId)
+                appendToolResult(
+                    result = toolResult,
+                    invocationId = invocationId,
+                    canonicalArgsSha256 = canonicalArgsSha256,
+                )
                 nextInput += JSONObject()
                     .put("type", "function_call_output")
                     .put("call_id", call.callId)
-                    .put("output", toolResult.toModelJson())
+                    .put(
+                        "output",
+                        toolResult.toModelJson(
+                            sessionId = currentSessionId,
+                            operationId = invocationId,
+                            canonicalArgsSha256 = canonicalArgsSha256,
+                        ),
+                    )
             }
             inputItems = nextInput
         }
@@ -2265,7 +2309,13 @@ class AgentCore(context: Context) : AgentBridge {
     private fun appendToolResult(
         result: ToolExecutionResult,
         invocationId: String? = null,
+        canonicalArgsSha256: String? = null,
     ) {
+        val envelope = result.toModelJson(
+            sessionId = currentSessionId,
+            operationId = invocationId,
+            canonicalArgsSha256 = canonicalArgsSha256,
+        )
         append(
             AgentEventKind.TOOL,
             if (result.ok) {
@@ -2273,7 +2323,7 @@ class AgentCore(context: Context) : AgentBridge {
             } else {
                 result.toolName + " отклонён: " + result.summary
             },
-            result.toModelJson().take(MAX_EVENT_DETAIL_CHARS),
+            envelope.take(MAX_EVENT_DETAIL_CHARS),
             invocationId = invocationId,
         )
     }
@@ -2304,6 +2354,7 @@ class AgentCore(context: Context) : AgentBridge {
             newSha256 = pending.preview.newSha256,
             argumentsJson = pending.argumentsJson,
             now = now,
+            operationId = pending.invocationId,
         )
         if (!tokenValid) {
             val expired = expectedToken.isExpired(now)
@@ -2470,7 +2521,11 @@ class AgentCore(context: Context) : AgentBridge {
             append(
                 AgentEventKind.TOOL,
                 "apply_patch применён после явного approval",
-                result.toModelJson(),
+                result.toModelJson(
+                    sessionId = currentSessionId,
+                    operationId = pending.invocationId,
+                    canonicalArgsSha256 = pending.approvalToken.argumentsSha256,
+                ),
             )
             append(AgentEventKind.SESSION, "Сессия завершена после применения patch")
         }
@@ -3047,7 +3102,37 @@ class AgentCore(context: Context) : AgentBridge {
 
     private fun applyLedgerState() {
         val ledger = agentTransaction.snapshot()
-        val diagnostic = ledger.diagnostics.joinToString("; ")
+        val unknownOperations = ledger.records
+            .filter { it.phase == LedgerPhase.UNKNOWN }
+            .takeLast(32)
+            .map { record ->
+                val interrupted = record.detail
+                    ?.substringAfter("Interrupted ", "")
+                    ?.substringBefore(";")
+                    ?.takeIf { it.isNotBlank() }
+                LedgerUnknownOperation(
+                    operationId = record.operationId,
+                    operation = record.operation,
+                    resolution = record.resolution.name,
+                    lastConfirmedState = interrupted ?: LedgerPhase.STARTED.name,
+                    updatedAt = record.updatedAt,
+                    detail = record.detail,
+                )
+            }
+        val diagnosticParts = buildList {
+            ledger.diagnostics.forEach(::add)
+            unknownOperations.take(4).forEach { operation ->
+                add(
+                    "operation=" + operation.operationId +
+                        "; type=" + operation.operation +
+                        "; resolution=" + operation.resolution +
+                        "; last_confirmed=" +
+                        (operation.lastConfirmedState ?: "UNKNOWN") +
+                        "; detail=" + (operation.detail ?: "none"),
+                )
+            }
+        }
+        val diagnostic = diagnosticParts.joinToString("; ")
             .take(MAX_ERROR_CHARS)
             .takeIf { it.isNotBlank() }
         val needsRecovery = ledger.health != LedgerHealth.CLEAN ||
@@ -3057,6 +3142,7 @@ class AgentCore(context: Context) : AgentBridge {
             ledgerHealth = ledger.health.name,
             ledgerUnknownCount = ledger.unknownOperationIds.size,
             ledgerDiagnostic = diagnostic,
+            ledgerUnknownOperations = unknownOperations,
             recoveryRequired = _state.value.recoveryRequired || needsRecovery,
             lastError = if (
                 needsRecovery &&
@@ -3130,6 +3216,7 @@ class AgentCore(context: Context) : AgentBridge {
             approvalToken = approvalToken.value,
             approvalExpiresAt = approvalToken.expiresAt,
             targetSha = targetSha,
+            operationId = invocationId,
         )
     }
 

@@ -9,6 +9,7 @@ import dev.deepagent.mobile.agent.model.AgentEventKind
 import dev.deepagent.mobile.agent.model.AgentRedactor
 import dev.deepagent.mobile.agent.model.AgentSessionState
 import dev.deepagent.mobile.agent.model.AgentSessionStatus
+import dev.deepagent.mobile.agent.model.LedgerUnknownOperation
 import dev.deepagent.mobile.agent.git.GitOperationResult
 import dev.deepagent.mobile.agent.model.ExecutionTarget
 import dev.deepagent.mobile.agent.model.PermissionMode
@@ -247,7 +248,15 @@ data class PersistedAgentSession(
                 .put("recovery_required", state.recoveryRequired)
                 .put("ledger_health", AgentRedactor.text(state.ledgerHealth, 64))
                 .put("ledger_unknown_count", state.ledgerUnknownCount.coerceAtLeast(0))
-                .put("ledger_diagnostic", AgentRedactor.text(state.ledgerDiagnostic, MAX_ERROR_CHARS)),
+                .put("ledger_diagnostic", AgentRedactor.text(state.ledgerDiagnostic, MAX_ERROR_CHARS))
+                .put(
+                    "ledger_unknown_operations",
+                    JSONArray().apply {
+                        state.ledgerUnknownOperations
+                            .take(MAX_UNKNOWN_OPERATIONS)
+                            .forEach { put(it.toJson()) }
+                    },
+                ),
         )
         .put(
             "events",
@@ -282,14 +291,15 @@ data class PersistedAgentSession(
         .put("updated_at", updatedAt)
 
     companion object {
-        const val VERSION = 6
+        const val VERSION = 7
         const val MAX_EVENTS = 500
         const val MAX_INVOCATIONS = 500
         const val MAX_DECISIONS = 200
+        const val MAX_UNKNOWN_OPERATIONS = 32
         const val MAX_ERROR_CHARS = 4_000
         const val MAX_EVENT_ID_CHARS = 160
         const val MAX_EVENT_MESSAGE_CHARS = 1_000
-        val SUPPORTED_VERSIONS = setOf(1, 2, 3, 4, 5, 6)
+        val SUPPORTED_VERSIONS = setOf(1, 2, 3, 4, 5, 6, 7)
         const val MAX_EVENT_DETAIL_CHARS = 4_000
 
         fun fromJson(value: JSONObject): PersistedAgentSession? {
@@ -418,6 +428,7 @@ data class PersistedAgentSession(
                     stateObject.optString("ledger_diagnostic"),
                     MAX_ERROR_CHARS,
                 )?.takeIf { it.isNotBlank() },
+                ledgerUnknownOperations = parseUnknownOperations(stateObject),
             )
 
             val invocations = parseInvocations(value)
@@ -446,6 +457,20 @@ data class PersistedAgentSession(
                 interactiveState = value.optJSONObject("interactive_state")
                     ?.let(InteractiveSessionState::fromJson),
             )
+        }
+
+        private fun parseUnknownOperations(
+            value: JSONObject,
+        ): List<LedgerUnknownOperation> {
+            val array = value.optJSONArray("ledger_unknown_operations")
+                ?: return emptyList()
+            return buildList {
+                for (index in 0 until array.length()) {
+                    array.optJSONObject(index)
+                        ?.let { LedgerUnknownOperation.fromJson(it) }
+                        ?.let(::add)
+                }
+            }.take(MAX_UNKNOWN_OPERATIONS)
         }
 
         private fun parseInvocations(

@@ -473,6 +473,22 @@ fun AgentConsoleScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onErrorContainer,
                         )
+                        state.ledgerUnknownOperations.take(4).forEach { unknown ->
+                            Text(
+                                text = "• " + unknown.operationId.take(12) +
+                                    " · " + unknown.operation +
+                                    " · " + unknown.resolution,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                text = "Последнее подтверждённое состояние: " +
+                                    (unknown.lastConfirmedState ?: "не подтверждено") +
+                                    " · " + (unknown.detail ?: "причина не записана"),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
                     }
                 }
             }
@@ -823,6 +839,12 @@ fun AgentConsoleScreen(
                             text = "Предпросмотр изменения: " + pending.path,
                             fontWeight = FontWeight.SemiBold,
                         )
+                        pending.operationId?.let { operationId ->
+                            Text(
+                                text = "Operation ID: " + operationId,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
                         Text(
                             text = "SHA дерева: " + pending.workspaceFingerprint +
                                 " · база: " +

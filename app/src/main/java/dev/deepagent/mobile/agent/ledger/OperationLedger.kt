@@ -170,10 +170,20 @@ data class LedgerRecord(
             }.getOrElse {
                 error("Неизвестный integrity mode ledger")
             }
+            val sequence = value.optLong("sequence", 0L)
+            val bootId = value.optString("boot_id").trim()
+            val keyVersion = value.optInt("key_version", 0)
+            val sideEffect = value.optBoolean("side_effect", true)
+            require(sequence > 0L) { "Недопустимая sequence ledger" }
+            require(bootId.isNotBlank()) { "Пустой boot ID ledger" }
+            require(keyVersion >= 0) { "Недопустимый keyVersion ledger" }
+            require(!(sideEffect && durability == LedgerDurability.BATCHED)) {
+                "BATCHED side-effect запись ledger запрещена"
+            }
             return LedgerRecord(
                 schemaVersion = schemaVersion,
-                sequence = value.optLong("sequence", 0L),
-                bootId = value.optString("boot_id").trim(),
+                sequence = sequence,
+                bootId = bootId,
                 operationId = operationId,
                 operation = operation,
                 sessionId = safe(value.optString("session_id"), 160),
@@ -183,8 +193,8 @@ data class LedgerRecord(
                 resolution = resolution,
                 durability = durability,
                 integrityMode = integrityMode,
-                keyVersion = value.optInt("key_version", 0),
-                sideEffect = value.optBoolean("side_effect", true),
+                keyVersion = keyVersion,
+                sideEffect = sideEffect,
                 phase = phase,
                 createdAt = value.optLong("created_at", 0L),
                 updatedAt = value.optLong("updated_at", 0L),
@@ -681,7 +691,10 @@ class OperationLedger(
 
     private fun truncate(length: Int) {
         if (!file.exists()) return
-        RandomAccessFile(file, "rw").use { it.setLength(length.toLong()) }
+        RandomAccessFile(file, "rw").use {
+            it.setLength(length.toLong())
+            it.fd.sync()
+        }
     }
 
     private data class FrameRead(

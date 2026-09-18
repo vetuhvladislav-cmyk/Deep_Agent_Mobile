@@ -14,6 +14,7 @@ data class ApprovalBinding(
     val newSha256: String,
     val canonicalArgsSha256: String,
     val expiresAt: Long,
+    val operationId: String? = null,
 ) {
     fun isExpired(now: Long): Boolean = now >= expiresAt
 
@@ -28,6 +29,7 @@ data class ApprovalBinding(
         newSha256: String,
         canonicalArgsSha256: String,
         now: Long,
+        operationId: String? = null,
     ): Boolean {
         return !isExpired(now) &&
             this.toolName == toolName &&
@@ -38,7 +40,8 @@ data class ApprovalBinding(
             this.path == path &&
             this.oldSha256 == oldSha256 &&
             this.newSha256 == newSha256 &&
-            this.canonicalArgsSha256 == canonicalArgsSha256
+            this.canonicalArgsSha256 == canonicalArgsSha256 &&
+            this.operationId == operationId
     }
 }
 
@@ -62,6 +65,7 @@ data class ApprovalToken(
     val argumentsSha256: String,
     val issuedAt: Long,
     val expiresAt: Long,
+    val operationId: String? = null,
 ) {
     val binding: ApprovalBinding
         get() = ApprovalBinding(
@@ -75,6 +79,7 @@ data class ApprovalToken(
             newSha256 = newSha256,
             canonicalArgsSha256 = argumentsSha256,
             expiresAt = expiresAt,
+            operationId = operationId,
         )
 
     fun isExpired(now: Long = System.currentTimeMillis()): Boolean {
@@ -93,6 +98,7 @@ data class ApprovalToken(
         newSha256: String,
         argumentsJson: String,
         now: Long = System.currentTimeMillis(),
+        operationId: String? = null,
     ): Boolean {
         return presentedValue.trim() == value &&
             binding.matches(
@@ -106,6 +112,7 @@ data class ApprovalToken(
                 newSha256 = newSha256,
                 canonicalArgsSha256 = ApprovalTokenFactory.argumentsDigest(argumentsJson),
                 now = now,
+                operationId = operationId,
             )
     }
 }
@@ -126,6 +133,7 @@ object ApprovalTokenFactory {
         argumentsJson: String,
         now: Long = System.currentTimeMillis(),
         ttlMs: Long = DEFAULT_TTL_MS,
+        operationId: String? = null,
     ): ApprovalToken {
         require(operation.isNotBlank()) { "Операция approval не задана" }
         require(sessionId.isNotBlank()) { "Session ID для approval не задан" }
@@ -151,6 +159,7 @@ object ApprovalTokenFactory {
             argumentsSha256 = argumentsDigest(argumentsJson),
             issuedAt = now,
             expiresAt = now + ttlMs,
+            operationId = operationId,
         )
     }
 
