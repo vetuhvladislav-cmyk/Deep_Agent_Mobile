@@ -85,10 +85,11 @@ jobs:
           export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
           mkdir -p "$ANDROID_AVD_HOME"
           sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
-          echo "no" | avdmanager create avd \
+          printf "no\n" | timeout 120s avdmanager create avd \
             --force \
             --name deep-agent-api-35 \
-            --package "system-images;android-35;google_apis;x86_64"
+            --package "system-images;android-35;google_apis;x86_64" \
+            --device "pixel_2"
           nohup emulator -avd deep-agent-api-35 \
             -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader_indirect \
