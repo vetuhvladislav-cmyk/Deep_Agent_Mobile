@@ -36,6 +36,17 @@ object AgentUiContract {
     const val CLEAR_EVENTS = "agent.events.clear"
     const val EXPORT_JOURNAL = "agent.journal.export"
     const val CLEAR_CREDENTIALS = "agent.credentials.clear"
+    const val SESSION_STATUS = "agent.session.status"
+    const val LEDGER_UNKNOWN = "agent.ledger.unknown"
+    const val RECHECK = "agent.session.recheck"
+    const val PATCH_PREVIEW = "agent.patch.preview"
+    const val PATCH_RECOVERY = "agent.patch.recovery"
+    const val RUNTIME_START = "agent.runtime.start"
+    const val RUNTIME_STOP = "agent.runtime.stop"
+    const val INTERACTIVE_RUN = "agent.interactive.run"
+    const val INTERACTIVE_CANCEL = "agent.interactive.cancel"
+    const val ACTIONS_STATE = "agent.actions.state"
+    const val GIT_STATE = "agent.git.state"
 
     fun workspace(id: String): String = "agent.workspace." + id
     fun workspaceEntry(path: String): String {

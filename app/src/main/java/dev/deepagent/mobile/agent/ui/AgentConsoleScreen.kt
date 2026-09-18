@@ -420,6 +420,10 @@ fun AgentConsoleScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
             Text(
+                modifier = Modifier.agentControl(
+                    AgentUiContract.SESSION_STATUS,
+                    "Статус сессии Agent Core",
+                ),
                 text = statusLabel(state.status),
                 style = MaterialTheme.typography.labelLarge,
                 color = statusColor(state.status),
@@ -439,7 +443,12 @@ fun AgentConsoleScreen(
                     state.ledgerUnknownCount > 0
             ) {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .agentControl(
+                            AgentUiContract.LEDGER_UNKNOWN,
+                            "Неизвестные операции и восстановление",
+                        ),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
                     ),
@@ -594,6 +603,10 @@ fun AgentConsoleScreen(
 
             if (state.recoveryRequired || state.status == AgentSessionStatus.UNKNOWN) {
                 OutlinedButton(
+                    modifier = Modifier.agentControl(
+                        AgentUiContract.RECHECK,
+                        "Повторно проверить состояние операции",
+                    ),
                     enabled = pendingApproval == null,
                     onClick = submitCurrentTask,
                 ) {
@@ -826,7 +839,12 @@ fun AgentConsoleScreen(
 
             pendingApproval?.let { pending ->
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .agentControl(
+                            AgentUiContract.PATCH_PREVIEW,
+                            "Предпросмотр изменения " + pending.path,
+                        ),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                     ),
@@ -905,7 +923,12 @@ fun AgentConsoleScreen(
                 ?.takeIf { recovery -> recovery.workspaceId == workspace?.id }
                 ?.let { recovery ->
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .agentControl(
+                                AgentUiContract.PATCH_RECOVERY,
+                                "Контрольная точка и восстановление patch",
+                            ),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                         ),
@@ -1040,7 +1063,7 @@ fun AgentConsoleScreen(
                     ) {
                         Button(
                             modifier = Modifier.agentControl(
-                                "agent.runtime.start",
+                                AgentUiContract.RUNTIME_START,
                                 "Запустить внутреннюю среду выполнения",
                             ),
                             enabled = runtimeState.status == RuntimeStatus.EMPTY &&
@@ -1057,7 +1080,7 @@ fun AgentConsoleScreen(
                         }
                         OutlinedButton(
                             modifier = Modifier.agentControl(
-                                "agent.runtime.stop",
+                                AgentUiContract.RUNTIME_STOP,
                                 "Остановить внутреннюю среду выполнения",
                             ),
                             enabled = runtimeState.status != RuntimeStatus.EMPTY &&
@@ -1137,7 +1160,7 @@ fun AgentConsoleScreen(
                         ) {
                             Button(
                                 modifier = Modifier.agentControl(
-                                    "agent.interactive.run",
+                                    AgentUiContract.INTERACTIVE_RUN,
                                     "Запустить разрешённую интерактивную команду Git",
                                 ),
                                 enabled = runtimeState.status == RuntimeStatus.READY &&
@@ -1166,7 +1189,7 @@ fun AgentConsoleScreen(
                             }
                             OutlinedButton(
                                 modifier = Modifier.agentControl(
-                                    "agent.interactive.cancel",
+                                    AgentUiContract.INTERACTIVE_CANCEL,
                                     "Остановить интерактивную команду",
                                 ),
                                 enabled = interactiveState.status ==
