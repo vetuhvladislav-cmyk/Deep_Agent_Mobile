@@ -47,6 +47,8 @@ object AgentUiContract {
     const val INTERACTIVE_CANCEL = "agent.interactive.cancel"
     const val ACTIONS_STATE = "agent.actions.state"
     const val GIT_STATE = "agent.git.state"
+    const val RUNTIME_STATE = "agent.runtime.state"
+    const val INTERACTIVE_STATE = "agent.interactive.state"
 
     fun workspace(id: String): String = "agent.workspace." + id
     fun workspaceEntry(path: String): String {

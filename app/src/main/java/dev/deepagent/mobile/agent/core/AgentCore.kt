@@ -887,7 +887,10 @@ class AgentCore(context: Context) : AgentBridge {
             result.toJson().toString(),
         )
         persistAsync()
-        if (result.status == InteractiveSessionStatus.UNKNOWN) {
+        if (
+            result.status == InteractiveSessionStatus.UNKNOWN ||
+            result.status == InteractiveSessionStatus.CLEANUP_UNKNOWN
+        ) {
             markUnknown(
                 (result.summary ?: "Interactive process state неизвестен") +
                     "; автоматическое восстановление запрещено",

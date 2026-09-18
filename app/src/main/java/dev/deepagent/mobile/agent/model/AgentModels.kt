@@ -363,6 +363,7 @@ enum class InteractiveSessionStatus {
     FAILED,
     CANCELLED,
     UNKNOWN,
+    CLEANUP_UNKNOWN,
 }
 
 data class InteractiveCommandRequest(

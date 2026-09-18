@@ -197,15 +197,27 @@ class InteractiveCommandSession(
                 )
             }
             if (!finished) {
-                terminate(process)
+                val cleanupConfirmed = terminate(process)
                 return@withContext publish(
                     base.copy(
-                        status = InteractiveSessionStatus.UNKNOWN,
+                        status = if (cleanupConfirmed) {
+                            InteractiveSessionStatus.UNKNOWN
+                        } else {
+                            InteractiveSessionStatus.CLEANUP_UNKNOWN
+                        },
                         stdout = readOutput(stdoutFuture).text,
                         stderr = readOutput(stderrFuture).text,
                         durationMs = elapsedMs(startedAt),
-                        summary = "Interactive process превысил timeout",
-                        errorCode = "INTERACTIVE_TIMEOUT",
+                        summary = if (cleanupConfirmed) {
+                            "Interactive process превысил timeout и остановлен"
+                        } else {
+                            "Interactive process превысил timeout; cleanup не подтверждён"
+                        },
+                        errorCode = if (cleanupConfirmed) {
+                            "INTERACTIVE_TIMEOUT"
+                        } else {
+                            "CLEANUP_UNKNOWN"
+                        },
                     ),
                     onState,
                 )
@@ -234,7 +246,20 @@ class InteractiveCommandSession(
                 onState,
             )
         } catch (cancelled: CancellationException) {
-            terminate(process)
+            val cleanupConfirmed = terminate(process)
+            if (!cleanupConfirmed) {
+                publish(
+                    base.copy(
+                        status = InteractiveSessionStatus.CLEANUP_UNKNOWN,
+                        stdout = readOutput(stdoutFuture).text,
+                        stderr = readOutput(stderrFuture).text,
+                        durationMs = elapsedMs(startedAt),
+                        summary = "Interactive process отменён, но cleanup не подтверждён",
+                        errorCode = "CLEANUP_UNKNOWN",
+                    ),
+                    onState,
+                )
+            }
             throw cancelled
         } finally {
             cancellationHandle?.dispose()
@@ -427,14 +452,18 @@ class InteractiveCommandSession(
         )
     }
 
-    private fun terminate(process: Process) {
-        runCatching {
+    private fun terminate(process: Process): Boolean {
+        return runCatching {
             process.outputStream.close()
             process.destroy()
             if (process.isAlive) {
                 process.destroyForcibly()
             }
-        }
+            if (process.isAlive) {
+                process.waitFor(PROCESS_CLEANUP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            }
+            !process.isAlive
+        }.getOrDefault(false)
     }
 
     private fun elapsedMs(startedAt: Long): Long =
@@ -480,6 +509,7 @@ class InteractiveCommandSession(
         const val MAX_OUTPUT_CHARS = 32_000
         const val MAX_ERROR_CODE_CHARS = 96
         const val MAX_SUMMARY_CHARS = 2_000
+        const val PROCESS_CLEANUP_TIMEOUT_MS = 1_000L
         const val MIN_TIMEOUT_MS = 1_000L
         const val MAX_TIMEOUT_MS = 120_000L
     }

@@ -1012,7 +1012,12 @@ fun AgentConsoleScreen(
 
 
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .agentControl(
+                        AgentUiContract.RUNTIME_STATE,
+                        "Состояние внутреннего runtime",
+                    ),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant,
                 ),
@@ -1105,7 +1110,12 @@ fun AgentConsoleScreen(
 
             if (workspace != null) {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .agentControl(
+                            AgentUiContract.INTERACTIVE_STATE,
+                            "Состояние интерактивной команды",
+                        ),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
                     ),
@@ -1129,7 +1139,9 @@ fun AgentConsoleScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (
                                     interactiveState.status == InteractiveSessionStatus.FAILED ||
-                                    interactiveState.status == InteractiveSessionStatus.UNKNOWN
+                                    interactiveState.status == InteractiveSessionStatus.UNKNOWN ||
+                                    interactiveState.status ==
+                                        InteractiveSessionStatus.CLEANUP_UNKNOWN
                                 ) {
                                     MaterialTheme.colorScheme.error
                                 } else {
