@@ -22,15 +22,40 @@
 - DeepSeek endpoint ограничен HTTPS host policy (api.deepseek.com, default/443), а redirects отключены.
 - Git/PR/Actions mutations несут operation ID; Git и Actions сериализуют повторный запуск, возвращают сохранённый результат для той же session/operation и после UNKNOWN блокируют новый side effect до re-check; последний Git mutation result сохраняется в versioned SessionStore.
 
-Последний подтверждённый baseline прошёл unit-тесты, компиляцию instrumentation APK и debug APK в [GitHub Actions run #27](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35269039901) на commit `aa6b7a3`. После него bounded Planner/Evaluator, DeepSeek host-policy и operation-bound Git/PR/Actions recovery изменены в коммитах `b056589`, `82b29ba`, `0e751ed`, `2ab6f1f`, `d9744b7`, `eb15608`, `5b93dcd`, `a184072`, `3f0dcf5`, `8eb357b`, `17f926e`, `70629ea`, `b5d7071`, `b9bdf4a`, `a1646ca` и `4668d3e`; по текущему ограничению пользователя новая компиляция и тесты не запускались. Android device execution, реальный runtime и device lifecycle acceptance ещё не запускались, поэтому соответствующие exit criteria остаются открытыми.
+Исторический baseline: unit-тесты, компиляция instrumentation APK и debug APK прошли в [GitHub Actions run #27](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35269039901) на commit aa6b7a3. Актуальная сверка после последующих implementation passes и UI-аудита зафиксирована в разделе 0.1 ниже.
+
+## 0.1. Актуальный audit / CI acceptance record (2026-09-18)
+
+Этот блок является текущей сверкой кода, версии, workflow и фактических CI-результатов. Более ранние формулировки `не запускались` ниже относятся к историческим implementation passes и не отменяют этот audit record.
+
+- **Ветка:** `codex/p1-a-controlled-write-git-pr`; `main` не изменялся.
+- **Версия в коде:** `app/build.gradle.kts` содержит `versionCode = 5` и `versionName = "0.1.5"`.
+- **Workflow:** live `.github/workflows/android.yml` и `tools/github-workflow-android.yml` синхронизированы байт-в-байт. Build job устанавливает JDK 17/SDK 35/build-tools 35.0.0, запускает vectors/unit/instrumentation compile/assembleDebug и создаёт checksum/provenance.
+- **Release gate:** release job запускается только после `build` и `ui-runtime`; при `publish_release=false` он skipped. APK для release пересобирается из того же commit, поэтому публикация не зависит от Actions artifact quota.
+- **Build evidence:** [run #44](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35355722283), commit `fae06cc`: build job завершён успешно за 1:58; UI job завершён с инфраструктурным failure, release skipped.
+
+### UI runtime matrix
+
+| Попытка | Host / image | Фактический результат |
+| --- | --- | --- |
+| #39–#41 | standard `macos-15` ARM64 + ARM64 AVD | HVF недоступен; software QEMU для ARM64 guest завершился ошибкой |
+| #42 | `macos-15-large` Intel + x86_64 AVD | job не стартовал: billing/spending limit аккаунта |
+| #43 | `ubuntu-24.04-arm` + ARM64 AVD | SDK manager не нашёл пакет `emulator` |
+| #44 | standard `macos-15` ARM64 + x86_64 AVD | QEMU сообщил mismatch архитектуры host/guest |
+
+Финальная конфигурация workflow указывает совместимую пару `macos-15-large` + `x86_64` + `-accel auto`. До снятия billing/spending-limit blocker зелёный `connectedDebugAndroidTest` в этом аккаунте не подтверждён; это инфраструктурный blocker, а не скрытое повышение статуса.
+
+**Acceptance boundary:** P1-C остаётся `planned` до зелёного UI runtime/device acceptance. Rotation/background/process-death, accessibility tree, keyboard/insets и screenshot fixtures также остаются отдельными открытыми exit criteria. Полный статус и команды находятся в [BUILD_AND_RELEASE_RU.md](./BUILD_AND_RELEASE_RU.md).
+
+Существующий [Release v0.1.5](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/tag/v0.1.5) собран из раннего commit `5c14bbb`; новый production release в ходе аудита не публиковался.
 
 
-### Текущий implementation-slice (2026-09-18)
+### Ранее зафиксированный implementation-slice (historical snapshot, 2026-09-18)
 
 - **Входной SHA:** `9c85776a2525c28c82fdf92fcff4bb28148074fa`.
 - **Реализованный production-срез:** P0-A/P0-B/P0-C hardening seams, H0–H2 recovery/security controls и кодовый срез P1-A…P2-B на ветке `codex/p1-a-controlled-write-git-pr`; AgentBridge v1 сохранён.
 - **Зафиксированные изменения:** operation ID добавлен в approval binding и typed tool envelope; CanonicalArgs проверяется до tool invocation; UNKNOWN операции сохраняются как структурированный redacted diagnostic record в SessionStore и отображаются в Agent Console; ledger валидирует persisted side-effect profile и fsync-ит усечение trailing corruption; P1/P2 mutations получили operation/source binding, stable UI IDs, runtime manifest gate и отдельный `CLEANUP_UNKNOWN`.
-- **Статус приёмки:** capabilityStatus не повышается без recovery/security tests, Android/runtime acceptance и независимого review. В этом цикле намеренно не запускались компиляция, Gradle/JVM/Android-тесты и CI.
+- **Статус приёмки:** capabilityStatus не повышается без recovery/security tests, Android/runtime acceptance и независимого review. На момент этого исторического implementation-slice компиляция, Gradle/JVM/Android-тесты и CI ещё не запускались; актуальные факты указаны в разделе 0.1.
 - **Граница:** D1–D3 и любые новые capability не начинались; P1/P2 остаются с открытым runtime/device acceptance.
 
 ### Refactor pass (2026-09-18)
@@ -41,7 +66,7 @@
 - **Validation:** выполнена только статическая проверка diff и symbol map; компиляция, Gradle/JVM/Android-тесты и CI не запускались.
 - **Граница:** P1/P2 тогда ещё не начинались; следующий implementation pass зафиксирован ниже.
   
-### P1/P2 implementation pass (2026-09-18)
+### P1/P2 implementation pass (historical snapshot, 2026-09-18)
 
 - **База:** `04861a2c4cf306bd04b670ad00796c6a5967b923`.
 - **Текущий кодовый SHA:** `0576834e2acf325fc5be8e1136d84ae7dcb55001`.
@@ -54,7 +79,7 @@
 - **Validation:** выполнен только статический audit исходников и документации. Компиляция, Gradle/JVM/Android-тесты, CI, device/runtime execution и screenshot fixtures в этом цикле не запускались.
 - **Acceptance boundary:** P1-A/P1-B/P1-C/P2-A/P2-B не переводятся в `available` до соответствующих per-stage behavior/device checks; P2-A блокируется DP-02, P2-B — реальным PTY/process-tree backend.
 
-### UI presentation pass — Workspace Control Deck (2026-09-18)
+### UI presentation pass — Workspace Control Deck (historical snapshot, 2026-09-18)
 
 - **Визуальный target:** выбран мобильный вариант Workspace Control Deck; он используется как reference для Compose-слоя, без добавления декоративных или несуществующих capability.
 - **Текущий source SHA:** `0576834e2acf325fc5be8e1136d84ae7dcb55001`.
@@ -207,7 +232,7 @@ H0–H2 являются обязательным hardening-gate. P1/P2 не з�
 - **Cancellation / timeout:** cancel доступен из UI; network/provider timeout переводится в понятное состояние без скрытого retry.
 - **Recovery rule:** после rotation/background UI подписывается на AgentBridge, а не читает journal; при UNKNOWN предлагает re-check.
 - **Результат текущей реализации:** Agent Console подключён только к AgentBridge, workspace import и patch approval выведены из внутренних типов, добавлены provider/session/recovery summary, сохранение несекретной формы, восстановление image URI и единый scrollable mobile layout; статическая проверка пройдена.
-- **Validation:** unit-тесты, компиляция `assembleDebugAndroidTest` и debug APK проверены в [run #27](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35269039901); instrumentation smoke test добавлен, но Android UI/lifecycle запуск на device или emulator ещё не выполнялся.
+- **Validation:** build job [run #44](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35355722283) успешно выполнил unit-тесты, `assembleDebugAndroidTest` и debug APK; UI runtime job не закрылся из-за host/guest architecture mismatch, поэтому `connectedDebugAndroidTest` и lifecycle acceptance остаются открытыми.
 - **Acceptance gate:** capabilityStatus остаётся `planned` до поведенческой Android-проверки читаемости состояния, recovery affordances, rotation/background, keyboard/insets и process death; compilation instrumentation APK не заменяет device execution.
 - **Exit criterion:** новый пользователь из одного экрана понимает, что настроено, что отсутствует, какой permission требуется и почему операция остановилась.
 
@@ -268,7 +293,7 @@ H0–H2 являются обязательным hardening-gate. P1/P2 не з�
 - **Cancellation / timeout:** install/start/stop/readiness/heartbeat имеют bounded timeout; cancellation удаляет только неполный temporary state.
 - **Recovery rule:** failed or incompatible bundle не становится active; supervisor выполняет rollback к последней подтверждённой версии или возвращает EMPTY.
 - **Результат текущей реализации:** добавлен внутренний RuntimeSupervisor с mutex-serial lifecycle EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY, ветками FAILED/ROLLBACK, bounded timeout/cancellation, manifest/checksum/ABI state и loopback provider за AgentBridge; implementation pass добавил fail-closed проверку формата manifest и checksum до provider lifecycle; Local Lite probe больше не использует shell.
-- **Ограничение текущей реализации:** capabilityStatus остаётся `planned`: loopback provider не является реальным ARM64 DSH bundle; DP-02 остаётся open, поэтому installation/readiness/crash/restart нужно проверить на согласованном runtime manifest и Android 16 device; build и runtime-тесты в этой сессии не запускались.
+- **Ограничение текущей реализации:** capabilityStatus остаётся `planned`: loopback provider не является реальным ARM64 DSH bundle; DP-02 остаётся open, поэтому installation/readiness/crash/restart нужно проверить на согласованном runtime manifest и Android 16 device; полный Android runtime acceptance для этой capability ещё не подтверждён; актуальная CI-сверка находится в разделе 0.1.
 - **Exit criterion:** runtime запускается внутри одного APK, readiness подтверждается, отказ не повреждает workspace и UI продолжает работать через AgentBridge.
 
 ### P2-B — PTY и интерактивные команды
