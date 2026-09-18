@@ -500,8 +500,9 @@ class ToolRouter(
     }
 
     private fun canonicalArgsValid(argumentsJson: String): Boolean {
-        return runCatching {
-            CanonicalArgs.canonicalize(argumentsJson.ifBlank { "{}" })
+        val normalized = argumentsJson.trim()
+        return normalized.isNotBlank() && runCatching {
+            CanonicalArgs.canonicalize(normalized)
         }.isSuccess
     }
 
