@@ -59,7 +59,7 @@ DeepSeek и GitHub Actions являются внешними сервисами,
 
 RuntimeSupervisor является внутренним владельцем lifecycle локального headless runtime. Разрешённая последовательность — EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY; ошибки проходят через FAILED/ROLLBACK, а активным становится только runtime с подтверждённым manifest, ABI, checksum и readiness probe. Loopback provider допустим как безопасный reference adapter, пока DP-02 не выберет и не проверит подписанный ARM64 bundle.
 
-Runtime provider не получает GitHub, merge/release или credential permission. PTY/interactive provider, когда он включён, вызывается только через Agent Core с canonical workspace scope, allowlisted executable/arguments, bounded timeout и redacted output. Произвольный shell и sh -c не являются скрытым fallback. Текущий interactive adapter допускает только прямой pipe-backed git status/diff/log; это не объявляется полноценным PTY до отдельного ABI/backend решения.
+Runtime provider не получает GitHub, merge/release или credential permission. PTY/interactive provider, когда он включён, вызывается только через Agent Core с canonical workspace scope, allowlisted executable/arguments, bounded timeout и redacted output. Произвольный shell и sh -c не являются скрытым fallback. Текущий interactive adapter допускает только прямой pipe-backed git status/diff/log; это не объявляется полноценным PTY до отдельного ABI/backend решения. Если timeout/cancel не подтверждает остановку процесса, состояние публикуется как отдельный `CLEANUP_UNKNOWN` и не запускает автоматический retry.
 
 ### 2.2 Image Pipeline и visual input
 
@@ -322,6 +322,8 @@ Out-of-scope не может быть добавлен в roadmap без отд�
 8. Durable данные redacted и не содержат секретов.
 9. Каждый provider возвращает нормализованный результат с timeout, cancellation и error state.
 10. Один факт имеет одного владельца.
+11. Все внешние и локальные mutation paths используют operation/source binding; локальные write paths сериализуются общей guard-мьютексом, а несовместимый или неполный binding блокирует replay.
+12. P1/P2 code pass не является acceptance: capability становится available только после per-stage behavior/device evidence.
 
 ### 8.1 Правило одного факта
 
@@ -415,3 +417,15 @@ Agent Console использует собственную визуальную �
 - **Automatic tests:** CanonicalArgs golden/negative vectors, ledger torn-write/middle-corruption/key-loss/replay tests, capability filtering, forged-tool rejection, typed-envelope injection fixture и approval binding tests.
 - **Residual risks:** Android process death между effect и terminal frame, compromise of the host OS/Keystore, malicious content that is not recognized as a secret, и correctness of external GitHub/Actions state until re-check.
 - **Privileged mode:** отдельная capability profile с теми же approval, ledger, provenance и redaction invariants; privileged mode не может быть получен моделью самостоятельно.
+
+### ADR-005 — P1/P2 provenance и cleanup boundary
+
+- **Дата:** 2026-09-18.
+- **Статус:** accepted for static implementation pass; runtime/device acceptance open.
+- Все локальные mutation paths `apply_patch`, rollback и сохранение проверенного artifact сериализуются вместе с Git/Actions mutation paths через общую Core guard; fingerprint/approval re-check выполняется в этой сериализованной границе.
+- Actions dispatch не допускается без expected source commit SHA. Idempotency cache hit требует session ID, operation ID, repository, workflow, ref, expected SHA, canonical request SHA-256 и совместимого terminal head SHA; старое состояние без полного binding не считается cache hit.
+- UI selectors и accessibility labels принадлежат каноническому `AgentUiContract`; локализованный видимый текст не является test/security boundary.
+- RuntimeSupervisor проверяет bounded manifest/version/ABI fields и checksum до provider lifecycle. Loopback provider остаётся reference adapter до DP-02.
+- Pipe-backed interactive adapter не объявляется PTY. Неподтверждённое завершение процесса публикуется как `CLEANUP_UNKNOWN`, не восстанавливается автоматически и требует отдельной проверки.
+- **Validation:** статический source audit выполнен; compile, tests, CI, Android device/runtime и PTY process-tree acceptance не выполнялись.
+

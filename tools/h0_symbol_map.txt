@@ -1,8 +1,8 @@
 # H0 symbol map
-source_sha=cfa27825b542f7e1bc45e0201ecc1c8a5c0db72c
+source_sha=f47a946375d8d59492699c7a23b7cd46896b8f8a
 branch=codex/p1-a-controlled-write-git-pr
 generated_at=2026-09-18
-mode=static source scan; no behavior/runtime validation performed
+mode=static source scan; no behavior/runtime validation performed; P1/P2 implementation slice included
 
 app/src/main/java/dev/deepagent/mobile/AgentMobileApp.kt
   lines: 36
@@ -20,9 +20,9 @@ app/src/main/java/dev/deepagent/mobile/agent/artifact/ArtifactManager.kt
   public_methods: save@15
 
 app/src/main/java/dev/deepagent/mobile/agent/core/AgentCore.kt
-  lines: 3504
-  classes: PendingPatch@116, AgentCore@135
-  public_methods: submit@239, configureCredentials@276, clearCredentials@293, exportJournal@306, cancel@404, clearEvents@426, importWorkspace@431, prepareImage@450, clearImage@500, selectWorkspace@515, refreshWorkspace@537, inspectGit@604, createGitBranch@612, commitGit@629, pushGit@646, createPullRequest@663, runInteractive@805, sendInteractiveInput@898, cancelInteractive@913, startRuntime@953, stopRuntime@1009, runActions@1027, saveVerifiedArtifact@1223, rollbackLastPatch@1548, close@1697, approvePendingPatch@2365, rejectPendingPatch@2599
+  lines: 3629
+  classes: PendingPatch@117, AgentCore@136
+  public_methods: submit@240, configureCredentials@277, clearCredentials@294, exportJournal@307, cancel@405, clearEvents@427, importWorkspace@432, prepareImage@451, clearImage@501, selectWorkspace@516, refreshWorkspace@538, inspectGit@605, createGitBranch@613, commitGit@630, pushGit@647, createPullRequest@664, runInteractive@806, sendInteractiveInput@902, cancelInteractive@917, startRuntime@957, stopRuntime@1013, runActions@1031, saveVerifiedArtifact@1239, rollbackLastPatch@1594, close@1747, approvePendingPatch@2416, rejectPendingPatch@2655
 
 app/src/main/java/dev/deepagent/mobile/agent/core/AgentTransaction.kt
   lines: 28
@@ -60,9 +60,9 @@ app/src/main/java/dev/deepagent/mobile/agent/ledger/OperationLedger.kt
   public_methods: toJson@116, fromJson@140, toJson@225, key@257, key@263, key@269, snapshot@322, record@325, prepare@328, start@360, begin@378, retryUnknown@388, terminal@422, recover@474
 
 app/src/main/java/dev/deepagent/mobile/agent/model/AgentModels.kt
-  lines: 1038
-  classes: ExecutionTarget@7, PermissionMode@13, AgentEventKind@33, AgentSessionStatus@47, ImageAttachment@57, AgentRequest@64, AgentEvent@82, LedgerUnknownOperation@101, AgentSessionState@152, CredentialState@170, JournalExportStatus@181, JournalExportResult@187, AgentWorkspaceSnapshot@202, PendingPatchApproval@215, ImageAnalysisStatus@236, ImageAnalysisState@246, WorkspaceCatalogStatus@275, WorkspaceFileEntry@282, WorkspaceTreePage@295, WorkspaceRulesMetadata@309, WorkspaceCatalogState@316, InteractiveSessionStatus@358, InteractiveCommandRequest@368, InteractiveSessionState@399, RuntimeStatus@483, RuntimeState@493, ActionsOperationStatus@516, ActionsRunRequest@527, ActionsStepState@562, ActionsJobState@577, ActionsArtifactState@603, ActionsOperationState@628, ActionsArtifactRequest@810, ActionsArtifactSaveStatus@820, ActionsArtifactSaveResult@826, PatchRecoveryStatus@862, PatchRecoveryState@868, PatchRollbackStatus@956, PatchRollbackResult@962, AgentRedactor@982
-  public_methods: allows@24, toJson@109, fromJson@120, toJson@175, toJson@194, toJson@259, toJson@288, toJson@299, toJson@328, toAuditJson@378, toJson@414, fromJson@439, toJson@504, toAuditJson@539, toJson@569, toJson@585, toJson@615, toJson@647, fromJson@684, toJson@840, toJson@881, fromJson@898, toJson@971, inputValue@1007, text@1015
+  lines: 1046
+  classes: ExecutionTarget@7, PermissionMode@13, AgentEventKind@33, AgentSessionStatus@47, ImageAttachment@57, AgentRequest@64, AgentEvent@82, LedgerUnknownOperation@101, AgentSessionState@152, CredentialState@170, JournalExportStatus@181, JournalExportResult@187, AgentWorkspaceSnapshot@202, PendingPatchApproval@215, ImageAnalysisStatus@236, ImageAnalysisState@246, WorkspaceCatalogStatus@275, WorkspaceFileEntry@282, WorkspaceTreePage@295, WorkspaceRulesMetadata@309, WorkspaceCatalogState@316, InteractiveSessionStatus@358, InteractiveCommandRequest@369, InteractiveSessionState@400, RuntimeStatus@484, RuntimeState@494, ActionsOperationStatus@517, ActionsRunRequest@528, ActionsStepState@563, ActionsJobState@578, ActionsArtifactState@604, ActionsOperationState@629, ActionsArtifactRequest@818, ActionsArtifactSaveStatus@828, ActionsArtifactSaveResult@834, PatchRecoveryStatus@870, PatchRecoveryState@876, PatchRollbackStatus@964, PatchRollbackResult@970, AgentRedactor@990
+  public_methods: allows@24, toJson@109, fromJson@120, toJson@175, toJson@194, toJson@259, toJson@288, toJson@299, toJson@328, toAuditJson@379, toJson@415, fromJson@440, toJson@505, toAuditJson@540, toJson@570, toJson@586, toJson@616, toJson@653, fromJson@691, toJson@848, toJson@889, fromJson@906, toJson@979, inputValue@1015, text@1023
 
 app/src/main/java/dev/deepagent/mobile/agent/model/ApprovalToken.kt
   lines: 171
@@ -95,9 +95,9 @@ app/src/main/java/dev/deepagent/mobile/agent/provider/LlmProvider.kt
   public_methods: streamRound@17, cancel@22, streamRound@30, cancel@35, resolve@57, ids@61, cancelAll@63
 
 app/src/main/java/dev/deepagent/mobile/agent/runtime/InteractiveCommandSession.kt
-  lines: 487
-  classes: InteractiveCommandSession@31, CapturedOutput@443
-  public_methods: requiredPermission@42, run@53, sendInput@251, cancelActive@265, close@281
+  lines: 517
+  classes: InteractiveCommandSession@31, CapturedOutput@472
+  public_methods: requiredPermission@42, run@53, sendInput@276, cancelActive@290, close@306
 
 app/src/main/java/dev/deepagent/mobile/agent/runtime/LocalLiteRunner.kt
   lines: 115
@@ -110,9 +110,9 @@ app/src/main/java/dev/deepagent/mobile/agent/runtime/ProcessCleanupController.kt
   public_methods: cleanup@15
 
 app/src/main/java/dev/deepagent/mobile/agent/runtime/RuntimeSupervisor.kt
-  lines: 487
-  classes: RuntimeManifest@21, RuntimeProviderResult@39, RuntimeProbe@45, HeadlessRuntimeProvider@51, LoopbackHeadlessRuntimeProvider@63, RuntimeSupervisor@122
-  public_methods: loopback@31, install@52, start@53, probe@54, stop@55, install@66, start@81, probe@96, stop@109, start@132, probe@269, stop@309, close@371
+  lines: 522
+  classes: RuntimeManifest@21, RuntimeProviderResult@48, RuntimeProbe@54, HeadlessRuntimeProvider@60, LoopbackHeadlessRuntimeProvider@72, RuntimeSupervisor@146
+  public_methods: isWellFormed@26, loopback@40, install@61, start@62, probe@63, stop@64, install@75, start@98, probe@120, stop@133, start@156, probe@304, stop@344, close@406
 
 app/src/main/java/dev/deepagent/mobile/agent/security/AuditTraceStore.kt
   lines: 79
@@ -160,14 +160,14 @@ app/src/main/java/dev/deepagent/mobile/agent/tools/ToolVerifier.kt
   public_methods: authorize@10
 
 app/src/main/java/dev/deepagent/mobile/agent/ui/AgentConsoleScreen.kt
-  lines: 2155
+  lines: 2190
   classes: (none)
   public_methods: AgentConsoleScreen@109, currentPreset@178, applyPreset@189, persistReadPermission@214
 
 app/src/main/java/dev/deepagent/mobile/agent/ui/AgentUiContract.kt
-  lines: 57
+  lines: 70
   classes: AgentUiContract@15
-  public_methods: workspace@40, workspaceEntry@41, event@48, Modifier@51
+  public_methods: workspace@53, workspaceEntry@54, event@61, Modifier.agentControl@64
 
 app/src/main/java/dev/deepagent/mobile/agent/workspace/WorkspaceIdentity.kt
   lines: 187

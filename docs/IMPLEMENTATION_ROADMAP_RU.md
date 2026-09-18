@@ -27,11 +27,11 @@
 
 ### Текущий implementation-slice (2026-09-18)
 
-- **Входной SHA:** `87badbf147e402e02a0ea43894891aaf85ec28bf`.
-- **Реализованный production-срез:** P0-A/P0-B/P0-C hardening seams и H0–H2 recovery/security controls на ветке `codex/p1-a-controlled-write-git-pr`; AgentBridge v1 сохранён.
-- **Зафиксированные изменения:** operation ID добавлен в approval binding и typed tool envelope; CanonicalArgs проверяется до tool invocation; UNKNOWN операции сохраняются как структурированный redacted diagnostic record в SessionStore и отображаются в Agent Console; ledger валидирует persisted side-effect profile и fsync-ит усечение trailing corruption.
+- **Входной SHA:** `f47a946375d8d59492699c7a23b7cd46896b8f8a`.
+- **Реализованный production-срез:** P0-A/P0-B/P0-C hardening seams, H0–H2 recovery/security controls и кодовый срез P1-A…P2-B на ветке `codex/p1-a-controlled-write-git-pr`; AgentBridge v1 сохранён.
+- **Зафиксированные изменения:** operation ID добавлен в approval binding и typed tool envelope; CanonicalArgs проверяется до tool invocation; UNKNOWN операции сохраняются как структурированный redacted diagnostic record в SessionStore и отображаются в Agent Console; ledger валидирует persisted side-effect profile и fsync-ит усечение trailing corruption; P1/P2 mutations получили operation/source binding, stable UI IDs, runtime manifest gate и отдельный `CLEANUP_UNKNOWN`.
 - **Статус приёмки:** capabilityStatus не повышается без recovery/security tests, Android/runtime acceptance и независимого review. В этом цикле намеренно не запускались компиляция, Gradle/JVM/Android-тесты и CI.
-- **Граница:** P1/P2 и любые новые capability не начинались.
+- **Граница:** D1–D3 и любые новые capability не начинались; P1/P2 остаются с открытым runtime/device acceptance.
 
 ### Refactor pass (2026-09-18)
 
@@ -39,14 +39,27 @@
 - **Кодовый SHA:** `cfa27825b542f7e1bc45e0201ecc1c8a5c0db72c`.
 - **Исправлено:** runtime snapshot ledger теперь пересчитывает UNKNOWN/recovery metadata после каждой append; неподтверждённый terminal ledger state переводит результат side effect в UNKNOWN для Actions, patch и Git; пустой CanonicalArgs input отклоняется до dispatch.
 - **Validation:** выполнена только статическая проверка diff и symbol map; компиляция, Gradle/JVM/Android-тесты и CI не запускались.
-- **Граница:** P1/P2 не начинались.
+- **Граница:** P1/P2 тогда ещё не начинались; следующий implementation pass зафиксирован ниже.
+  
+### P1/P2 implementation pass (2026-09-18)
+
+- **База:** `04861a2c4cf306bd04b670ad00796c6a5967b923`.
+- **Текущий кодовый SHA:** `f47a946375d8d59492699c7a23b7cd46896b8f8a`.
+- **Ветка:** `codex/p1-a-controlled-write-git-pr`; `main` и новые ветки не изменялись.
+- **P1-A:** `externalMutationMutex` охватывает применение patch, rollback, сохранение проверенного artifact и Git/Actions mutation paths; это закрывает гонку между fingerprint/approval re-check и локальной записью.
+- **P1-B:** Actions dispatch требует явный ожидаемый исходный commit SHA; operation binding включает session ID, operation ID, repository, workflow, ref, expected SHA, inputs и polling parameters через CanonicalArgs SHA-256; неполный старый cache state не считается безопасным cache hit.
+- **P1-C:** расширен стабильный UI contract для session status, UNKNOWN ledger, re-check, patch preview/recovery, runtime и interactive cards; labels остаются accessibility semantics, независимыми от локализованного текста.
+- **P2-A:** RuntimeSupervisor и loopback provider дополнительно fail-closed проверяют формат manifest, непустые ограниченные version/ABI и 64-hex checksum перед lifecycle; loopback по-прежнему не является реальным ARM64 DSH bundle.
+- **P2-B:** timeout/cancel interactive process теперь различают подтверждённое UNKNOWN и `CLEANUP_UNKNOWN`; текущий backend намеренно остаётся pipe-backed allowlist adapter до решения PTY/ABI.
+- **Validation:** выполнен только статический audit исходников и документации. Компиляция, Gradle/JVM/Android-тесты, CI, device/runtime execution и screenshot fixtures в этом цикле не запускались.
+- **Acceptance boundary:** P1-A/P1-B/P1-C/P2-A/P2-B не переводятся в `available` до соответствующих per-stage behavior/device checks; P2-A блокируется DP-02, P2-B — реальным PTY/process-tree backend.
 
 ## 1A. MVP hardening gate
 
 ### H0 — Подтверждение фактической структуры
 
 - **Статус:** capabilityStatus: implemented.
-- **Актуальный source SHA:** `cfa27825b542f7e1bc45e0201ecc1c8a5c0db72c`.
+- **Актуальный source SHA:** `f47a946375d8d59492699c7a23b7cd46896b8f8a`.
 - **Результат:** подтверждены реальные файлы, symbol map на текущем source SHA, AgentBridge boundary, persistence boundary, policy boundary и execution boundary; размеры файлов не используются как контракт.
 - **Ограничение:** AgentBridge v1 и существующие публичные операции сохраняются.
 - **Exit criterion:** фактическая структура и контрольный SHA зафиксированы до hardening-изменений.
@@ -190,11 +203,11 @@ H0–H2 являются обязательным hardening-gate. P1/P2 не з�
 
 ### P1-A — Diff, controlled write, Git и ручной PR
 
-- **Статус:** capabilityStatus: planned
+- **Статус:** capabilityStatus: planned; implementation pass: static code complete; validation: open
 - **Владелец:** Patch Engine, Workspace Manager и GitHub Connector
 - **Входной контракт:** read-only workspace snapshot, ToolCall для patch, WorkspaceIdentity, base fingerprint, explicit approval и target repository/ref.
 - **Выходной контракт:** preview/diff, checkpoint и controlled local apply; branch/commit/push и ручной Pull Request с проверяемой provenance.
-- **Результат текущей реализации:** добавлены фиксированные Git-операции `status`, `checkout -b`, `add + commit` и `push` через ToolRouter; write-операции проверяют workspace fingerprint до/после и HEAD SHA, timeout/неподтверждённый результат переводятся в `UNKNOWN`; добавлен GitHub PR connector с redacted-ответом и ручным approval через AgentBridge/UI; для `apply_patch` добавлены атомарный checkpoint manifest, persisted recovery state и ручной rollback с повторной проверкой post-write fingerprint. Для model-generated local write введён operation-bound `ApprovalToken`: opaque token связывает operation, session, workspace fingerprint, old/new SHA, digest аргументов и expiry. Git/PR requests несут operation ID, AgentCore сериализует write-вызовы, возвращает cached result для повторной пары session/operation и блокирует новый Git/PR side effect после `UNKNOWN`; последний mutation result сохраняется в SessionStore. Unit-тесты baseline на binding и TTL, unified patch/checkpoint/rollback и ZIP artifact verifier прошли в run #27; последующие operation-bound изменения проверены только статически.
+- **Результат текущей реализации:** добавлены фиксированные Git-операции `status`, `checkout -b`, `add + commit` и `push` через ToolRouter; write-операции проверяют workspace fingerprint до/после и HEAD SHA, timeout/неподтверждённый результат переводятся в `UNKNOWN`; добавлен GitHub PR connector с redacted-ответом и ручным approval через AgentBridge/UI; для `apply_patch` добавлены атомарный checkpoint manifest, persisted recovery state и ручной rollback с повторной проверкой post-write fingerprint. Для model-generated local write введён operation-bound `ApprovalToken`: opaque token связывает operation, session, workspace fingerprint, old/new SHA, digest аргументов и expiry. Git/PR requests несут operation ID, AgentCore сериализует write-вызовы, возвращает cached result для повторной пары session/operation и блокирует новый Git/PR side effect после `UNKNOWN`; последний mutation result сохраняется в SessionStore. В текущем implementation pass общий mutex дополнительно сериализует `apply_patch`, rollback и локальное сохранение проверенного artifact с Git/Actions mutation paths. Baseline test evidence относится к run #27; последующие operation-bound изменения проверены только статически.
 - **Ограничение текущей реализации:** P1-A не переводится в `available` без поведенческой проверки branch/commit/push/PR, отказов Git, timeout/re-check, permission gates, checkpoint/rollback и проверки отсутствия секретов в событиях/journal.
 - **Permission gate:** LOCAL_WRITE для локальной записи; GITHUB_WRITE для branch/commit/push; PR_CREATE для Pull Request; MERGE_RELEASE для merge/release не входит в этап.
 - **Session ID:** обязателен в preview, approval, checkpoint, commit, PR и каждом связанном event.
@@ -205,7 +218,7 @@ H0–H2 являются обязательным hardening-gate. P1/P2 не з�
 
 ### P1-B — Actions observability и проверенные APK/AAB
 
-- **Статус:** capabilityStatus: planned
+- **Статус:** capabilityStatus: planned; implementation pass: static code complete; validation: open
 - **Владелец:** GitHub Actions Connector и Artifact Manager
 - **Входной контракт:** разрешённый workflow dispatch, repository/ref/workflow, session ID и commit provenance.
 - **Выходной контракт:** наблюдаемый путь dispatch → run → job → step/log → artifact → verified result.
@@ -214,13 +227,13 @@ H0–H2 являются обязательным hardening-gate. P1/P2 не з�
 - **Redacted audit trail:** run ID, job/step states, durations, redacted logs, artifact name/size/content type/checksum и source SHA.
 - **Cancellation / timeout:** polling имеет backoff, deadline и cancel; скачивание ограничено размером, типом и timeout; failed-job retry не выполняется автоматически.
 - **Recovery rule:** неизвестный run/job/artifact получает UNKNOWN; повтор dispatch запрещён до re-check исходного run и idempotency key.
-- **Результат текущей реализации:** добавлен Actions connector с dispatch/run discovery/polling, jobs/steps, failed-step log retrieval и redacted state; workflow публикует APK вместе с SHA-256 sidecar и provenance source SHA; AgentBridge/Session Journal сохраняют correlation и recovery state; Artifact Manager скачивает ZIP, проверяет APK/AAB, checksum, source SHA и атомарно сохраняет его только после LOCAL_WRITE approval. Correlation сделана обязательной: `agent_session_id`, `operation_id` и expected commit SHA входят в dispatch/run discovery, а state и audit сохраняют operation ID; contract-тесты прошли в run #27.
+- **Результат текущей реализации:** добавлен Actions connector с dispatch/run discovery/polling, jobs/steps, failed-step log retrieval и redacted state; workflow публикует APK вместе с SHA-256 sidecar и provenance source SHA; AgentBridge/Session Journal сохраняют correlation и recovery state; Artifact Manager скачивает ZIP, проверяет APK/AAB, checksum, source SHA и атомарно сохраняет его только после LOCAL_WRITE approval. Correlation сделана обязательной: `agent_session_id`, `operation_id` и expected commit SHA входят в dispatch/run discovery, а state и audit сохраняют operation ID. В текущем implementation pass expected source SHA обязателен до dispatch, а cache hit допускается только при совпадении полного canonical request binding; contract-тесты baseline относятся к run #27, новые изменения проверены только статически.
 - **Ограничение текущей реализации:** capabilityStatus остаётся `planned` до runtime-проверки именно app-side пути dispatch → run → job → step/log → artifact на реальном repository, проверки квоты/redirect/timeout/UNKNOWN и подтверждения сохранённого APK/AAB; workflow build/release уже проверен отдельно, но это не заменяет Android connector acceptance.
 - **Exit criterion:** приложение показывает status и failed step, позволяет получить redacted logs, проверяет artifact type/size/checksum/commit SHA и сохраняет подтверждённый APK/AAB.
 
 ### P1-C — Android 16 UI и regression contract
 
-- **Статус:** capabilityStatus: planned
+- **Статус:** capabilityStatus: planned; implementation pass: static code complete; validation: open
 - **Владелец:** Compose UI и Android validation layer
 - **Входной контракт:** AgentBridge v1, UI state model, event types, permission states и согласованные Android 16 scenarios.
 - **Выходной контракт:** стабильный UI contract с test IDs, accessibility semantics, rotation/background/insets/keyboard coverage и screenshot fixtures для критических состояний.
@@ -229,13 +242,13 @@ H0–H2 являются обязательным hardening-gate. P1/P2 не з�
 - **Redacted audit trail:** scenario ID, screen state, event sequence, failure location и screenshot reference без provider secrets.
 - **Cancellation / timeout:** каждый UI scenario имеет bounded timeout; зависший provider не блокирует UI test lifecycle.
 - **Recovery rule:** потеря Activity не создаёт новую сессию и не повторяет side effect; тест повторно подключается к AgentBridge state.
-- **Результат текущей реализации:** добавлен канонический UI contract с независимыми стабильными test IDs и accessibility semantics для корневого экрана, task/workspace controls, patch approval/rollback, Actions artifact, Git, session lifecycle и event cards; существующие `rememberSaveable`, app-private journal и AgentBridge state сохраняют recovery-safe поведение при Activity recreation, keyboard и system insets.
+- **Результат текущей реализации:** добавлен канонический UI contract с независимыми стабильными test IDs и accessibility semantics для корневого экрана, task/workspace controls, patch approval/rollback, Actions artifact, Git, session lifecycle и event cards; в implementation pass добавлены отдельные IDs для UNKNOWN ledger, re-check, patch preview/recovery, runtime и interactive state; существующие `rememberSaveable`, app-private journal и AgentBridge state сохраняют recovery-safe поведение при Activity recreation, keyboard и system insets.
 - **Ограничение текущей реализации:** capabilityStatus остаётся `planned` до Android 16 instrumentation-проверки основных сценариев, rotation/background/process death, keyboard/insets, accessibility tree и screenshot fixtures; debug APK собран в CI, но UI lifecycle tests ещё не запускались.
 - **Exit criterion:** основные user flows воспроизводимы на Android 16, имеют стабильные test IDs и не теряют session state при rotation/background/insets transitions.
 
 ### P2-A — RuntimeSupervisor и headless DSH
 
-- **Статус:** capabilityStatus: planned
+- **Статус:** capabilityStatus: planned; implementation pass: static code complete; validation: open
 - **Владелец:** RuntimeSupervisor и Local Lite Runtime integration
 - **Входной контракт:** отдельно согласованный ARM64 runtime bundle, manifest, checksum, ABI/version range и readiness probe.
 - **Выходной контракт:** внутренний lifecycle EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY с FAILED/ROLLBACK веткой, loopback adapter за AgentBridge и controlled shutdown.
@@ -244,13 +257,13 @@ H0–H2 являются обязательным hardening-gate. P1/P2 не з�
 - **Redacted audit trail:** bundle version, ABI, checksum, lifecycle states, heartbeat, exit code и error class; environment secrets redacted.
 - **Cancellation / timeout:** install/start/stop/readiness/heartbeat имеют bounded timeout; cancellation удаляет только неполный temporary state.
 - **Recovery rule:** failed or incompatible bundle не становится active; supervisor выполняет rollback к последней подтверждённой версии или возвращает EMPTY.
-- **Результат текущей реализации:** добавлен внутренний RuntimeSupervisor с mutex-serial lifecycle EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY, ветками FAILED/ROLLBACK, bounded timeout/cancellation, manifest/checksum/ABI state и loopback provider за AgentBridge; Local Lite probe больше не использует shell.
+- **Результат текущей реализации:** добавлен внутренний RuntimeSupervisor с mutex-serial lifecycle EMPTY → INSTALLING → STARTING → READY → STOPPING → EMPTY, ветками FAILED/ROLLBACK, bounded timeout/cancellation, manifest/checksum/ABI state и loopback provider за AgentBridge; implementation pass добавил fail-closed проверку формата manifest и checksum до provider lifecycle; Local Lite probe больше не использует shell.
 - **Ограничение текущей реализации:** capabilityStatus остаётся `planned`: loopback provider не является реальным ARM64 DSH bundle; DP-02 остаётся open, поэтому installation/readiness/crash/restart нужно проверить на согласованном runtime manifest и Android 16 device; build и runtime-тесты в этой сессии не запускались.
 - **Exit criterion:** runtime запускается внутри одного APK, readiness подтверждается, отказ не повреждает workspace и UI продолжает работать через AgentBridge.
 
 ### P2-B — PTY и интерактивные команды
 
-- **Статус:** capabilityStatus: planned
+- **Статус:** capabilityStatus: planned; implementation pass: static code complete; validation: open
 - **Владелец:** RuntimeSupervisor и interactive execution provider
 - **Входной контракт:** подтверждённый P2-A runtime, PTY backend для ABI, workspace scope и explicit user action.
 - **Выходной контракт:** cancellable PTY session, ограниченное дерево процессов, scoped environment и нормализованные output/exit events.
@@ -259,7 +272,7 @@ H0–H2 являются обязательным hardening-gate. P1/P2 не з�
 - **Redacted audit trail:** command metadata, scoped cwd, process ID, exit state, duration и redacted output; credentials не журналируются.
 - **Cancellation / timeout:** cancel завершает process tree; idle/maximum runtime timeout обязателен; UI не блокируется.
 - **Recovery rule:** потерянный процесс получает UNKNOWN, не восстанавливается автоматически и требует явного re-check или controlled termination.
-- **Результат текущей реализации:** добавлен AgentBridge/Core interactive contract и bounded direct-process adapter с allowlist только для git status/diff/log, canonical cwd, очищенным scoped environment, input/output limits, timeout, cancel, redacted output и persisted UNKNOWN recovery state; UI показывает нормализованные output/exit/recovery события.
+- **Результат текущей реализации:** добавлен AgentBridge/Core interactive contract и bounded direct-process adapter с allowlist только для git status/diff/log, canonical cwd, очищенным scoped environment, input/output limits, timeout, cancel, redacted output и persisted UNKNOWN recovery state; implementation pass добавил отдельный `CLEANUP_UNKNOWN`, если остановка процесса не подтверждена; UI показывает нормализованные output/exit/recovery события.
 - **Ограничение текущей реализации:** capabilityStatus остаётся `planned`: текущий backend использует pipes, а не полноценный PTY; расширение allowlist и реальный PTY ABI зависят от подтверждённого P2-A runtime/DP-02; process-tree, Android 16 и process-death сценарии требуют runtime-проверки; build и тесты в этой сессии не запускались.
 - **Exit criterion:** интерактивная команда не выходит из workspace/permission scope, не блокирует UI, корректно отменяется и оставляет понятное состояние после process death.
 
