@@ -5,9 +5,8 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 /**
- * Диагностический тест: печатает точный класс и сообщение исключения, которое
- * возникает на первом же execute(). Нужен, потому что отчёт CI показывает
- * только IllegalArgumentException без текста.
+ * Диагностический тест: падает с полным описанием причины, чтобы отчёт CI
+ * показал класс, сообщение и стек исключения.
  */
 class LedgerDiagnosticsTest {
 
@@ -26,49 +25,31 @@ class LedgerDiagnosticsTest {
             resolution = LedgerResolution.QUERYABLE,
         )
         val ledger = OperationLedger(file)
-        val outcome = runCatching {
+        try {
             ledger.execute(spec) {}
-        }
-        val failure = outcome.exceptionOrNull()
-        failure?.printStackTrace()
-        println("DIAG_EXECUTE_CLASS=" + (failure?.let { it::class.java.name } ?: "none"))
-        println("DIAG_EXECUTE_MESSAGE=" + (failure?.message ?: "none"))
-        println(
-            "DIAG_STACK=" + failure?.stackTrace?.take(12)?.joinToString(" <- ") {
-                it.className.substringAfterLast('.') + "." + it.methodName + ":" + it.lineNumber
-            },
-        )
-        if (failure != null) {
-            val trace = failure.stackTrace.take(8).joinToString(" <- ") {
+        } catch (error: Throwable) {
+            val trace = error.stackTrace.take(12).joinToString(" <- ") {
                 it.className.substringAfterLast('.') + "." + it.methodName + ":" + it.lineNumber
             }
             throw AssertionError(
-                "execute failed: " + failure::class.java.name +
-                    " message=" + failure.message +
-                    " trace=" + trace,
-                failure,
+                "DIAG class=" + error::class.java.name +
+                    " | message=" + error.message +
+                    " | cause=" + (error.cause?.let { it::class.java.name + ": " + it.message }) +
+                    " | trace=" + trace,
+                error,
             )
         }
     }
 
     @Test
-    fun reportSpecConstructionFailure() {
-        val outcome = runCatching {
-            LedgerOperationSpec(
-                operationId = "op.diag",
-                operation = "test_operation",
-                sessionId = "session-1",
-                workspaceId = "workspace-1",
-                targetSha = "target-sha",
-                resolution = LedgerResolution.QUERYABLE,
-            )
-        }
-        val failure = outcome.exceptionOrNull()
-        if (failure != null) {
+    fun reportRecoverySnapshot() {
+        val file = temporaryFolder.newFile("diag-empty.bin")
+        val ledger = OperationLedger(file)
+        val snapshot = ledger.snapshot()
+        if (snapshot.blocked) {
             throw AssertionError(
-                "spec construction failed: " + failure::class.java.name +
-                    " message=" + failure.message,
-                failure,
+                "DIAG empty ledger blocked: health=" + snapshot.health +
+                    " diagnostics=" + snapshot.diagnostics,
             )
         }
     }
