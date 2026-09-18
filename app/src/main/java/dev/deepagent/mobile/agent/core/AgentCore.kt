@@ -1963,16 +1963,18 @@ class AgentCore(context: Context) : AgentBridge {
             return
         }
 
-        val operationId = UUID.randomUUID().toString()
-        val actionsRequest = ActionsRunRequest(
-            token = readCredential(CredentialKind.GITHUB_TOKEN).orEmpty(),
-            repository = request.repository.orEmpty(),
-            workflow = request.workflow.orEmpty(),
-            ref = request.ref,
-            sessionId = currentSessionId,
-            operationId = operationId,
-            expectedCommitSha = currentRequestSummary?.targetSha,
-        )
+        externalMutationMutex.lock()
+        try {
+            val operationId = UUID.randomUUID().toString()
+            val actionsRequest = ActionsRunRequest(
+                token = readCredential(CredentialKind.GITHUB_TOKEN).orEmpty(),
+                repository = request.repository.orEmpty(),
+                workflow = request.workflow.orEmpty(),
+                ref = request.ref,
+                sessionId = currentSessionId,
+                operationId = operationId,
+                expectedCommitSha = currentRequestSummary?.targetSha,
+            )
         val ledgerStarted = beginLedger(
             LedgerOperationSpec(
                 operationId = operationId,
@@ -2026,6 +2028,9 @@ class AgentCore(context: Context) : AgentBridge {
             else -> markUnknown(
                 "GitHub Actions не вернул конечное состояние; требуется re-check",
             )
+            }
+        } finally {
+            externalMutationMutex.unlock()
         }
     }
 
