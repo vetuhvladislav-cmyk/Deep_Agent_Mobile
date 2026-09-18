@@ -419,14 +419,6 @@ class ToolRouter(
         workspaceId: String? = null,
         permission: PermissionMode = PermissionMode.READ_ONLY,
     ): ToolExecutionResult = withContext(Dispatchers.IO) {
-        if (!canonicalArgsValid(argumentsJson)) {
-            return@withContext ToolExecutionResult(
-                toolName = toolName,
-                ok = false,
-                summary = "Аргументы не прошли CanonicalArgs policy",
-                errorCode = "CANONICAL_ARGS_INVALID",
-            )
-        }
         val authorization = authorize(toolName, permission)
         if (!authorization.allowed) {
             return@withContext ToolExecutionResult(
@@ -434,6 +426,14 @@ class ToolRouter(
                 ok = false,
                 summary = "Tool запрещён текущей capability policy",
                 errorCode = authorization.errorCode,
+            )
+        }
+        if (!canonicalArgsValid(argumentsJson)) {
+            return@withContext ToolExecutionResult(
+                toolName = toolName,
+                ok = false,
+                summary = "Аргументы не прошли CanonicalArgs policy",
+                errorCode = "CANONICAL_ARGS_INVALID",
             )
         }
 
