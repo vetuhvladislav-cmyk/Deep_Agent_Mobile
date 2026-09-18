@@ -160,7 +160,7 @@ object CanonicalArgs {
                 '{' -> parseObject()
                 '-' -> Value.NumberValue(parseNumber())
                 in '0'..'9' -> Value.NumberValue(parseNumber())
-                else -> fail("INVALID_VALUE", "Недопустимое JSON-значение"),
+                else -> fail("INVALID_VALUE", "Недопустимое JSON-значение")
             }
         }
 
