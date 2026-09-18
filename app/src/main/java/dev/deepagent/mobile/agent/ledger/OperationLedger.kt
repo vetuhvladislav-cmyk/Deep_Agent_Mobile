@@ -380,17 +380,16 @@ class OperationLedger(
     @Synchronized
     fun chainLength(): Long = nextSequence - 1L
 
-    /** Хеш первого кадра операции: он открывает её цепочку. */
+    /**
+     * Хеш последнего кадра операции: он продолжает глобальную цепочку.
+     *
+     * Кадры одной попытки (PREPARED/STARTED/терминальный) адресуются одним
+     * ключом (`operationId`, attempt), поэтому в памяти хранится последний из
+     * них, а промежуточные остаются в файле и участвуют в проверке цепочки при
+     * recovery.
+     */
     @Synchronized
-    fun openingChainHash(operationId: String): String? = attempts(operationId)
-        .firstOrNull()
-        ?.chainHash
-
-    /** Хеш последнего кадра операции: он продолжает глобальную цепочку. */
-    @Synchronized
-    fun closingChainHash(operationId: String): String? = attempts(operationId)
-        .lastOrNull()
-        ?.chainHash
+    fun closingChainHash(operationId: String): String? = record(operationId)?.chainHash
 
     @Synchronized
     fun prepare(spec: LedgerOperationSpec): LedgerRecord {

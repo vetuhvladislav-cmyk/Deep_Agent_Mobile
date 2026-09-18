@@ -341,12 +341,10 @@ class OperationLedgerTest {
         ledger.execute(spec("op.x", LedgerResolution.QUERYABLE)) {}
 
         val closingX = ledger.closingChainHash("op.x")
-        val openingX = ledger.openingChainHash("op.x")
         assertNotNull(closingX)
-        assertNotNull(openingX)
         // execute() пишет три кадра: PREPARED, STARTED и терминальный.
+        // В памяти остаётся последний кадр попытки, но цепочка содержит все три.
         assertEquals(3L, ledger.chainLength())
-        assertFalse(openingX == closingX)
 
         ledger.execute(spec("op.y", LedgerResolution.QUERYABLE)) {}
         assertEquals(6L, ledger.chainLength())
