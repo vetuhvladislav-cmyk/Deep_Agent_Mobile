@@ -304,21 +304,9 @@ class OperationLedgerTest {
         ledger.execute(spec("op.m3", LedgerResolution.QUERYABLE)) {}
 
         val bytes = Files.readAllBytes(file.toPath())
-        val magic = byteArrayOf(0x44, 0x41, 0x4C, 0x47)
-        val offsets = buildList {
-            var index = 0
-            while (index <= bytes.size - magic.size) {
-                var matched = true
-                for (offset in magic.indices) {
-                    if (bytes[index + offset] != magic[offset]) {
-                        matched = false
-                        break
-                    }
-                }
-                if (matched) add(index)
-                index += 1
-            }
-        }
+        // Границы кадров считаются по заголовку, а не поиском MAGIC: строка
+        // chain hash тоже может содержать байты 0x44 0x41 0x4C 0x47.
+        val offsets = frameOffsets(bytes)
         assertEquals(3, offsets.size)
         val withoutMiddle = bytes.copyOfRange(0, offsets[1]) +
             bytes.copyOfRange(offsets[2], bytes.size)
@@ -419,6 +407,27 @@ class OperationLedgerTest {
             }
             buffer.toByteArray()
         }
+    }
+
+    /**
+     * Границы кадров ledger: 6 big-endian int заголовка
+     * (magic, format, mode, keyVersion, payloadLength, checksumLength).
+     */
+    private fun frameOffsets(bytes: ByteArray): List<Int> {
+        val offsets = mutableListOf<Int>()
+        var cursor = 0
+        while (cursor + 24 <= bytes.size) {
+            val header = ByteBuffer.wrap(bytes, cursor, 24).order(ByteOrder.BIG_ENDIAN)
+            if (header.int != 0x44414C47) break
+            header.int
+            header.int
+            header.int
+            val payloadLength = header.int
+            val checksumLength = header.int
+            offsets += cursor
+            cursor += 24 + payloadLength + checksumLength
+        }
+        return offsets
     }
 
     private fun indexOf(haystack: ByteArray, needle: ByteArray): Int {

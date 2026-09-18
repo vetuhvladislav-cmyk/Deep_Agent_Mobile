@@ -421,7 +421,12 @@ class OperationLedger(
         require(bindingMatches(previous, spec)) {
             "Binding explicit retry не совпадает с UNKNOWN записью"
         }
-        return appendAttempt(spec, attempt = previous.attempt + 1)
+        // Повтор после re-check сразу переходит в STARTED: попытка уже
+        // подтверждена вызывающей стороной, отдельный PREPARED шаг не нужен.
+        return appendTransition(
+            appendAttempt(spec, attempt = previous.attempt + 1)
+                .copy(phase = LedgerPhase.STARTED),
+        )
     }
 
     @Synchronized
@@ -806,8 +811,13 @@ class OperationLedger(
         expectedPrevious: String?,
         expectedKey: ByteArray?,
     ): Boolean {
-        val declared = record.chainHash ?: return true
+        // Запись schema 1 была создана до введения цепочки: у неё нет chain
+        // hash по построению, и это не подделка.
         if (record.schemaVersion < 2) return true
+        // Начиная со schema 2 отсутствие chain hash — это повреждение или
+        // подделка: `safe()` превращает отсутствующее поле в null, поэтому
+        // доверять такой записи нельзя.
+        val declared = record.chainHash ?: return false
         if (chainHashFor(record, expectedKey) != declared) return false
         return record.previousChainHash == expectedPrevious
     }
