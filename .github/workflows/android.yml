@@ -84,11 +84,11 @@ jobs:
           export ANDROID_USER_HOME="${RUNNER_TEMP}/.android"
           export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
           mkdir -p "$ANDROID_AVD_HOME"
-          sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
+          sdkmanager "emulator" "system-images;android-35;google_apis;arm64-v8a"
           printf "no\n" | timeout 120s avdmanager create avd \
             --force \
             --name deep-agent-api-35 \
-            --package "system-images;android-35;google_apis;x86_64" \
+            --package "system-images;android-35;google_apis;arm64-v8a" \
             --device "pixel_2"
           android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           test -n "$android_sdk_root"
@@ -97,17 +97,18 @@ jobs:
           echo "Using emulator binary: $emulator_bin"
           nohup "$emulator_bin" -avd deep-agent-api-35 \
             -no-window -no-audio -no-boot-anim -no-snapshot \
-            -gpu swiftshader_indirect \
+            -accel off \
+            -gpu swiftshader \
             > "${RUNNER_TEMP}/deep-agent-emulator.log" 2>&1 &
           trap "adb emu kill >/dev/null 2>&1 || true" EXIT
-          if ! timeout 300s adb wait-for-device; then
+          if ! timeout 600s adb wait-for-device; then
             echo "Emulator did not register with ADB within 300 seconds" >&2
             cat "${RUNNER_TEMP}/deep-agent-emulator.log" || true
             adb devices || true
             exit 1
           fi
           boot_completed=false
-          for _ in $(seq 1 60); do
+          for _ in $(seq 1 120); do
             if adb shell getprop sys.boot_completed | tr -d "\r" | grep -q "^1"; then
               boot_completed=true
               break
