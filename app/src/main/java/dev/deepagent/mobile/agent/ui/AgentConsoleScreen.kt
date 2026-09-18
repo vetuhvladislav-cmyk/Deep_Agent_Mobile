@@ -656,7 +656,12 @@ fun AgentConsoleScreen(
                     accent = statusColor(state.status),
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .agentControl(
+                                AgentUiContract.SESSION_STATUS,
+                                "Статус сессии Agent Core",
+                            ),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -1579,6 +1584,10 @@ fun AgentConsoleScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.ACTIONS_STATE,
+                                "Состояние GitHub Actions",
+                            ),
                             text = "P1-B GitHub Actions",
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -1743,6 +1752,10 @@ fun AgentConsoleScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(
+                            modifier = Modifier.agentControl(
+                                AgentUiContract.GIT_STATE,
+                                "Состояние Git и Pull Request",
+                            ),
                             text = "P1-A · Git / ручной PR",
                             fontWeight = FontWeight.SemiBold,
                         )
