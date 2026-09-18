@@ -62,51 +62,41 @@ object BoundedPlanner {
             "maxToolRounds выходит за bounded limit"
         }
 
-        val steps = buildList {
-            add(
-                BoundedPlanStep(
-                    id = "context",
-                    kind = BoundedPlanStepKind.CONTEXT,
-                    summary = "Проверить session, target и границу workspace",
-                ),
-            )
-            add(
-                BoundedPlanStep(
-                    id = "analyze",
-                    kind = BoundedPlanStepKind.ANALYZE,
-                    summary = if (hasWorkspace) {
-                        "Собрать ограниченный контекст через read-only ToolRouter"
-                    } else {
-                        "Работать без workspace tools",
-                    },
-                ),
-            )
-            add(
-                BoundedPlanStep(
-                    id = "tools",
-                    kind = BoundedPlanStepKind.TOOL,
-                    summary = "Обработать только allowlisted tool calls в пределах бюджета",
-                ),
-            )
-            add(
-                BoundedPlanStep(
-                    id = "verify",
-                    kind = BoundedPlanStepKind.VERIFY,
-                    summary = if (target == ExecutionTarget.REMOTE_ACTIONS) {
-                        "Проверить commit, run и artifact provenance"
-                    } else {
-                        "Проверить evidence результата и recovery state"
-                    },
-                ),
-            )
-            add(
-                BoundedPlanStep(
-                    id = "complete",
-                    kind = BoundedPlanStepKind.COMPLETE,
-                    summary = "Завершить только при подтверждённом результате",
-                ),
-            )
-        }
+        val steps = listOf(
+            BoundedPlanStep(
+                id = "context",
+                kind = BoundedPlanStepKind.CONTEXT,
+                summary = "Проверить session, target и границу workspace",
+            ),
+            BoundedPlanStep(
+                id = "analyze",
+                kind = BoundedPlanStepKind.ANALYZE,
+                summary = if (hasWorkspace) {
+                    "Собрать ограниченный контекст через read-only ToolRouter"
+                } else {
+                    "Работать без workspace tools"
+                },
+            ),
+            BoundedPlanStep(
+                id = "tools",
+                kind = BoundedPlanStepKind.TOOL,
+                summary = "Обработать только allowlisted tool calls в пределах бюджета",
+            ),
+            BoundedPlanStep(
+                id = "verify",
+                kind = BoundedPlanStepKind.VERIFY,
+                summary = if (target == ExecutionTarget.REMOTE_ACTIONS) {
+                    "Проверить commit, run и artifact provenance"
+                } else {
+                    "Проверить evidence результата и recovery state"
+                },
+            ),
+            BoundedPlanStep(
+                id = "complete",
+                kind = BoundedPlanStepKind.COMPLETE,
+                summary = "Завершить только при подтверждённом результате",
+            ),
+        )
 
         return BoundedPlan(
             target = target,
