@@ -53,6 +53,14 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.all {
+            it.testLogging {
+                exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+                events("failed", "skipped")
+                showCauses = true
+                showStackTraces = true
+            }
+        }
     }
 }
 
