@@ -111,6 +111,7 @@ import org.json.JSONObject
 import java.io.File
 import java.net.URL
 import java.util.LinkedHashMap
+import java.util.Locale
 import java.util.UUID
 
 private data class PendingPatch(
@@ -1030,26 +1031,45 @@ class AgentCore(context: Context) : AgentBridge {
         externalMutationMutex.lock()
         try {
             check(!closed) { "AgentCore уже закрыт" }
-            val boundRequest = request.copy(
-                sessionId = request.sessionId
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-                    ?: currentSessionId,
-                operationId = request.operationId
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-                    ?: UUID.randomUUID().toString(),
-            )
+            val boundRequest = bindActionsRequest(request)
             val operationId = boundRequest.operationId.orEmpty()
+            val expectedArgumentsSha256 = actionsArgumentsSha256(boundRequest)
             val cached = cachedActionsResult(operationId)
             if (cached != null && cached.sessionId == boundRequest.sessionId) {
-                _actionsState.value = cached
-                append(
-                    AgentEventKind.INFO,
-                    "Повтор Actions operation возвращает ранее подтверждённый результат",
-                    cached.toJson().toString(),
+                val cacheHeadBindingMatches =
+                    (
+                        cached.status == ActionsOperationStatus.UNKNOWN &&
+                            cached.headSha.isNullOrBlank()
+                    ) || cached.headSha?.equals(
+                        boundRequest.expectedCommitSha,
+                        ignoreCase = true,
+                    ) == true
+                val cacheBindingMatches =
+                    cached.argumentsSha256 == expectedArgumentsSha256 &&
+                        cached.repository == boundRequest.repository.trim() &&
+                        cached.workflow == boundRequest.workflow.trim() &&
+                        cached.ref == boundRequest.ref.trim() &&
+                        cacheHeadBindingMatches
+                if (cacheBindingMatches) {
+                    _actionsState.value = cached
+                    append(
+                        AgentEventKind.INFO,
+                        "Повтор Actions operation возвращает ранее подтверждённый результат",
+                        cached.toJson().toString(),
+                    )
+                    return cached
+                }
+                val blocked = actionsOperationIdReuseFailure(
+                    request = boundRequest,
+                    argumentsSha256 = expectedArgumentsSha256,
                 )
-                return cached
+                _actionsState.value = blocked
+                append(
+                    AgentEventKind.ERROR,
+                    blocked.summary.orEmpty(),
+                    blocked.toJson().toString(),
+                )
+                return blocked
             }
             if (
                 _actionsState.value.status == ActionsOperationStatus.UNKNOWN &&
@@ -1090,16 +1110,8 @@ class AgentCore(context: Context) : AgentBridge {
         request: ActionsRunRequest,
     ): ActionsOperationState {
         check(!closed) { "AgentCore уже закрыт" }
-        val boundRequest = request.copy(
-            sessionId = request.sessionId
-                ?.trim()
-                ?.takeIf { it.isNotBlank() }
-                ?: currentSessionId,
-            operationId = request.operationId
-                ?.trim()
-                ?.takeIf { it.isNotBlank() }
-                ?: UUID.randomUUID().toString(),
-        )
+        val boundRequest = bindActionsRequest(request)
+        val argumentsSha256 = actionsArgumentsSha256(boundRequest)
         if (
             _state.value.status == AgentSessionStatus.RUNNING ||
             _state.value.status == AgentSessionStatus.WAITING_APPROVAL
@@ -1152,7 +1164,7 @@ class AgentCore(context: Context) : AgentBridge {
             "Пользователь подтвердил запуск GitHub Actions",
             boundRequest.toAuditJson().toString(),
         )
-        val actionToken = request.token.trim().takeIf { it.isNotBlank() }
+        val actionToken = boundRequest.token.trim().takeIf { it.isNotBlank() }
             ?: readCredential(CredentialKind.GITHUB_TOKEN).orEmpty()
         val ledgerOperationId = boundRequest.operationId.orEmpty()
         val ledgerStarted = beginLedger(
@@ -1161,7 +1173,8 @@ class AgentCore(context: Context) : AgentBridge {
                 operation = "github_actions_dispatch",
                 sessionId = boundRequest.sessionId,
                 workspaceId = workspaceIdForActions(),
-                targetSha = currentRequestSummary?.targetSha,
+                targetSha = boundRequest.expectedCommitSha,
+                argumentsSha256 = argumentsSha256,
                 resolution = LedgerResolution.QUERYABLE,
                 integrityMode = LedgerIntegrityMode.HMAC_SHA256,
                 keyVersion = 1,
@@ -1434,7 +1447,26 @@ class AgentCore(context: Context) : AgentBridge {
         val suppliedSha = request.expectedCommitSha
             ?.trim()
             ?.takeIf { it.isNotBlank() }
-        if (suppliedSha != null && !SHA_PATTERN.matches(suppliedSha)) {
+        val argumentsSha256 = actionsArgumentsSha256(
+            request.copy(expectedCommitSha = suppliedSha),
+        )
+        if (suppliedSha == null) {
+            val rejected = ActionsOperationState(
+                sessionId = sessionId,
+                operationId = operationId,
+                repository = request.repository.trim(),
+                workflow = request.workflow.trim(),
+                ref = request.ref.trim(),
+                status = ActionsOperationStatus.FAILED,
+                summary = "Для Actions нужен ожидаемый исходный commit SHA",
+                errorCode = "ACTIONS_SOURCE_SHA_REQUIRED",
+                argumentsSha256 = argumentsSha256,
+            )
+            _actionsState.value = rejected
+            append(AgentEventKind.ERROR, rejected.summary.orEmpty(), rejected.toJson().toString())
+            return rejected
+        }
+        if (!SHA_PATTERN.matches(suppliedSha)) {
             val rejected = ActionsOperationState(
                 sessionId = sessionId,
                 operationId = operationId,
@@ -1444,6 +1476,7 @@ class AgentCore(context: Context) : AgentBridge {
                 status = ActionsOperationStatus.FAILED,
                 summary = "Ожидаемый commit SHA имеет недопустимый формат",
                 errorCode = "ACTIONS_SOURCE_SHA_INVALID",
+                argumentsSha256 = argumentsSha256,
             )
             _actionsState.value = rejected
             append(AgentEventKind.ERROR, rejected.summary.orEmpty(), rejected.toJson().toString())
@@ -1460,6 +1493,7 @@ class AgentCore(context: Context) : AgentBridge {
                 status = ActionsOperationStatus.FAILED,
                 summary = "Не удалось получить ожидаемый Git HEAD SHA; Actions не запущен",
                 errorCode = "ACTIONS_SOURCE_SHA_REQUIRED",
+                argumentsSha256 = argumentsSha256,
             )
             _actionsState.value = rejected
             append(AgentEventKind.ERROR, rejected.summary.orEmpty(), rejected.toJson().toString())
@@ -1478,12 +1512,13 @@ class AgentCore(context: Context) : AgentBridge {
                 status = ActionsOperationStatus.FAILED,
                 summary = "Git HEAD изменился относительно ожидаемого SHA; сначала выполните re-check",
                 errorCode = "ACTIONS_SOURCE_SHA_MISMATCH",
+                argumentsSha256 = argumentsSha256,
             )
             _actionsState.value = rejected
             append(AgentEventKind.ERROR, rejected.summary.orEmpty(), rejected.toJson().toString())
             return rejected
         }
-        val expectedCommitSha = currentHeadSha
+        val expectedCommitSha = suppliedSha
         val effectiveRequest = request.copy(
             sessionId = sessionId,
             operationId = operationId,
@@ -1497,6 +1532,7 @@ class AgentCore(context: Context) : AgentBridge {
             ref = effectiveRequest.ref.trim(),
             status = ActionsOperationStatus.DISPATCHING,
             summary = "GitHub Actions запускается",
+            argumentsSha256 = argumentsSha256,
         )
         _actionsState.value = initial
         persistAsync()
@@ -1511,11 +1547,13 @@ class AgentCore(context: Context) : AgentBridge {
             _actionsState.value = update.copy(
                 sessionId = sessionId,
                 operationId = operationId,
+                argumentsSha256 = argumentsSha256,
             )
             persistAsync()
         }.copy(
             sessionId = sessionId,
             operationId = operationId,
+            argumentsSha256 = argumentsSha256,
         )
         _actionsState.value = result
         append(
@@ -1923,13 +1961,23 @@ class AgentCore(context: Context) : AgentBridge {
         }
 
         val operationId = UUID.randomUUID().toString()
+        val actionsRequest = ActionsRunRequest(
+            token = readCredential(CredentialKind.GITHUB_TOKEN).orEmpty(),
+            repository = request.repository.orEmpty(),
+            workflow = request.workflow.orEmpty(),
+            ref = request.ref,
+            sessionId = currentSessionId,
+            operationId = operationId,
+            expectedCommitSha = currentRequestSummary?.targetSha,
+        )
         val ledgerStarted = beginLedger(
             LedgerOperationSpec(
                 operationId = operationId,
                 operation = "github_actions_dispatch",
                 sessionId = currentSessionId,
                 workspaceId = request.workspaceId,
-                targetSha = currentRequestSummary?.targetSha,
+                targetSha = actionsRequest.expectedCommitSha,
+                argumentsSha256 = actionsArgumentsSha256(actionsRequest),
                 resolution = LedgerResolution.QUERYABLE,
                 integrityMode = LedgerIntegrityMode.HMAC_SHA256,
                 keyVersion = 1,
@@ -1939,16 +1987,7 @@ class AgentCore(context: Context) : AgentBridge {
             markUnknown("Operation ledger заблокирован; GitHub Actions не запускался")
             return
         }
-        val result = runActionsInternal(
-            ActionsRunRequest(
-                token = readCredential(CredentialKind.GITHUB_TOKEN).orEmpty(),
-                repository = request.repository.orEmpty(),
-                workflow = request.workflow.orEmpty(),
-                ref = request.ref,
-                sessionId = currentSessionId,
-                operationId = operationId,
-            ),
-        )
+        val result = runActionsInternal(actionsRequest)
         val finalResult = if (finishLedger(
                 operationId = operationId,
                 phase = when (result.status) {
@@ -3098,6 +3137,75 @@ class AgentCore(context: Context) : AgentBridge {
                 }
             }
         }
+    }
+
+    private fun bindActionsRequest(request: ActionsRunRequest): ActionsRunRequest {
+        return request.copy(
+            sessionId = request.sessionId
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: currentSessionId,
+            operationId = request.operationId
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: UUID.randomUUID().toString(),
+            expectedCommitSha = request.expectedCommitSha
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: currentRequestSummary?.targetSha
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() },
+        )
+    }
+
+    /**
+     * Binds every dispatch argument except the secret token.
+     * The digest is used for operation-id idempotency and ledger provenance.
+     */
+    private fun actionsArgumentsSha256(request: ActionsRunRequest): String {
+        val inputs = JSONObject().apply {
+            request.inputs.entries
+                .sortedBy { it.key }
+                .forEach { (key, value) ->
+                    put(key, value)
+                }
+        }
+        return CanonicalArgs.sha256(
+            JSONObject()
+                .put("canonical_args_version", CanonicalArgs.VERSION)
+                .put("repository", request.repository.trim())
+                .put("workflow", request.workflow.trim())
+                .put("ref", request.ref.trim())
+                .put(
+                    "expected_commit_sha",
+                    request.expectedCommitSha
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                        ?.lowercase(Locale.ROOT)
+                        ?: JSONObject.NULL,
+                )
+                .put("inputs", inputs)
+                .put("poll_timeout_ms", request.pollTimeoutMs)
+                .put("poll_interval_ms", request.pollIntervalMs)
+                .toString(),
+        )
+    }
+
+    private fun actionsOperationIdReuseFailure(
+        request: ActionsRunRequest,
+        argumentsSha256: String,
+    ): ActionsOperationState {
+        return ActionsOperationState(
+            sessionId = request.sessionId,
+            operationId = request.operationId,
+            repository = request.repository.trim(),
+            workflow = request.workflow.trim(),
+            ref = request.ref.trim(),
+            status = ActionsOperationStatus.FAILED,
+            summary = "Operation id уже связан с другим Actions request; повторный dispatch запрещён",
+            errorCode = "OPERATION_ID_REUSE",
+            argumentsSha256 = argumentsSha256,
+        )
     }
 
     private fun cachedActionsResult(operationId: String): ActionsOperationState? {

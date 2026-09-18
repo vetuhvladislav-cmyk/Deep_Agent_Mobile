@@ -643,6 +643,11 @@ data class ActionsOperationState(
     val summary: String? = null,
     val errorCode: String? = null,
     val updatedAt: Long = System.currentTimeMillis(),
+    /**
+     * Canonical binding of the complete dispatch request, excluding the secret token.
+     * A missing value is intentionally not considered a cache hit for old state records.
+     */
+    val argumentsSha256: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("session_id", AgentRedactor.text(sessionId, 160))
@@ -671,6 +676,7 @@ data class ActionsOperationState(
         .put("redacted_logs", AgentRedactor.text(redactedLogs, MAX_LOG_CHARS))
         .put("summary", AgentRedactor.text(summary, MAX_SUMMARY_CHARS))
         .put("error_code", AgentRedactor.text(errorCode, 96))
+        .put("arguments_sha256", AgentRedactor.text(argumentsSha256, 80))
         .put("updated_at", updatedAt)
 
     companion object {
@@ -786,6 +792,7 @@ data class ActionsOperationState(
                     "updated_at",
                     System.currentTimeMillis(),
                 ),
+                argumentsSha256 = safeSha(value.optString("arguments_sha256")),
             )
         }
 
