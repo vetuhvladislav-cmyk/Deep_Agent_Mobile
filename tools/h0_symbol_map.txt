@@ -1,5 +1,5 @@
 # H0 symbol map
-source_sha=f47a946375d8d59492699c7a23b7cd46896b8f8a
+source_sha=9c85776a2525c28c82fdf92fcff4bb28148074fa
 branch=codex/p1-a-controlled-write-git-pr
 generated_at=2026-09-18
 mode=static source scan; no behavior/runtime validation performed; P1/P2 implementation slice included
@@ -20,9 +20,9 @@ app/src/main/java/dev/deepagent/mobile/agent/artifact/ArtifactManager.kt
   public_methods: save@15
 
 app/src/main/java/dev/deepagent/mobile/agent/core/AgentCore.kt
-  lines: 3629
+  lines: 3634
   classes: PendingPatch@117, AgentCore@136
-  public_methods: submit@240, configureCredentials@277, clearCredentials@294, exportJournal@307, cancel@405, clearEvents@427, importWorkspace@432, prepareImage@451, clearImage@501, selectWorkspace@516, refreshWorkspace@538, inspectGit@605, createGitBranch@613, commitGit@630, pushGit@647, createPullRequest@664, runInteractive@806, sendInteractiveInput@902, cancelInteractive@917, startRuntime@957, stopRuntime@1013, runActions@1031, saveVerifiedArtifact@1239, rollbackLastPatch@1594, close@1747, approvePendingPatch@2416, rejectPendingPatch@2655
+  public_methods: submit@240, configureCredentials@277, clearCredentials@294, exportJournal@307, cancel@405, clearEvents@427, importWorkspace@432, prepareImage@451, clearImage@501, selectWorkspace@516, refreshWorkspace@538, inspectGit@605, createGitBranch@613, commitGit@630, pushGit@647, createPullRequest@664, runInteractive@806, sendInteractiveInput@902, cancelInteractive@917, startRuntime@957, stopRuntime@1013, runActions@1031, saveVerifiedArtifact@1239, rollbackLastPatch@1594, close@1747, approvePendingPatch@2421, rejectPendingPatch@2660
 
 app/src/main/java/dev/deepagent/mobile/agent/core/AgentTransaction.kt
   lines: 28

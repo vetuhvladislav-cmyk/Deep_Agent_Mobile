@@ -27,7 +27,7 @@
 
 ### Текущий implementation-slice (2026-09-18)
 
-- **Входной SHA:** `f47a946375d8d59492699c7a23b7cd46896b8f8a`.
+- **Входной SHA:** `9c85776a2525c28c82fdf92fcff4bb28148074fa`.
 - **Реализованный production-срез:** P0-A/P0-B/P0-C hardening seams, H0–H2 recovery/security controls и кодовый срез P1-A…P2-B на ветке `codex/p1-a-controlled-write-git-pr`; AgentBridge v1 сохранён.
 - **Зафиксированные изменения:** operation ID добавлен в approval binding и typed tool envelope; CanonicalArgs проверяется до tool invocation; UNKNOWN операции сохраняются как структурированный redacted diagnostic record в SessionStore и отображаются в Agent Console; ledger валидирует persisted side-effect profile и fsync-ит усечение trailing corruption; P1/P2 mutations получили operation/source binding, stable UI IDs, runtime manifest gate и отдельный `CLEANUP_UNKNOWN`.
 - **Статус приёмки:** capabilityStatus не повышается без recovery/security tests, Android/runtime acceptance и независимого review. В этом цикле намеренно не запускались компиляция, Gradle/JVM/Android-тесты и CI.
@@ -44,9 +44,9 @@
 ### P1/P2 implementation pass (2026-09-18)
 
 - **База:** `04861a2c4cf306bd04b670ad00796c6a5967b923`.
-- **Текущий кодовый SHA:** `f47a946375d8d59492699c7a23b7cd46896b8f8a`.
+- **Текущий кодовый SHA:** `9c85776a2525c28c82fdf92fcff4bb28148074fa`.
 - **Ветка:** `codex/p1-a-controlled-write-git-pr`; `main` и новые ветки не изменялись.
-- **P1-A:** `externalMutationMutex` охватывает применение patch, rollback, сохранение проверенного artifact и Git/Actions mutation paths; это закрывает гонку между fingerprint/approval re-check и локальной записью.
+- **P1-A:** `externalMutationMutex` охватывает применение patch, rollback, сохранение проверенного artifact и оба Git/Actions mutation paths (явной operation и session-driven remote dispatch); это закрывает гонку между fingerprint/approval re-check и локальной записью.
 - **P1-B:** Actions dispatch требует явный ожидаемый исходный commit SHA; operation binding включает session ID, operation ID, repository, workflow, ref, expected SHA, inputs и polling parameters через CanonicalArgs SHA-256; неполный старый cache state не считается безопасным cache hit.
 - **P1-C:** расширен стабильный UI contract для session status, UNKNOWN ledger, re-check, patch preview/recovery, runtime и interactive cards; labels остаются accessibility semantics, независимыми от локализованного текста.
 - **P2-A:** RuntimeSupervisor и loopback provider дополнительно fail-closed проверяют формат manifest, непустые ограниченные version/ABI и 64-hex checksum перед lifecycle; loopback по-прежнему не является реальным ARM64 DSH bundle.
@@ -59,7 +59,7 @@
 ### H0 — Подтверждение фактической структуры
 
 - **Статус:** capabilityStatus: implemented.
-- **Актуальный source SHA:** `f47a946375d8d59492699c7a23b7cd46896b8f8a`.
+- **Актуальный source SHA:** `9c85776a2525c28c82fdf92fcff4bb28148074fa`.
 - **Результат:** подтверждены реальные файлы, symbol map на текущем source SHA, AgentBridge boundary, persistence boundary, policy boundary и execution boundary; размеры файлов не используются как контракт.
 - **Ограничение:** AgentBridge v1 и существующие публичные операции сохраняются.
 - **Exit criterion:** фактическая структура и контрольный SHA зафиксированы до hardening-изменений.
