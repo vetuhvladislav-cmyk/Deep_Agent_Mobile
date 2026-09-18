@@ -18,7 +18,7 @@ on:
       release_tag:
         description: "Тег релиза (используется при публикации)"
         required: true
-        default: "v0.1.0"
+        default: "v0.1.5"
         type: string
       agent_session_id:
         description: "Correlation ID сессии Agent Core"
@@ -37,8 +37,8 @@ permissions:
 jobs:
   build:
     name: Сборка Deep Agent debug APK
-    timeout-minutes: 20
-    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    runs-on: ubuntu-24.04
     env:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
       PUBLISH_RELEASE: ${{ github.event_name == 'release' || inputs.publish_release }}
@@ -48,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -76,6 +76,31 @@ jobs:
 
       - name: Компиляция instrumentation tests
         run: ./gradlew --no-daemon assembleDebugAndroidTest
+
+      - name: Android UI runtime tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
+          echo "no" | avdmanager create avd \
+            --force \
+            --name deep-agent-api-35 \
+            --package "system-images;android-35;google_apis;x86_64"
+          export ANDROID_AVD_HOME="${RUNNER_TEMP}/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          nohup emulator -avd deep-agent-api-35 \
+            -no-window -no-audio -no-boot-anim -no-snapshot \
+            -gpu swiftshader_indirect \
+            > "${RUNNER_TEMP}/deep-agent-emulator.log" 2>&1 &
+          trap "adb emu kill >/dev/null 2>&1 || true" EXIT
+          adb wait-for-device
+          until adb shell getprop sys.boot_completed | tr -d "\r" | grep -q "^1"; do
+            sleep 5
+          done
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          ./gradlew --no-daemon connectedDebugAndroidTest
 
       - name: Сборка APK
         run: ./gradlew --no-daemon assembleDebug
