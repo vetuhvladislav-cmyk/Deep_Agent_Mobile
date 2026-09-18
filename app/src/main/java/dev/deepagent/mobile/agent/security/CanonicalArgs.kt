@@ -158,7 +158,8 @@ object CanonicalArgs {
                 '"' -> Value.StringValue(parseString())
                 '[' -> parseArray()
                 '{' -> parseObject()
-                '-', in '0'..'9' -> Value.NumberValue(parseNumber())
+                '-' -> Value.NumberValue(parseNumber())
+                in '0'..'9' -> Value.NumberValue(parseNumber())
                 else -> fail("INVALID_VALUE", "Недопустимое JSON-значение"),
             }
         }
