@@ -65,6 +65,7 @@ Provenance связывает APK с исходным `GITHUB_SHA` и имене
 
 ## Фактическая проверка аудита
 
+- [Run #45](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35361986031), commit `5c5e853`: Linux build job зелёная за 1:48; Gradle 8.13 подтвердил `testDebugUnitTest`, `assembleDebugAndroidTest` и `assembleDebug`. UI job не стартовал из-за account billing/spending-limit, artifact upload получил quota warning, release skipped при `publish_release=false`.
 - [Run #44](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35355722283), commit `fae06cc`: build job успешно завершён; UI job дошёл до emulator startup, но текущий стандартный ARM64 `macos-15` runner не может запустить `x86_64` image. Release job был skipped, так как `publish_release=false`.
 - [Run #42](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35355121189) подтвердил, что корректный Intel `macos-15-large` job требует включённого account billing/spending limit.
 - Финальный workflow уже указывает совместимую пару `macos-15-large` + `x86_64`; после разрешения runner billing нужно повторить `workflow_dispatch` без публикации, затем отдельным запуском включить `publish_release`.
