@@ -30,6 +30,9 @@ class LedgerDiagnosticsTest {
             ledger.execute(spec) {}
         }
         val failure = outcome.exceptionOrNull()
+        println("DIAG_EXECUTE_CLASS=" + (failure?.let { it::class.java.name } ?: "none"))
+        println("DIAG_EXECUTE_MESSAGE=" + (failure?.message ?: "none"))
+        println("DIAG_SPEC_OK=" + runCatching { spec.operationId }.getOrNull())
         if (failure != null) {
             val trace = failure.stackTrace.take(8).joinToString(" <- ") {
                 it.className.substringAfterLast('.') + "." + it.methodName + ":" + it.lineNumber
