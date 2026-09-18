@@ -49,6 +49,11 @@
 
 Существующий [Release v0.1.5](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/tag/v0.1.5) собран из раннего commit `5c14bbb`; новый production release в ходе аудита не публиковался.
 
+### Сверка APK с историческим рабочим baseline
+
+- [Actions run #32](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35320175455), commit `5c14bbb`, является подтверждённым прошлым APK baseline: Gradle 8.13, JDK 17, SDK platform 35/build-tools 35.0.0 и последовательность `testDebugUnitTest → assembleDebugAndroidTest → assembleDebug`.
+- Текущий `build` job сохраняет тот же порядок; run #44 подтвердил успешные vectors, unit tests, instrumentation compilation и `assembleDebug`. Изменения относятся к фиксированному runner/action versions, checksum/provenance и отдельному UI gate.
+- Связанный [Release v0.1.5](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/tag/v0.1.5) содержит baseline APK `deep-agent-mobile-v0.1.5-test.apk` с SHA-256 `6a71892cb1faac2ac60728644ad56a5c8e6809a9e827dcd01cd26631c48ca3c9`; новый release в ходе аудита не публиковался.
 
 ### Ранее зафиксированный implementation-slice (historical snapshot, 2026-09-18)
 
