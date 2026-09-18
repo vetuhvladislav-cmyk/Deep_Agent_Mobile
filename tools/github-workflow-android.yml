@@ -1,4 +1,13 @@
+name: Deep Agent Mobile
+run-name: "Deep Agent Mobile / ${{ inputs.agent_session_id || 'manual' }} / ${{ inputs.operation_id || 'unknown' }}"
+
+concurrency:
+  group: deep-agent-mobile-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       publish_release:
@@ -9,10 +18,15 @@ on:
       release_tag:
         description: "Тег релиза (используется при публикации)"
         required: true
-        default: "v0.1.0"
+        default: "v0.1.5"
         type: string
       agent_session_id:
         description: "Correlation ID сессии Agent Core"
+        required: false
+        default: ""
+        type: string
+      operation_id:
+        description: "Correlation ID операции Agent Core"
         required: false
         default: ""
         type: string
@@ -23,12 +37,18 @@ permissions:
 jobs:
   build:
     name: Сборка Deep Agent debug APK
-    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+      PUBLISH_RELEASE: ${{ github.event_name == 'release' || inputs.publish_release }}
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
       - name: JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -36,16 +56,51 @@ jobs:
       - name: Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
+          packages: platform-tools
+
+      - name: Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Кэш Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: CanonicalArgs reference vectors
+        run: python3 tools/canonical_args_reference.py app/src/test/resources/canonical_args_v1_vectors.json
+
       - name: Модульные тесты
         run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Компиляция instrumentation tests
+        run: ./gradlew --no-daemon assembleDebugAndroidTest
+
+      - name: Android UI runtime tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
+          echo "no" | avdmanager create avd \
+            --force \
+            --name deep-agent-api-35 \
+            --package "system-images;android-35;google_apis;x86_64"
+          export ANDROID_AVD_HOME="${RUNNER_TEMP}/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          nohup emulator -avd deep-agent-api-35 \
+            -no-window -no-audio -no-boot-anim -no-snapshot \
+            -gpu swiftshader_indirect \
+            > "${RUNNER_TEMP}/deep-agent-emulator.log" 2>&1 &
+          trap "adb emu kill >/dev/null 2>&1 || true" EXIT
+          adb wait-for-device
+          until adb shell getprop sys.boot_completed | tr -d "\r" | grep -q "^1"; do
+            sleep 5
+          done
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          ./gradlew --no-daemon connectedDebugAndroidTest
 
       - name: Сборка APK
         run: ./gradlew --no-daemon assembleDebug
@@ -61,7 +116,7 @@ jobs:
             "$GITHUB_SHA" "$(basename "$apk")" \
             > app/build/outputs/apk/debug/deep-agent-provenance.json
 
-      - name: Артефакт
+      - name: Загрузить проверяемый Actions artifact
         uses: actions/upload-artifact@v4
         with:
           name: deep-agent-mobile-debug-apk
@@ -70,49 +125,52 @@ jobs:
             app/build/outputs/apk/debug/*.apk.sha256
             app/build/outputs/apk/debug/deep-agent-provenance.json
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
+        continue-on-error: true
 
-  release:
-    permissions:
-      contents: write
-    name: Публикация Deep Agent APK
-    needs: build
-    if: inputs.publish_release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
-
-      - name: Кэш Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Сборка APK
-        run: ./gradlew --no-daemon assembleDebug
-
-      - name: Переименовать APK
+      - name: Проверить параметры релиза
+        if: ${{ env.PUBLISH_RELEASE == 'true' }}
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          AGENT_SESSION_ID: ${{ inputs.agent_session_id }}
         run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9.-]+)?$ ]] || {
+            echo "Недопустимый release tag" >&2
+            exit 1
+          }
+          if [[ -n "$AGENT_SESSION_ID" ]]; then
+            [[ "$AGENT_SESSION_ID" =~ ^[A-Za-z0-9._:-]{1,160}$ ]] || {
+              echo "Недопустимый agent session id" >&2
+              exit 1
+            }
+          fi
+
+      - name: Подготовить release files
+        if: ${{ env.PUBLISH_RELEASE == 'true' }}
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          apk="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$apk"
+          test -f "$apk.sha256"
+          test -f app/build/outputs/apk/debug/deep-agent-provenance.json
           mkdir -p dist
-          cp app/build/outputs/apk/debug/*.apk "dist/deep-agent-mobile-${{ inputs.release_tag }}-test.apk"
+          cp "$apk" "dist/deep-agent-mobile-${RELEASE_TAG}-test.apk"
+          cp "$apk.sha256" "dist/deep-agent-mobile-${RELEASE_TAG}-test.apk.sha256"
+          cp app/build/outputs/apk/debug/deep-agent-provenance.json dist/deep-agent-provenance.json
 
       - name: Публикация релиза
+        if: ${{ env.PUBLISH_RELEASE == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag }}
-          files: dist/*.apk
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: dist/*
           generate_release_notes: true
           body: |
-            Установочный APK Deep Agent Mobile ${{ inputs.release_tag }}-test.
+            Публикуется APK и sidecar provenance из того же build job.
+            Модульные тесты и assembleDebug завершены до публикации.
             Сборка отладочная и предназначена для тестирования на Android.
