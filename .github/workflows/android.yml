@@ -107,7 +107,7 @@ jobs:
   ui-runtime:
     name: Android UI runtime acceptance
     timeout-minutes: 30
-    runs-on: macos-15-large
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
     steps:
@@ -139,7 +139,7 @@ jobs:
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "emulator" "system-images;android-35;google_apis;x86_64"
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "emulator" "system-images;android-35;google_apis;arm64-v8a"
 
       - name: Компиляция instrumentation tests
         run: ./gradlew --no-daemon assembleDebugAndroidTest
@@ -154,7 +154,7 @@ jobs:
           printf "no\n" | avdmanager create avd \
             --force \
             --name deep-agent-api-35 \
-            --package "system-images;android-35;google_apis;x86_64" \
+            --package "system-images;android-35;google_apis;arm64-v8a" \
             --device "pixel_2"
           android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           test -n "$android_sdk_root"
@@ -288,7 +288,7 @@ jobs:
           files: dist/*
           generate_release_notes: true
           body: |
-            APK подготовлен после успешных Linux build и macOS x86_64 UI runtime gates.
+            APK подготовлен после успешных Linux build и Linux ARM64 UI runtime gates.
             Release job собирает APK из того же commit после прохождения обоих gates.
             Модульные тесты, instrumentation tests и Android UI runtime acceptance завершены до публикации.
             Сборка отладочная и предназначена для тестирования на Android.
