@@ -44,7 +44,7 @@
 ### P1/P2 implementation pass (2026-09-18)
 
 - **База:** `04861a2c4cf306bd04b670ad00796c6a5967b923`.
-- **Текущий кодовый SHA:** `9c85776a2525c28c82fdf92fcff4bb28148074fa`.
+- **Текущий кодовый SHA:** `0576834e2acf325fc5be8e1136d84ae7dcb55001`.
 - **Ветка:** `codex/p1-a-controlled-write-git-pr`; `main` и новые ветки не изменялись.
 - **P1-A:** `externalMutationMutex` охватывает применение patch, rollback, сохранение проверенного artifact и оба Git/Actions mutation paths (явной operation и session-driven remote dispatch); это закрывает гонку между fingerprint/approval re-check и локальной записью.
 - **P1-B:** Actions dispatch требует явный ожидаемый исходный commit SHA; operation binding включает session ID, operation ID, repository, workflow, ref, expected SHA, inputs и polling parameters через CanonicalArgs SHA-256; неполный старый cache state не считается безопасным cache hit.
@@ -54,12 +54,22 @@
 - **Validation:** выполнен только статический audit исходников и документации. Компиляция, Gradle/JVM/Android-тесты, CI, device/runtime execution и screenshot fixtures в этом цикле не запускались.
 - **Acceptance boundary:** P1-A/P1-B/P1-C/P2-A/P2-B не переводятся в `available` до соответствующих per-stage behavior/device checks; P2-A блокируется DP-02, P2-B — реальным PTY/process-tree backend.
 
+### UI presentation pass — Workspace Control Deck (2026-09-18)
+
+- **Визуальный target:** выбран мобильный вариант Workspace Control Deck; он используется как reference для Compose-слоя, без добавления декоративных или несуществующих capability.
+- **Текущий source SHA:** `0576834e2acf325fc5be8e1136d84ae7dcb55001`.
+- **Реализовано:** AgentConsole получил контекстный верхний блок workspace / permission / session, единый task composer, визуальный маршрут `preview → approval → write/checkpoint → recovery`, явный UNKNOWN/re-check и сворачиваемую группу P1/P2 инструментов.
+- **Функциональная граница:** presentation-only pass; AgentBridge v1, operation semantics, permission gates, workspace provenance, patch approval/rollback, Actions, runtime, interactive cleanup и Git/PR callbacks не заменялись и не обходятся.
+- **UI contract:** сохранены все 36 стабильных test IDs/accessibility labels; действия остаются привязаны к существующим `AgentUiContract` и `AgentBridge` вызовам.
+- **Validation:** выполнена статическая проверка исходника и связей UI; компиляция, Gradle/JVM/Android-тесты, CI, device/runtime execution и screenshot fixtures не запускались.
+- **Acceptance boundary:** визуальный слой не переводит P1/P2 или D1–D3 в `available`; runtime/device/recovery/security acceptance и независимый review SHA остаются открытыми.
+
 ## 1A. MVP hardening gate
 
 ### H0 — Подтверждение фактической структуры
 
 - **Статус:** capabilityStatus: implemented.
-- **Актуальный source SHA:** `9c85776a2525c28c82fdf92fcff4bb28148074fa`.
+- **Актуальный source SHA:** `0576834e2acf325fc5be8e1136d84ae7dcb55001`.
 - **Результат:** подтверждены реальные файлы, symbol map на текущем source SHA, AgentBridge boundary, persistence boundary, policy boundary и execution boundary; размеры файлов не используются как контракт.
 - **Ограничение:** AgentBridge v1 и существующие публичные операции сохраняются.
 - **Exit criterion:** фактическая структура и контрольный SHA зафиксированы до hardening-изменений.

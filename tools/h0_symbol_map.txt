@@ -1,5 +1,5 @@
 # H0 symbol map
-source_sha=9c85776a2525c28c82fdf92fcff4bb28148074fa
+source_sha=0576834e2acf325fc5be8e1136d84ae7dcb55001
 branch=codex/p1-a-controlled-write-git-pr
 generated_at=2026-09-18
 mode=static source scan; no behavior/runtime validation performed; P1/P2 implementation slice included
@@ -160,7 +160,7 @@ app/src/main/java/dev/deepagent/mobile/agent/tools/ToolVerifier.kt
   public_methods: authorize@10
 
 app/src/main/java/dev/deepagent/mobile/agent/ui/AgentConsoleScreen.kt
-  lines: 2190
+  lines: 2676
   classes: (none)
   public_methods: AgentConsoleScreen@109, currentPreset@178, applyPreset@189, persistReadPermission@214
 
