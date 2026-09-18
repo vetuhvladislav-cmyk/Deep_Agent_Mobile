@@ -33,12 +33,20 @@
 - **Статус приёмки:** capabilityStatus не повышается без recovery/security tests, Android/runtime acceptance и независимого review. В этом цикле намеренно не запускались компиляция, Gradle/JVM/Android-тесты и CI.
 - **Граница:** P1/P2 и любые новые capability не начинались.
 
+### Refactor pass (2026-09-18)
+
+- **База:** `bc8f1fd5a264e668887bab8d48e80022bd81d09e`.
+- **Кодовый SHA:** `f0eed662a69697e919a50a8a0ca15d60eeef187a`.
+- **Исправлено:** runtime snapshot ledger теперь пересчитывает UNKNOWN/recovery metadata после каждой append; неподтверждённый terminal ledger state переводит результат side effect в UNKNOWN для Actions, patch и Git; пустой CanonicalArgs input отклоняется до dispatch.
+- **Validation:** выполнена только статическая проверка diff и symbol map; компиляция, Gradle/JVM/Android-тесты и CI не запускались.
+- **Граница:** P1/P2 не начинались.
+
 ## 1A. MVP hardening gate
 
 ### H0 — Подтверждение фактической структуры
 
 - **Статус:** capabilityStatus: implemented.
-- **Входной SHA:** `3ec72c607b70953aa78b893c56c1c7773c86e291`.
+- **Актуальный source SHA:** `f0eed662a69697e919a50a8a0ca15d60eeef187a`.
 - **Результат:** подтверждены реальные файлы, symbol map на текущем source SHA, AgentBridge boundary, persistence boundary, policy boundary и execution boundary; размеры файлов не используются как контракт.
 - **Ограничение:** AgentBridge v1 и существующие публичные операции сохраняются.
 - **Exit criterion:** фактическая структура и контрольный SHA зафиксированы до hardening-изменений.
@@ -56,6 +64,7 @@
 - Ledger выполняет `PREPARED → STARTED → effect → terminal` с полной durability для side effects.
 - Реализованы framing, length, CRC32C/HMAC profile, sequence, boot ID, operation ID, corruption handling и downgrade guard.
 - Старые незавершённые операции переводятся в UNKNOWN; автоматический replay запрещён, а явный retry тем же operation ID разрешён только для IDEMPOTENT после re-check.
+- Runtime snapshot ledger пересчитывает UNKNOWN/recovery projection после каждой append; если terminal запись не подтверждена, вызывающий слой публикует UNKNOWN и блокирует автоматическое продолжение.
 - **Exit criterion:** torn trailing frame обрезается, middle corruption блокирует continuation, terminal corruption даёт UNKNOWN, resolution policies различаются, side effect не повторяется.
 
 ### H2 — Threat model, capabilities и prompt-injection defense

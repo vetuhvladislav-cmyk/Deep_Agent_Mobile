@@ -1,5 +1,5 @@
 # H0 symbol map
-source_sha=3ec72c607b70953aa78b893c56c1c7773c86e291
+source_sha=f0eed662a69697e919a50a8a0ca15d60eeef187a
 branch=codex/p1-a-controlled-write-git-pr
 generated_at=2026-09-18
 mode=static source scan; no behavior/runtime validation performed
@@ -20,9 +20,9 @@ app/src/main/java/dev/deepagent/mobile/agent/artifact/ArtifactManager.kt
   public_methods: save@15
 
 app/src/main/java/dev/deepagent/mobile/agent/core/AgentCore.kt
-  lines: 3412
+  lines: 3504
   classes: PendingPatch@116, AgentCore@135
-  public_methods: submit@239, configureCredentials@276, clearCredentials@293, exportJournal@306, cancel@404, clearEvents@426, importWorkspace@431, prepareImage@450, clearImage@500, selectWorkspace@515, refreshWorkspace@537, inspectGit@604, createGitBranch@612, commitGit@629, pushGit@646, createPullRequest@663, runInteractive@805, sendInteractiveInput@898, cancelInteractive@913, startRuntime@953, stopRuntime@1009, runActions@1027, saveVerifiedArtifact@1212, rollbackLastPatch@1537, close@1686, approvePendingPatch@2340, rejectPendingPatch@2538
+  public_methods: submit@239, configureCredentials@276, clearCredentials@293, exportJournal@306, cancel@404, clearEvents@426, importWorkspace@431, prepareImage@450, clearImage@500, selectWorkspace@515, refreshWorkspace@537, inspectGit@604, createGitBranch@612, commitGit@629, pushGit@646, createPullRequest@663, runInteractive@805, sendInteractiveInput@898, cancelInteractive@913, startRuntime@953, stopRuntime@1009, runActions@1027, saveVerifiedArtifact@1223, rollbackLastPatch@1548, close@1697, approvePendingPatch@2365, rejectPendingPatch@2599
 
 app/src/main/java/dev/deepagent/mobile/agent/core/AgentTransaction.kt
   lines: 28
@@ -55,9 +55,9 @@ app/src/main/java/dev/deepagent/mobile/agent/image/ImageAnalysisPipeline.kt
   public_methods: toState@31, prepare@67, toDeepSeekImage@144, clear@173
 
 app/src/main/java/dev/deepagent/mobile/agent/ledger/OperationLedger.kt
-  lines: 850
-  classes: LedgerDurability@26, LedgerResolution@31, LedgerPhase@37, LedgerIntegrityMode@46, LedgerHealth@51, LedgerRecoveryAction@58, LedgerOperationSpec@64, LedgerRecord@96, LedgerRecoverySnapshot@215, LedgerBlockedException@248, LedgerReplayBlockedException@250, LedgerDowngradeException@252, IntegrityKeyProvider@256, StaticHmacKeyProvider@260, AndroidKeystoreHmacKeyProvider@266, OperationLedger@298, FrameRead@700, ReadError@707, IntegrityKeyUnavailableException@838
-  public_methods: toJson@116, fromJson@140, toJson@225, key@257, key@263, key@269, snapshot@322, record@325, prepare@328, start@360, begin@378, retryUnknown@388, terminal@420, recover@472
+  lines: 868
+  classes: LedgerDurability@26, LedgerResolution@31, LedgerPhase@37, LedgerIntegrityMode@46, LedgerHealth@51, LedgerRecoveryAction@58, LedgerOperationSpec@64, LedgerRecord@96, LedgerRecoverySnapshot@215, LedgerBlockedException@248, LedgerReplayBlockedException@250, LedgerDowngradeException@252, IntegrityKeyProvider@256, StaticHmacKeyProvider@260, AndroidKeystoreHmacKeyProvider@266, OperationLedger@298, RecoveryMetadata@682, FrameRead@718, ReadError@725, IntegrityKeyUnavailableException@856
+  public_methods: toJson@116, fromJson@140, toJson@225, key@257, key@263, key@269, snapshot@322, record@325, prepare@328, start@360, begin@378, retryUnknown@388, terminal@422, recover@474
 
 app/src/main/java/dev/deepagent/mobile/agent/model/AgentModels.kt
   lines: 1038

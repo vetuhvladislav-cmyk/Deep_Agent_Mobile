@@ -277,7 +277,7 @@ Durable event journal:
 
 ### 5.1 Формат durable journal и recovery
 
-Текущая реализация `SessionStore` использует versioned bounded JSON snapshot v6 на сессию: массив событий, Actions state и последний Git/PR result сохраняются в `session-<id>.json`, а указатель `latest` обновляется атомарно. Это устойчивый journal-подобный формат для текущего APK, но не append-only JSONL; переход к JSONL потребует отдельной миграции и проверки recovery. События имеют `schemaVersion=1` и bounded redacted `payload`; прежние записи без версии читаются совместимо как версия 1. Сохранённый success/UNKNOWN outcome используется только для той же session/operation; незавершённая операция после process death переводится в UNKNOWN и не replay-ится.
+Текущая реализация `SessionStore` использует versioned bounded JSON snapshot v7 на сессию: массив событий, Actions state и последний Git/PR result сохраняются в `session-<id>.json`, а указатель `latest` обновляется атомарно. Это устойчивый journal-подобный формат для текущего APK, но не append-only JSONL; переход к JSONL потребует отдельной миграции и проверки recovery. События имеют `schemaVersion=1` и bounded redacted `payload`; прежние записи без версии читаются совместимо как версия 1. Сохранённый success/UNKNOWN outcome используется только для той же session/operation; незавершённая операция после process death переводится в UNKNOWN и не replay-ится.
 
 Запись выполняется через временный файл с flush/sync и atomic replacement с безопасным fallback. Размер одной записи, число session-файлов, общий retention и число событий ограничены. Восстановление нормализует повреждённые идентификаторы, не запускает повторно write/external actions и публикует неполное состояние вместо молчаливого replay.
 
@@ -369,6 +369,7 @@ Agent Console использует собственную визуальную �
 ### ADR-001 — Durable Operation Ledger
 
 - **Дата:** 2026-09-17.
+- **Последнее уточнение:** 2026-09-18.
 - **Статус:** accepted.
 - Side-effect операция проходит `PREPARED + fsync → STARTED + fsync → effect → terminal + fsync`.
 - Ledger использует framing, длину payload, checksum, sequence, boot ID, operation ID, integrity mode и key version.
@@ -377,6 +378,7 @@ Agent Console использует собственную визуальную �
 - `FULL` и `BATCHED` durability не смешиваются с resolution. `BATCHED` запрещён для side-effect операций.
 - `QUERYABLE`, `IDEMPOTENT` и `BLIND` имеют разные recovery actions; только `IDEMPOTENT` допускает явный retry с тем же operation ID после re-check.
 - Старые `PREPARED/STARTED/RUNNING/PENDING` не продолжаются автоматически и переводятся в `UNKNOWN`.
+- Runtime projection пересчитывает UNKNOWN/recovery metadata после каждой append; неподтверждённая terminal запись не может быть опубликована как успешный side effect.
 - Повреждение trailing frame обрезается. Повреждение середины ledger блокирует автоматическое продолжение.
 - Downgrade формата ledger запрещён; перенос выполняется только через export/import.
 
