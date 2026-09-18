@@ -95,7 +95,12 @@ jobs:
             -gpu swiftshader_indirect \
             > "${RUNNER_TEMP}/deep-agent-emulator.log" 2>&1 &
           trap "adb emu kill >/dev/null 2>&1 || true" EXIT
-          timeout 180s adb wait-for-device
+          if ! timeout 300s adb wait-for-device; then
+            echo "Emulator did not register with ADB within 300 seconds" >&2
+            cat "${RUNNER_TEMP}/deep-agent-emulator.log" || true
+            adb devices || true
+            exit 1
+          fi
           boot_completed=false
           for _ in $(seq 1 60); do
             if adb shell getprop sys.boot_completed | tr -d "\r" | grep -q "^1"; then
