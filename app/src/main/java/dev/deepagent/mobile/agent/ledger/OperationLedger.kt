@@ -408,10 +408,12 @@ class OperationLedger(
             "Binding explicit retry не совпадает с UNKNOWN записью"
         }
         records.remove(spec.operationId)
+        refreshSnapshotRecords()
         return try {
             begin(spec)
         } catch (error: Throwable) {
             records[spec.operationId] = previous
+            refreshSnapshotRecords()
             throw error
         }
     }
@@ -634,10 +636,7 @@ class OperationLedger(
         }
         records[normalized.operationId] = normalized
         nextSequence = normalized.sequence + 1L
-        snapshot = snapshot.copy(
-            records = records.values.toList(),
-            bootId = bootId,
-        )
+        refreshSnapshotRecords()
         return normalized
     }
 
@@ -647,24 +646,43 @@ class OperationLedger(
         truncatedTrailing: Boolean,
         blocked: Boolean,
     ): LedgerRecoverySnapshot {
-        val unknown = records.values
-            .filter { it.phase == LedgerPhase.UNKNOWN }
-            .map { it.operationId }
-            .distinct()
-        val actions = records.values
-            .filter { it.phase == LedgerPhase.UNKNOWN }
-            .associate { it.operationId to recoveryAction(it.resolution) }
+        val metadata = recoveryMetadata()
         return LedgerRecoverySnapshot(
             health = health,
             bootId = bootId,
-            unknownOperationIds = unknown,
-            recoveryActions = actions,
+            unknownOperationIds = metadata.unknownOperationIds,
+            recoveryActions = metadata.recoveryActions,
             diagnostics = diagnostics.distinct(),
             truncatedTrailingBytes = truncatedTrailing,
             blocked = blocked,
             records = records.values.toList(),
         )
     }
+
+    private fun refreshSnapshotRecords() {
+        val metadata = recoveryMetadata()
+        snapshot = snapshot.copy(
+            bootId = bootId,
+            unknownOperationIds = metadata.unknownOperationIds,
+            recoveryActions = metadata.recoveryActions,
+            records = records.values.toList(),
+        )
+    }
+
+    private fun recoveryMetadata(): RecoveryMetadata {
+        val unknown = records.values.filter { it.phase == LedgerPhase.UNKNOWN }
+        return RecoveryMetadata(
+            unknownOperationIds = unknown.map { it.operationId }.distinct(),
+            recoveryActions = unknown.associate {
+                it.operationId to recoveryAction(it.resolution)
+            },
+        )
+    }
+
+    private data class RecoveryMetadata(
+        val unknownOperationIds: List<String>,
+        val recoveryActions: Map<String, LedgerRecoveryAction>,
+    )
 
     private fun recoveryAction(resolution: LedgerResolution): LedgerRecoveryAction {
         return when (resolution) {

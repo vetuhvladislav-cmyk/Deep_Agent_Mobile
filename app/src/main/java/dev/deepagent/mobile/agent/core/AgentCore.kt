@@ -1187,26 +1187,37 @@ class AgentCore(context: Context) : AgentBridge {
                 token = actionToken,
             ),
         )
-        finishLedger(
-            operationId = ledgerOperationId,
-            phase = when (result.status) {
-                ActionsOperationStatus.SUCCEEDED -> LedgerPhase.SUCCEEDED
-                ActionsOperationStatus.FAILED -> LedgerPhase.FAILED
-                else -> LedgerPhase.UNKNOWN
-            },
-            detail = result.summary,
-        )
-        when (result.status) {
+        val finalResult = if (finishLedger(
+                operationId = ledgerOperationId,
+                phase = when (result.status) {
+                    ActionsOperationStatus.SUCCEEDED -> LedgerPhase.SUCCEEDED
+                    ActionsOperationStatus.FAILED -> LedgerPhase.FAILED
+                    else -> LedgerPhase.UNKNOWN
+                },
+                detail = result.summary,
+            )
+        ) {
+            result
+        } else {
+            result.copy(
+                status = ActionsOperationStatus.UNKNOWN,
+                summary = terminalLedgerUnconfirmedSummary("Actions", result.summary),
+                errorCode = "LEDGER_TERMINAL_UNCONFIRMED",
+                updatedAt = System.currentTimeMillis(),
+            )
+        }
+        _actionsState.value = finalResult
+        when (finalResult.status) {
             ActionsOperationStatus.UNKNOWN -> markUnknown(
-                (result.summary ?: "Actions завершился без подтверждённого результата") +
+                (finalResult.summary ?: "Actions завершился без подтверждённого результата") +
                     "; повтор запрещён до re-check",
             )
             ActionsOperationStatus.FAILED -> fail(
-                result.summary ?: "Actions завершился с ошибкой",
+                finalResult.summary ?: "Actions завершился с ошибкой",
             )
             else -> Unit
         }
-        return result
+        return finalResult
     }
 
     override suspend fun saveVerifiedArtifact(
@@ -1929,22 +1940,36 @@ class AgentCore(context: Context) : AgentBridge {
                 operationId = operationId,
             ),
         )
-        finishLedger(
-            operationId = operationId,
-            phase = when (result.status) {
-                ActionsOperationStatus.SUCCEEDED -> LedgerPhase.SUCCEEDED
-                ActionsOperationStatus.FAILED -> LedgerPhase.FAILED
-                else -> LedgerPhase.UNKNOWN
-            },
-            detail = result.summary,
-        )
-        when (result.status) {
+        val finalResult = if (finishLedger(
+                operationId = operationId,
+                phase = when (result.status) {
+                    ActionsOperationStatus.SUCCEEDED -> LedgerPhase.SUCCEEDED
+                    ActionsOperationStatus.FAILED -> LedgerPhase.FAILED
+                    else -> LedgerPhase.UNKNOWN
+                },
+                detail = result.summary,
+            )
+        ) {
+            result
+        } else {
+            result.copy(
+                status = ActionsOperationStatus.UNKNOWN,
+                summary = terminalLedgerUnconfirmedSummary(
+                    "GitHub Actions",
+                    result.summary,
+                ),
+                errorCode = "LEDGER_TERMINAL_UNCONFIRMED",
+                updatedAt = System.currentTimeMillis(),
+            )
+        }
+        _actionsState.value = finalResult
+        when (finalResult.status) {
             ActionsOperationStatus.SUCCEEDED -> Unit
             ActionsOperationStatus.FAILED -> fail(
-                result.summary ?: "GitHub Actions завершился с ошибкой",
+                finalResult.summary ?: "GitHub Actions завершился с ошибкой",
             )
             ActionsOperationStatus.UNKNOWN -> markUnknown(
-                (result.summary ?: "GitHub Actions завершился без подтверждения") +
+                (finalResult.summary ?: "GitHub Actions завершился без подтверждения") +
                     "; повтор запрещён до re-check",
             )
             else -> markUnknown(
@@ -2474,33 +2499,69 @@ class AgentCore(context: Context) : AgentBridge {
                 )
             }
             if (!result.ok) {
-                finishLedger(
+                val terminalConfirmed = finishLedger(
                     operationId = ledgerOperationId,
                     phase = LedgerPhase.UNKNOWN,
                     detail = result.summary,
                 )
+                val recoveryResult = if (terminalConfirmed) {
+                    result
+                } else {
+                    result.copy(
+                        summary = terminalLedgerUnconfirmedSummary(
+                            "Patch",
+                            result.summary,
+                        ),
+                        errorCode = "LEDGER_TERMINAL_UNCONFIRMED",
+                    )
+                }
                 updatePatchRecovery(
                     pending = pending,
-                    result = result,
+                    result = recoveryResult,
                     status = PatchRecoveryStatus.UNKNOWN,
                 )
                 clearPendingPatch()
                 completeInvocation(
                     invocationId = pending.invocationId,
                     state = "UNKNOWN",
-                    summary = result.summary,
+                    summary = recoveryResult.summary,
                 )
                 markUnknown(
-                    result.summary + "; выполните новый preview перед продолжением",
+                    recoveryResult.summary + "; выполните новый preview перед продолжением",
                 )
                 return@launch
             }
 
-            finishLedger(
+            val terminalConfirmed = finishLedger(
                 operationId = ledgerOperationId,
                 phase = LedgerPhase.SUCCEEDED,
                 detail = "Patch applied",
             )
+            if (!terminalConfirmed) {
+                val unknownResult = result.copy(
+                    ok = false,
+                    summary = terminalLedgerUnconfirmedSummary(
+                        "Patch",
+                        result.summary,
+                    ),
+                    errorCode = "LEDGER_TERMINAL_UNCONFIRMED",
+                )
+                updatePatchRecovery(
+                    pending = pending,
+                    result = unknownResult,
+                    status = PatchRecoveryStatus.UNKNOWN,
+                )
+                clearPendingPatch()
+                completeInvocation(
+                    invocationId = pending.invocationId,
+                    state = "UNKNOWN",
+                    summary = unknownResult.summary,
+                )
+                markUnknown(
+                    unknownResult.summary + "; выполните новый preview перед продолжением",
+                )
+                return@launch
+            }
             completeInvocation(
                 invocationId = pending.invocationId,
                 state = "SUCCEEDED",
@@ -2927,28 +2988,40 @@ class AgentCore(context: Context) : AgentBridge {
                 sessionId = result.sessionId ?: currentSessionId,
                 operationId = result.operationId ?: operationId,
             )
-            finishLedger(
-                operationId = operationId,
-                phase = when (boundResult.status) {
-                    GitOperationStatus.SUCCEEDED -> LedgerPhase.SUCCEEDED
-                    GitOperationStatus.FAILED -> LedgerPhase.FAILED
-                    else -> LedgerPhase.UNKNOWN
-                },
-                detail = boundResult.summary,
-            )
-            if (
-                boundResult.status == GitOperationStatus.SUCCEEDED ||
-                boundResult.status == GitOperationStatus.UNKNOWN
+            val finalResult = if (finishLedger(
+                    operationId = operationId,
+                    phase = when (boundResult.status) {
+                        GitOperationStatus.SUCCEEDED -> LedgerPhase.SUCCEEDED
+                        GitOperationStatus.FAILED -> LedgerPhase.FAILED
+                        else -> LedgerPhase.UNKNOWN
+                    },
+                    detail = boundResult.summary,
+                )
             ) {
-                cacheGitResult(boundResult)
-            }
-            publishGitResult(boundResult)
-            if (boundResult.status == GitOperationStatus.UNKNOWN) {
-                markUnknown(
-                    boundResult.summary + "; повтор запрещён до re-check",
+                boundResult
+            } else {
+                boundResult.copy(
+                    status = GitOperationStatus.UNKNOWN,
+                    summary = terminalLedgerUnconfirmedSummary(
+                        "Git-операция",
+                        boundResult.summary,
+                    ),
+                    errorCode = "LEDGER_TERMINAL_UNCONFIRMED",
                 )
             }
-            return boundResult
+            if (
+                finalResult.status == GitOperationStatus.SUCCEEDED ||
+                finalResult.status == GitOperationStatus.UNKNOWN
+            ) {
+                cacheGitResult(finalResult)
+            }
+            publishGitResult(finalResult)
+            if (finalResult.status == GitOperationStatus.UNKNOWN) {
+                markUnknown(
+                    finalResult.summary + "; повтор запрещён до re-check",
+                )
+            }
+            return finalResult
         } finally {
             externalMutationMutex.unlock()
         }
@@ -3179,10 +3252,11 @@ class AgentCore(context: Context) : AgentBridge {
         operationId: String,
         phase: LedgerPhase,
         detail: String?,
-    ) {
-        runCatching {
+    ): Boolean {
+        val confirmed = runCatching {
             agentTransaction.finish(operationId, phase, detail)
-        }.onFailure { error ->
+            true
+        }.getOrElse { error ->
             append(
                 AgentEventKind.ERROR,
                 "Terminal ledger state не подтверждён",
@@ -3191,8 +3265,26 @@ class AgentCore(context: Context) : AgentBridge {
                     MAX_ERROR_CHARS,
                 ),
             )
+            false
         }
         applyLedgerState()
+        return confirmed
+    }
+
+    private fun terminalLedgerUnconfirmedSummary(
+        operation: String,
+        detail: String?,
+    ): String {
+        val suffix = detail
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { "; исходный результат=" + it }
+            .orEmpty()
+        return AgentRedactor.text(
+            operation + " завершена, но terminal ledger state не подтверждён; " +
+                "требуется re-check" + suffix,
+            MAX_ERROR_CHARS,
+        ).orEmpty()
     }
 
     private fun clearPendingPatch() {
