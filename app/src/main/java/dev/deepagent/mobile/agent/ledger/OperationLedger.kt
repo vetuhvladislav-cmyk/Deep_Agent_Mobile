@@ -391,7 +391,7 @@ class OperationLedger(
         require(current.phase == LedgerPhase.PREPARED) {
             "STARTED допускается только после PREPARED"
         }
-        return appendTransition(current)
+        return appendTransition(current.copy(phase = LedgerPhase.STARTED))
     }
 
     @Synchronized
