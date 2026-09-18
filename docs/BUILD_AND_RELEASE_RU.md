@@ -35,6 +35,18 @@ Workflow `.github/workflows/android.yml` сам подготавливает JDK
 7. Создаёт SHA-256 и `deep-agent-provenance.json`.
 8. Публикует проверяемый Actions artifact; если quota artifact storage исчерпана, build остаётся диагностируемым, а release job пересобирает APK из того же commit.
 
+## Сверка с предыдущей успешной сборкой APK
+
+Исторический baseline подтверждён непосредственно по [Actions run #32](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35320175455) на commit `5c14bbb`: job завершился за 2 минуты, job summary зафиксировал Gradle 8.13, JDK 17 и следующие задачи:
+
+1. `./gradlew --no-daemon testDebugUnitTest`
+2. `./gradlew --no-daemon assembleDebugAndroidTest`
+3. `./gradlew --no-daemon assembleDebug`
+
+До Gradle-шагов workflow устанавливал Android SDK platform 35 и build-tools 35.0.0. Связанный [Release v0.1.5](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/tag/v0.1.5) содержит APK `deep-agent-mobile-v0.1.5-test.apk` размером 16.1 MB с SHA-256 `6a71892cb1faac2ac60728644ad56a5c8e6809a9e827dcd01cd26631c48ca3c9`. Upload Actions artifact в run #32 упёрся в quota, но сама APK-сборка и публикация Release завершились.
+
+Текущий `build` job сохраняет этот порядок и SDK/JDK baseline; отличия — фиксированный `ubuntu-24.04`, актуальные `checkout/setup-java` и дополнительный checksum/provenance. Поэтому текущая APK-компиляция воспроизводит проверенный прошлый способ, а UI runtime вынесен в отдельный gate.
+
 ## UI runtime acceptance
 
 UI job устанавливает emulator и `system-images;android-35;google_apis;x86_64`, создаёт AVD `deep-agent-api-35`, дожидается ADB/boot и запускает `connectedDebugAndroidTest`. Используется абсолютный путь к emulator, поэтому workflow не зависит от PATH конкретного runner.
