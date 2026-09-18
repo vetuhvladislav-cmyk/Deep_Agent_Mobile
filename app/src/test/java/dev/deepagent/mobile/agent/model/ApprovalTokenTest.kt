@@ -91,9 +91,7 @@ class ApprovalTokenTest {
                 path = token.path,
                 oldSha256 = token.oldSha256,
                 newSha256 = token.newSha256,
-                argumentsJson = """{"path":"src/App.kt","patch":"@@ -1 +1 @@
--old
-+new"}""",
+                argumentsJson = """{"path":"src/App.kt","patch":"@@ -1 +1 @@\n-old\n+new"}""",
                 now = 30_001L,
             ),
         )
@@ -108,9 +106,7 @@ class ApprovalTokenTest {
                 path = token.path,
                 oldSha256 = token.oldSha256,
                 newSha256 = token.newSha256,
-                argumentsJson = """{"path":"src/App.kt","patch":"@@ -1 +1 @@
--old
-+new"}""",
+                argumentsJson = """{"path":"src/App.kt","patch":"@@ -1 +1 @@\n-old\n+new"}""",
                 now = 30_001L,
             ),
         )
