@@ -1,6 +1,8 @@
 package dev.deepagent.mobile.agent.ledger
 
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -304,12 +306,15 @@ class OperationLedgerTest {
         ledger.execute(spec("op.m3", LedgerResolution.QUERYABLE)) {}
 
         val bytes = Files.readAllBytes(file.toPath())
-        // Границы кадров считаются по заголовку, а не поиском MAGIC: строка
-        // chain hash тоже может содержать байты 0x44 0x41 0x4C 0x47.
+        // Каждый execute() пишет три кадра (PREPARED/STARTED/SUCCEEDED), поэтому
+        // границы ищутся по заголовку, а не поиском сигнатуры MAGIC: строка
+        // chain hash тоже может содержать эти байты.
         val offsets = frameOffsets(bytes)
-        assertEquals(3, offsets.size)
-        val withoutMiddle = bytes.copyOfRange(0, offsets[1]) +
-            bytes.copyOfRange(offsets[2], bytes.size)
+        assertEquals(9, offsets.size)
+        // Удаляется весь диапазон кадров средней операции (m2): m1 остаётся
+        // целым, дальше идёт m3, и sequence разрывается.
+        val withoutMiddle = bytes.copyOfRange(0, offsets[3]) +
+            bytes.copyOfRange(offsets[6], bytes.size)
         Files.write(file.toPath(), withoutMiddle)
 
         val recovered = OperationLedger(file)
@@ -332,15 +337,19 @@ class OperationLedgerTest {
         val ledger = OperationLedger(file)
         ledger.execute(spec("op.x", LedgerResolution.QUERYABLE)) {}
 
+        // Первая запись операции — PREPARED: она открывает цепочку.
         val first = ledger.attempts("op.x").first()
         assertNotNull(first.chainHash)
         assertEquals(null, first.previousChainHash)
+        // Последняя запись операции — терминальная: именно она связана со
+        // следующей операцией.
+        val last = ledger.attempts("op.x").last()
 
         ledger.execute(spec("op.y", LedgerResolution.QUERYABLE)) {}
-        val second = ledger.attempts("op.y").first()
-        assertEquals(first.chainHash, second.previousChainHash)
-        assertNotNull(second.chainHash)
-        assertFalse(first.chainHash == second.chainHash)
+        val next = ledger.attempts("op.y").first()
+        assertEquals(last.chainHash, next.previousChainHash)
+        assertNotNull(next.chainHash)
+        assertFalse(last.chainHash == next.chainHash)
     }
 
     /**
@@ -413,25 +422,29 @@ class OperationLedgerTest {
      * Границы кадров ledger: 6 big-endian int заголовка
      * (magic, format, mode, keyVersion, payloadLength, checksumLength).
      */
+    /**
+     * Границы кадров ledger читаются последовательно через DataInputStream:
+     * ручная арифметика по offset здесь уже приводила к ложным совпадениям.
+     */
     private fun frameOffsets(bytes: ByteArray): List<Int> {
         val offsets = mutableListOf<Int>()
         var cursor = 0
         while (cursor + 24 <= bytes.size) {
-            if (readInt(bytes, cursor) != 0x44414C47) break
-            val payloadLength = readInt(bytes, cursor + 16)
-            val checksumLength = readInt(bytes, cursor + 20)
+            val input = DataInputStream(
+                ByteArrayInputStream(bytes, cursor, bytes.size - cursor),
+            )
+            val magic = input.readInt()
+            if (magic != 0x44414C47) break
+            input.readInt()
+            input.readInt()
+            input.readInt()
+            val payloadLength = input.readInt()
+            val checksumLength = input.readInt()
             if (payloadLength <= 0 || checksumLength <= 0) break
             offsets += cursor
             cursor += 24 + payloadLength + checksumLength
         }
         return offsets
-    }
-
-    private fun readInt(bytes: ByteArray, offset: Int): Int {
-        return ((bytes[offset].toInt() and 0xFF) shl 24) or
-            ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
-            ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
-            (bytes[offset + 3].toInt() and 0xFF)
     }
 
     private fun indexOf(haystack: ByteArray, needle: ByteArray): Int {
