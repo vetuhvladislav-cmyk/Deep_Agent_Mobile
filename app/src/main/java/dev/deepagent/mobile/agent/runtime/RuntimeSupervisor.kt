@@ -23,7 +23,16 @@ data class RuntimeManifest(
     val abi: String,
     val checksum: String,
 ) {
+    fun isWellFormed(): Boolean {
+        return version.isNotBlank() &&
+            version.length <= 96 &&
+            abi.isNotBlank() &&
+            abi.length <= 96 &&
+            SHA256_PATTERN.matches(checksum)
+    }
+
     companion object {
+        private val SHA256_PATTERN = Regex("[A-Fa-f0-9]{64}")
         /**
          * Safe reference manifest. It is deliberately a loopback adapter, not
          * a downloadable DSH/Node bundle.
@@ -63,8 +72,15 @@ interface HeadlessRuntimeProvider {
 class LoopbackHeadlessRuntimeProvider : HeadlessRuntimeProvider {
     private var activeManifest: RuntimeManifest? = null
 
-    override suspend fun install(manifest: RuntimeManifest): RuntimeProviderResult =
-        RuntimeProviderResult(
+    override suspend fun install(manifest: RuntimeManifest): RuntimeProviderResult {
+        if (!manifest.isWellFormed()) {
+            return RuntimeProviderResult(
+                ok = false,
+                summary = "Runtime manifest имеет неверный формат или checksum",
+                errorCode = "RUNTIME_MANIFEST_INVALID",
+            )
+        }
+        return RuntimeProviderResult(
             ok = manifest == RuntimeManifest.loopback(),
             summary = if (manifest == RuntimeManifest.loopback()) {
                 "Loopback runtime manifest принят; внешний runtime не устанавливается"
@@ -77,8 +93,16 @@ class LoopbackHeadlessRuntimeProvider : HeadlessRuntimeProvider {
                 "RUNTIME_MANIFEST_NOT_ALLOWED"
             },
         )
+    }
 
     override suspend fun start(manifest: RuntimeManifest): RuntimeProviderResult {
+        if (!manifest.isWellFormed()) {
+            return RuntimeProviderResult(
+                ok = false,
+                summary = "Runtime manifest имеет неверный формат или checksum",
+                errorCode = "RUNTIME_MANIFEST_INVALID",
+            )
+        }
         if (manifest != RuntimeManifest.loopback()) {
             return RuntimeProviderResult(
                 ok = false,
@@ -140,6 +164,17 @@ class RuntimeSupervisor(
                 ).also { _state.value = it }
             }
             val manifest = RuntimeManifest.loopback()
+            if (!manifest.isWellFormed()) {
+                return@withLock RuntimeState(
+                    status = RuntimeStatus.FAILED,
+                    sessionId = sessionId,
+                    version = manifest.version,
+                    abi = manifest.abi,
+                    checksum = manifest.checksum,
+                    summary = "Runtime manifest не прошёл локальную проверку",
+                    errorCode = "RUNTIME_MANIFEST_INVALID",
+                ).also { _state.value = it }
+            }
             val current = _state.value
             if (
                 current.status == RuntimeStatus.READY &&
