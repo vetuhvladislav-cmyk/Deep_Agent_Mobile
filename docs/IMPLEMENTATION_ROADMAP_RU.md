@@ -32,7 +32,7 @@
 - **Версия в коде:** `app/build.gradle.kts` содержит `versionCode = 5` и `versionName = "0.1.5"`.
 - **Workflow:** live `.github/workflows/android.yml` и `tools/github-workflow-android.yml` синхронизированы байт-в-байт. Build job устанавливает JDK 17/SDK 35/build-tools 35.0.0, запускает vectors/unit/instrumentation compile/assembleDebug и создаёт checksum/provenance.
 - **Release gate:** release job запускается только после `build` и `ui-runtime`; при `publish_release=false` он skipped. APK для release пересобирается из того же commit, поэтому публикация не зависит от Actions artifact quota.
-- **Build evidence:** [run #44](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35355722283), commit `fae06cc`: build job завершён успешно за 1:58; UI job завершён с инфраструктурным failure, release skipped.
+- **Build evidence:** [run #45](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35361986031), commit `5c5e853`: build job завершён успешно за 1:48; Gradle 8.13 подтвердил все три APK-related tasks; UI job не стартовал из-за account billing/spending-limit, artifact upload получил quota warning, release skipped при `publish_release=false`. Run #44 остаётся предыдущим runtime diagnostic record.
 
 ### UI runtime matrix
 
