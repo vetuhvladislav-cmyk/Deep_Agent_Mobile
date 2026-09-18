@@ -49,6 +49,7 @@ Deep Agent использует одну нативную оболочку, Agen
 
 ### Фактические CI-результаты
 
+- [Run #45](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35361986031), commit `5c5e853`: Linux build job зелёная за 1:48; Gradle 8.13 подтвердил `testDebugUnitTest`, `assembleDebugAndroidTest` и `assembleDebug`. UI job не стартовал из-за account billing/spending-limit, artifact upload получил quota warning, release skipped при `publish_release=false`.
 - [Run #44](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35355722283), commit `fae06cc`: Linux build job успешно выполнил golden vectors, `testDebugUnitTest`, `assembleDebugAndroidTest`, `assembleDebug`, checksum/provenance; длительность build job — 1:58.
 - UI runtime job в run #44 дошёл до emulator startup, но завершился диагностикой: `x86_64` system image нельзя запустить на ARM64 `macos-15` host. Поэтому `connectedDebugAndroidTest` пока не принят, а release job был корректно skipped при `publish_release=false`.
 - В ходе аудита отдельно подтверждены ограничения runner-инфраструктуры: ARM64 macOS без доступного HVF не запускает ARM64 AVD, software QEMU для этой связки падает; ARM64 Linux image не содержит пакет `emulator`; совместимый `macos-15-large` не стартовал из-за billing/spending limit аккаунта.
