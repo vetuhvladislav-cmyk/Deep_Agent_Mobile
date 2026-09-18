@@ -6,6 +6,8 @@ concurrency:
   cancel-in-progress: false
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       publish_release:
@@ -37,6 +39,9 @@ jobs:
     name: Сборка Deep Agent debug APK
     timeout-minutes: 20
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+      PUBLISH_RELEASE: ${{ github.event_name == 'release' || inputs.publish_release }}
     permissions:
       contents: write
     steps:
@@ -96,12 +101,13 @@ jobs:
             app/build/outputs/apk/debug/deep-agent-provenance.json
           if-no-files-found: error
           retention-days: 7
+        continue-on-error: true
 
       - name: Проверить параметры релиза
-        if: ${{ inputs.publish_release }}
+        if: ${{ env.PUBLISH_RELEASE == 'true' }}
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
           AGENT_SESSION_ID: ${{ inputs.agent_session_id }}
         run: |
           set -euo pipefail
@@ -117,10 +123,10 @@ jobs:
           fi
 
       - name: Подготовить release files
-        if: ${{ inputs.publish_release }}
+        if: ${{ env.PUBLISH_RELEASE == 'true' }}
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
           apk="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
@@ -133,10 +139,10 @@ jobs:
           cp app/build/outputs/apk/debug/deep-agent-provenance.json dist/deep-agent-provenance.json
 
       - name: Публикация релиза
-        if: ${{ inputs.publish_release }}
+        if: ${{ env.PUBLISH_RELEASE == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag }}
+          tag_name: ${{ env.RELEASE_TAG }}
           files: dist/*
           generate_release_notes: true
           body: |
