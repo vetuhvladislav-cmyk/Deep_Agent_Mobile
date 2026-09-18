@@ -182,6 +182,7 @@ object CanonicalArgs {
                 }
                 skipWhitespace()
                 consume(':')
+                skipWhitespace()
                 values[key] = parseValue()
                 skipWhitespace()
                 if (consumeIf('}')) break
