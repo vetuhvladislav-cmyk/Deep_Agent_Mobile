@@ -94,7 +94,13 @@ class OperationLedgerTest {
 
         val recovered = OperationLedger(file)
         assertTrue(recovered.snapshot().truncatedTrailingBytes)
-        assertTrue(file.length() < validLength + 3L)
+        val recoveredBytes = Files.readAllBytes(file.toPath())
+        val trailingMarkerPresent = recoveredBytes.size.toLong() >= validLength + 3L &&
+            recoveredBytes.copyOfRange(
+                validLength.toInt(),
+                validLength.toInt() + 3,
+            ).contentEquals(byteArrayOf(0x44, 0x41, 0x4D))
+        assertFalse(trailingMarkerPresent)
         assertEquals(LedgerPhase.UNKNOWN, recovered.record("op-trailing")?.phase)
     }
 
