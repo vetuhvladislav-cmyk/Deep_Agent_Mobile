@@ -163,7 +163,7 @@ jobs:
           echo "Using emulator binary: $emulator_bin"
           nohup "$emulator_bin" -avd deep-agent-api-35 \
             -no-window -no-audio -no-boot-anim -no-snapshot \
-            -accel auto \
+            -accel off \
             -gpu swiftshader \
             > "${RUNNER_TEMP}/deep-agent-emulator.log" 2>&1 &
           trap "adb emu kill >/dev/null 2>&1 || true" EXIT
