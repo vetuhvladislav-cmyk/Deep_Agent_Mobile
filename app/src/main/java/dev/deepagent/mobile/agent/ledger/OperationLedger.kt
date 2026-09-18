@@ -16,8 +16,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.Key
 import java.security.KeyStore
-import java.util.UUID
-import java.util.zip.CRC32C
 import javax.crypto.KeyGenerator
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -112,6 +110,19 @@ data class LedgerRecord(
     val createdAt: Long,
     val updatedAt: Long,
     val detail: String? = null,
+    /**
+     * Номер попытки внутри одной операции. Один `operationId` может иметь
+     * несколько попыток: первая, затем explicit retry после UNKNOWN. Раньше
+     * повтор удалял предыдущую запись, из-за чего история попыток терялась.
+     */
+    val attempt: Int = 1,
+    /**
+     * Хеш предыдущего кадра. Связывает записи в цепочку, поэтому удаление или
+     * перестановка любой записи делает цепочку невалидной.
+     */
+    val previousChainHash: String? = null,
+    /** Хеш этого кадра; сам в себя не входит. */
+    val chainHash: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("schema_version", schemaVersion)
@@ -132,14 +143,22 @@ data class LedgerRecord(
         .put("created_at", createdAt)
         .put("updated_at", updatedAt)
         .put("detail", safe(detail, MAX_DETAIL_CHARS))
+        .put("attempt", attempt)
+        .put("previous_chain_hash", safe(previousChainHash, CHAIN_HASH_CHARS))
+        .put("chain_hash", safe(chainHash, CHAIN_HASH_CHARS))
 
     companion object {
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
+        const val MIN_SUPPORTED_SCHEMA_VERSION = 1
         const val MAX_DETAIL_CHARS = 2_000
+        const val CHAIN_HASH_CHARS = 64
 
         fun fromJson(value: JSONObject): LedgerRecord {
             val schemaVersion = value.optInt("schema_version", 0)
-            if (schemaVersion != SCHEMA_VERSION) {
+            if (
+                schemaVersion > SCHEMA_VERSION ||
+                schemaVersion < MIN_SUPPORTED_SCHEMA_VERSION
+            ) {
                 throw LedgerDowngradeException()
             }
             val operationId = value.optString("operation_id").trim()
@@ -174,9 +193,11 @@ data class LedgerRecord(
             val bootId = value.optString("boot_id").trim()
             val keyVersion = value.optInt("key_version", 0)
             val sideEffect = value.optBoolean("side_effect", true)
+            val attempt = value.optInt("attempt", 1)
             require(sequence > 0L) { "Недопустимая sequence ledger" }
             require(bootId.isNotBlank()) { "Пустой boot ID ledger" }
             require(keyVersion >= 0) { "Недопустимый keyVersion ledger" }
+            require(attempt >= 1) { "Недопустимый номер попытки ledger" }
             require(!(sideEffect && durability == LedgerDurability.BATCHED)) {
                 "BATCHED side-effect запись ledger запрещена"
             }
@@ -199,6 +220,12 @@ data class LedgerRecord(
                 createdAt = value.optLong("created_at", 0L),
                 updatedAt = value.optLong("updated_at", 0L),
                 detail = safe(value.optString("detail"), MAX_DETAIL_CHARS),
+                attempt = attempt,
+                previousChainHash = safe(
+                    value.optString("previous_chain_hash"),
+                    CHAIN_HASH_CHARS,
+                ),
+                chainHash = safe(value.optString("chain_hash"), CHAIN_HASH_CHARS),
             )
         }
 
@@ -298,11 +325,17 @@ class AndroidKeystoreHmacKeyProvider(
 class OperationLedger(
     private val file: File,
     private val keyProvider: IntegrityKeyProvider? = null,
-    private val bootId: String = UUID.randomUUID().toString(),
+    private val bootId: String = java.util.UUID.randomUUID().toString(),
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
-    private val records = linkedMapOf<String, LedgerRecord>()
+    /** Последняя попытка каждой операции: `operationId -> attempt`. */
+    private val latestAttempts = linkedMapOf<String, Int>()
+
+    /** Все попытки: пара (`operationId`, attempt) -> запись. */
+    private val recordsByAttempt = linkedMapOf<AttemptKey, LedgerRecord>()
+
     private var nextSequence = 1L
+    private var lastChainHash: String? = null
     private var snapshot = LedgerRecoverySnapshot(
         health = LedgerHealth.CLEAN,
         bootId = bootId,
@@ -321,57 +354,44 @@ class OperationLedger(
     @Synchronized
     fun snapshot(): LedgerRecoverySnapshot = snapshot
 
+    /** Последняя попытка операции; null, если операция неизвестна. */
     @Synchronized
-    fun record(operationId: String): LedgerRecord? = records[operationId]
+    fun record(operationId: String): LedgerRecord? {
+        val attempt = latestAttempts[operationId] ?: return null
+        return recordsByAttempt[AttemptKey(operationId, attempt)]
+    }
+
+    /** Все попытки операции в порядке возрастания номера. */
+    @Synchronized
+    fun attempts(operationId: String): List<LedgerRecord> {
+        return recordsByAttempt.values
+            .filter { it.operationId == operationId }
+            .sortedBy { it.attempt }
+    }
+
+    @Synchronized
+    fun attemptCount(operationId: String): Int = attempts(operationId).size
 
     @Synchronized
     fun prepare(spec: LedgerOperationSpec): LedgerRecord {
         ensureWritable()
-        records[spec.operationId]?.let {
+        if (latestAttempts.containsKey(spec.operationId)) {
             throw LedgerReplayBlockedException(
                 "Operation ID уже присутствует в ledger; автоматический replay запрещён",
             )
         }
-        val now = clock()
-        return append(
-            LedgerRecord(
-                schemaVersion = LedgerRecord.SCHEMA_VERSION,
-                sequence = 0L,
-                bootId = bootId,
-                operationId = spec.operationId,
-                operation = spec.operation,
-                sessionId = spec.sessionId,
-                workspaceId = spec.workspaceId,
-                targetSha = spec.targetSha,
-                argumentsSha256 = spec.argumentsSha256,
-                resolution = spec.resolution,
-                durability = spec.durability,
-                integrityMode = spec.integrityMode,
-                keyVersion = spec.keyVersion,
-                sideEffect = spec.sideEffect,
-                phase = LedgerPhase.PREPARED,
-                createdAt = now,
-                updatedAt = now,
-            ),
-        )
+        return appendAttempt(spec, attempt = 1)
     }
 
     @Synchronized
     fun start(operationId: String): LedgerRecord {
         ensureWritable()
-        val current = records[operationId]
+        val current = record(operationId)
             ?: throw LedgerBlockedException("PREPARED запись не найдена")
         require(current.phase == LedgerPhase.PREPARED) {
             "STARTED допускается только после PREPARED"
         }
-        return append(
-            current.copy(
-                sequence = 0L,
-                bootId = bootId,
-                phase = LedgerPhase.STARTED,
-                updatedAt = clock(),
-            ),
-        )
+        return appendTransition(current)
     }
 
     @Synchronized
@@ -383,6 +403,9 @@ class OperationLedger(
     /**
      * Explicit recovery path for an IDEMPOTENT operation. This is never called
      * by recovery automatically; the caller must have re-checked the target.
+     *
+     * Предыдущая попытка не удаляется: новая добавляется под тем же
+     * `operationId` с увеличенным номером, поэтому история UNKNOWN сохраняется.
      */
     @Synchronized
     fun retryUnknown(spec: LedgerOperationSpec): LedgerRecord {
@@ -390,32 +413,15 @@ class OperationLedger(
         require(spec.resolution == LedgerResolution.IDEMPOTENT) {
             "Только IDEMPOTENT операция допускает explicit retry"
         }
-        val previous = records[spec.operationId]
+        val previous = record(spec.operationId)
             ?: throw LedgerReplayBlockedException("UNKNOWN операция не найдена")
         require(previous.phase == LedgerPhase.UNKNOWN) {
             "Explicit retry допускается только для UNKNOWN"
         }
-        require(
-            previous.operation == spec.operation &&
-                previous.sessionId == spec.sessionId &&
-                previous.workspaceId == spec.workspaceId &&
-                previous.targetSha == spec.targetSha &&
-                previous.argumentsSha256 == spec.argumentsSha256 &&
-                previous.resolution == spec.resolution &&
-                previous.integrityMode == spec.integrityMode &&
-                previous.keyVersion == spec.keyVersion,
-        ) {
+        require(bindingMatches(previous, spec)) {
             "Binding explicit retry не совпадает с UNKNOWN записью"
         }
-        records.remove(spec.operationId)
-        refreshSnapshotRecords()
-        return try {
-            begin(spec)
-        } catch (error: Throwable) {
-            records[spec.operationId] = previous
-            refreshSnapshotRecords()
-            throw error
-        }
+        return appendAttempt(spec, attempt = previous.attempt + 1)
     }
 
     @Synchronized
@@ -433,20 +439,12 @@ class OperationLedger(
             "Недопустимая terminal phase ledger"
         }
         ensureWritable()
-        val current = records[operationId]
+        val current = record(operationId)
             ?: throw LedgerBlockedException("Операция ledger не найдена")
         require(current.phase == LedgerPhase.STARTED) {
             "Terminal запись допускается только после STARTED"
         }
-        return append(
-            current.copy(
-                sequence = 0L,
-                bootId = bootId,
-                phase = phase,
-                updatedAt = clock(),
-                detail = detail,
-            ),
-        )
+        return appendTransition(current.copy(phase = phase, detail = detail))
     }
 
     fun <T> execute(
@@ -472,8 +470,10 @@ class OperationLedger(
 
     @Synchronized
     fun recover(): LedgerRecoverySnapshot {
-        records.clear()
+        latestAttempts.clear()
+        recordsByAttempt.clear()
         nextSequence = 1L
+        lastChainHash = null
         if (!file.exists() || file.length() == 0L) {
             snapshot = snapshot.copy(
                 health = LedgerHealth.CLEAN,
@@ -506,6 +506,7 @@ class OperationLedger(
         var trailingTruncated = false
         var blocked = false
         var keyUnavailable = false
+        var previousChainHash: String? = null
         val diagnostics = mutableListOf<String>()
 
         while (offset < bytes.size) {
@@ -521,8 +522,19 @@ class OperationLedger(
                     diagnostics += "LEDGER_SEQUENCE_GAP"
                     break
                 }
-                records[record.operationId] = record
+                if (!chainLinkMatches(record, previousChainHash, chainKeyFor(record))) {
+                    blocked = true
+                    diagnostics += "LEDGER_CHAIN_HASH_MISMATCH"
+                    break
+                }
+                recordsByAttempt[AttemptKey(record.operationId, record.attempt)] = record
+                latestAttempts[record.operationId] = maxOf(
+                    latestAttempts[record.operationId] ?: 0,
+                    record.attempt,
+                )
                 previousSequence = record.sequence
+                previousChainHash = record.chainHash
+                lastChainHash = record.chainHash
                 offset = frame.nextOffset
                 lastValidOffset = offset
                 nextSequence = record.sequence + 1L
@@ -566,19 +578,15 @@ class OperationLedger(
             return snapshot
         }
 
-        val pending = records.values
+        val pending = latestRecords()
             .filter {
                 it.phase == LedgerPhase.PREPARED || it.phase == LedgerPhase.STARTED
             }
-            .toList()
         if (pending.isNotEmpty()) {
             pending.forEach { record ->
-                append(
+                appendTransition(
                     record.copy(
-                        sequence = 0L,
-                        bootId = bootId,
                         phase = LedgerPhase.UNKNOWN,
-                        updatedAt = clock(),
                         detail = "Interrupted " + record.phase.name +
                             "; automatic continuation prohibited",
                     ),
@@ -600,6 +608,59 @@ class OperationLedger(
         return snapshot
     }
 
+    private fun bindingMatches(
+        previous: LedgerRecord,
+        spec: LedgerOperationSpec,
+    ): Boolean {
+        return previous.operation == spec.operation &&
+            previous.sessionId == spec.sessionId &&
+            previous.workspaceId == spec.workspaceId &&
+            previous.targetSha == spec.targetSha &&
+            previous.argumentsSha256 == spec.argumentsSha256 &&
+            previous.resolution == spec.resolution &&
+            previous.integrityMode == spec.integrityMode &&
+            previous.keyVersion == spec.keyVersion
+    }
+
+    private fun appendAttempt(
+        spec: LedgerOperationSpec,
+        attempt: Int,
+    ): LedgerRecord {
+        val now = clock()
+        return append(
+            LedgerRecord(
+                schemaVersion = LedgerRecord.SCHEMA_VERSION,
+                sequence = 0L,
+                bootId = bootId,
+                operationId = spec.operationId,
+                operation = spec.operation,
+                sessionId = spec.sessionId,
+                workspaceId = spec.workspaceId,
+                targetSha = spec.targetSha,
+                argumentsSha256 = spec.argumentsSha256,
+                resolution = spec.resolution,
+                durability = spec.durability,
+                integrityMode = spec.integrityMode,
+                keyVersion = spec.keyVersion,
+                sideEffect = spec.sideEffect,
+                phase = LedgerPhase.PREPARED,
+                createdAt = now,
+                updatedAt = now,
+                attempt = attempt,
+            ),
+        )
+    }
+
+    private fun appendTransition(current: LedgerRecord): LedgerRecord {
+        return append(
+            current.copy(
+                sequence = 0L,
+                bootId = bootId,
+                updatedAt = clock(),
+            ),
+        )
+    }
+
     @Synchronized
     private fun append(record: LedgerRecord): LedgerRecord {
         ensureParent()
@@ -608,36 +669,45 @@ class OperationLedger(
             schemaVersion = LedgerRecord.SCHEMA_VERSION,
             bootId = record.bootId.takeIf { it.isNotBlank() } ?: bootId,
             detail = AgentRedactor.text(record.detail, LedgerRecord.MAX_DETAIL_CHARS),
+            previousChainHash = lastChainHash,
         )
-        val payload = normalized.toJson().toString().toByteArray(Charsets.UTF_8)
+        val sealed = normalized.copy(
+            chainHash = chainHashFor(normalized, chainKeyFor(normalized)),
+        )
+        val payload = sealed.toJson().toString().toByteArray(Charsets.UTF_8)
         require(payload.size <= MAX_PAYLOAD_BYTES) {
             "Ledger payload превышает лимит"
         }
         val checksum = checksum(
-            mode = normalized.integrityMode,
-            keyVersion = normalized.keyVersion,
+            mode = sealed.integrityMode,
+            keyVersion = sealed.keyVersion,
             payload = payload,
         )
         FileOutputStream(file, true).use { raw ->
             DataOutputStream(BufferedOutputStream(raw)).use { output ->
                 output.writeInt(MAGIC)
                 output.writeInt(FORMAT_VERSION)
-                output.writeInt(normalized.integrityMode.ordinal)
-                output.writeInt(normalized.keyVersion)
+                output.writeInt(sealed.integrityMode.ordinal)
+                output.writeInt(sealed.keyVersion)
                 output.writeInt(payload.size)
                 output.writeInt(checksum.size)
                 output.write(checksum)
                 output.write(payload)
                 output.flush()
-                if (normalized.durability == LedgerDurability.FULL) {
+                if (sealed.durability == LedgerDurability.FULL) {
                     raw.fd.sync()
                 }
             }
         }
-        records[normalized.operationId] = normalized
-        nextSequence = normalized.sequence + 1L
+        recordsByAttempt[AttemptKey(sealed.operationId, sealed.attempt)] = sealed
+        latestAttempts[sealed.operationId] = maxOf(
+            latestAttempts[sealed.operationId] ?: 0,
+            sealed.attempt,
+        )
+        nextSequence = sealed.sequence + 1L
+        lastChainHash = sealed.chainHash
         refreshSnapshotRecords()
-        return normalized
+        return sealed
     }
 
     private fun buildSnapshot(
@@ -655,7 +725,7 @@ class OperationLedger(
             diagnostics = diagnostics.distinct(),
             truncatedTrailingBytes = truncatedTrailing,
             blocked = blocked,
-            records = records.values.toList(),
+            records = latestRecords(),
         )
     }
 
@@ -665,12 +735,18 @@ class OperationLedger(
             bootId = bootId,
             unknownOperationIds = metadata.unknownOperationIds,
             recoveryActions = metadata.recoveryActions,
-            records = records.values.toList(),
+            records = latestRecords(),
         )
     }
 
+    private fun latestRecords(): List<LedgerRecord> {
+        return latestAttempts.entries.mapNotNull { (operationId, attempt) ->
+            recordsByAttempt[AttemptKey(operationId, attempt)]
+        }
+    }
+
     private fun recoveryMetadata(): RecoveryMetadata {
-        val unknown = records.values.filter { it.phase == LedgerPhase.UNKNOWN }
+        val unknown = latestRecords().filter { it.phase == LedgerPhase.UNKNOWN }
         return RecoveryMetadata(
             unknownOperationIds = unknown.map { it.operationId }.distinct(),
             recoveryActions = unknown.associate {
@@ -713,6 +789,72 @@ class OperationLedger(
             it.setLength(length.toLong())
             it.fd.sync()
         }
+    }
+
+    /**
+     * Проверяет связь кадра с предыдущим и целостность самого chain hash.
+     *
+     * Одного сравнения ссылок недостаточно: подмена payload не обнаруживается
+     * сравнением, если атакующий может пересчитать незашифрованный хеш. Поэтому
+     * chain hash пересчитывается. Если доступен ключ, пересчёт идёт через HMAC,
+     * и подделать цепочку без ключа нельзя. Записи формата schema 1 не содержат
+     * chain hash: они остаются читаемыми, потому что записаны до введения
+     * цепочки, и не считаются подделкой.
+     */
+    private fun chainLinkMatches(
+        record: LedgerRecord,
+        expectedPrevious: String?,
+        expectedKey: ByteArray?,
+    ): Boolean {
+        val declared = record.chainHash ?: return true
+        if (record.schemaVersion < 2) return true
+        if (chainHashFor(record, expectedKey) != declared) return false
+        return record.previousChainHash == expectedPrevious
+    }
+
+    private fun chainHashFor(record: LedgerRecord, key: ByteArray?): String {
+        val canonical = canonicalChainInput(record)
+        val digest = if (key == null) {
+            java.security.MessageDigest.getInstance("SHA-256").digest(canonical)
+        } else {
+            Mac.getInstance("HmacSHA256")
+                .apply { init(SecretKeySpec(key, "HmacSHA256")) }
+                .doFinal(canonical)
+        }
+        return digest.joinToString("") { byte -> "%02x".format(byte) }
+    }
+
+    private fun canonicalChainInput(record: LedgerRecord): ByteArray {
+        return buildString {
+            append(record.sequence).append('|')
+            append(record.operationId).append('|')
+            append(record.attempt).append('|')
+            append(record.operation).append('|')
+            append(record.phase.name).append('|')
+            append(record.sessionId ?: "").append('|')
+            append(record.workspaceId ?: "").append('|')
+            append(record.targetSha ?: "").append('|')
+            append(record.argumentsSha256 ?: "").append('|')
+            append(record.resolution.name).append('|')
+            append(record.integrityMode.name).append('|')
+            append(record.keyVersion).append('|')
+            append(record.createdAt).append('|')
+            append(record.updatedAt).append('|')
+            append(record.detail ?: "").append('|')
+            append(record.previousChainHash ?: "")
+        }.toByteArray(Charsets.UTF_8)
+    }
+
+    /**
+     * Ключ цепочки. Берётся тот же провайдер, что и для HMAC-payload, но с
+     * префиксом версии, чтобы chain hash не совпадал с payload-HMAC. Для
+     * CRC32C-режима ключа нет, поэтому цепочка там обнаруживает случайную
+     * порчу, но не подмену автором записи.
+     */
+    private fun chainKeyFor(record: LedgerRecord): ByteArray? {
+        if (record.integrityMode != LedgerIntegrityMode.HMAC_SHA256) return null
+        val encoded = keyProvider?.key(record.keyVersion)?.encoded ?: return null
+        return CHAIN_KEY_PREFIX + encoded
     }
 
     private data class FrameRead(
@@ -835,7 +977,7 @@ class OperationLedger(
     ): ByteArray {
         return when (mode) {
             LedgerIntegrityMode.CRC32C -> {
-                val crc = CRC32C()
+                val crc = java.util.zip.CRC32C()
                 crc.update(payload)
                 ByteBuffer.allocate(CRC32C_BYTES)
                     .order(ByteOrder.BIG_ENDIAN)
@@ -855,6 +997,11 @@ class OperationLedger(
 
     private class IntegrityKeyUnavailableException : IllegalStateException()
 
+    private data class AttemptKey(
+        val operationId: String,
+        val attempt: Int,
+    )
+
     companion object {
         private const val MAGIC = 0x44414C47
         private const val FORMAT_VERSION = 1
@@ -863,5 +1010,6 @@ class OperationLedger(
         private const val MAX_CHECKSUM_BYTES = 64
         private const val CRC32C_BYTES = 4
         private const val HMAC_BYTES = 32
+        private const val CHAIN_KEY_PREFIX = "ledger-chain-v1:"
     }
 }
