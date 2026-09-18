@@ -288,7 +288,7 @@ jobs:
           files: dist/*
           generate_release_notes: true
           body: |
-            APK подготовлен после успешных Linux build и Intel macOS x86_64 UI runtime gates UI runtime gates.
+            APK подготовлен после успешных Linux build и Intel macOS x86_64 UI runtime gates.
             Release job собирает APK из того же commit после прохождения обоих gates.
             Модульные тесты, instrumentation tests и Android UI runtime acceptance завершены до публикации.
             Сборка отладочная и предназначена для тестирования на Android.
