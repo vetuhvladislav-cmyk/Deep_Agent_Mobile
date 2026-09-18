@@ -44,6 +44,7 @@ Deep Agent использует одну нативную оболочку, Agen
 
 - `app/build.gradle.kts` содержит `versionCode = 5` и `versionName = "0.1.5"`.
 - [Live workflow](.github/workflows/android.yml) и [workflow-шаблон](tools/github-workflow-android.yml) синхронизированы байт-в-байт: JDK 17, Android SDK platform 35/build-tools 35.0.0, Gradle cache, Linux build job, отдельный UI runtime job и release gate.
+- [Actions run #32](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/actions/runs/35320175455) подтверждает прошлый APK baseline: JDK 17, Gradle 8.13, SDK 35 и `testDebugUnitTest → assembleDebugAndroidTest → assembleDebug`; текущий Linux build job сохраняет эту последовательность.
 - Существующий [Release v0.1.5](https://github.com/vetuhvladislav-cmyk/Deep_Agent_Mobile/releases/tag/v0.1.5) собран из более раннего commit `5c14bbb` и не содержит текущих workflow/documentation changes. Production-signed release в этом аудите не публиковался.
 
 ### Фактические CI-результаты
