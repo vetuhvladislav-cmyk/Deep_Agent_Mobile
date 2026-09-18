@@ -854,7 +854,7 @@ class OperationLedger(
     private fun chainKeyFor(record: LedgerRecord): ByteArray? {
         if (record.integrityMode != LedgerIntegrityMode.HMAC_SHA256) return null
         val encoded = keyProvider?.key(record.keyVersion)?.encoded ?: return null
-        return CHAIN_KEY_PREFIX + encoded
+        return CHAIN_KEY_PREFIX.toByteArray(Charsets.UTF_8) + encoded
     }
 
     private data class FrameRead(

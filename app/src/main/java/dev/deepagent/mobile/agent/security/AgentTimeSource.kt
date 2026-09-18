@@ -30,7 +30,7 @@ interface AgentTimeSource {
  * реализации. `bootId` фиксируется при инициализации объекта.
  */
 class ProcessAgentTimeSource(
-    private val bootId: String = java.util.UUID.randomUUID().toString(),
+    override val bootId: String = java.util.UUID.randomUUID().toString(),
     private val monotonicBase: Long = System.nanoTime() / 1_000_000L,
 ) : AgentTimeSource {
 
