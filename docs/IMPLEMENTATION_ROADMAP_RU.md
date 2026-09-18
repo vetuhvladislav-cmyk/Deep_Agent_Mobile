@@ -36,7 +36,7 @@
 ### Refactor pass (2026-09-18)
 
 - **База:** `bc8f1fd5a264e668887bab8d48e80022bd81d09e`.
-- **Кодовый SHA:** `f0eed662a69697e919a50a8a0ca15d60eeef187a`.
+- **Кодовый SHA:** `cfa27825b542f7e1bc45e0201ecc1c8a5c0db72c`.
 - **Исправлено:** runtime snapshot ledger теперь пересчитывает UNKNOWN/recovery metadata после каждой append; неподтверждённый terminal ledger state переводит результат side effect в UNKNOWN для Actions, patch и Git; пустой CanonicalArgs input отклоняется до dispatch.
 - **Validation:** выполнена только статическая проверка diff и symbol map; компиляция, Gradle/JVM/Android-тесты и CI не запускались.
 - **Граница:** P1/P2 не начинались.
@@ -46,7 +46,7 @@
 ### H0 — Подтверждение фактической структуры
 
 - **Статус:** capabilityStatus: implemented.
-- **Актуальный source SHA:** `f0eed662a69697e919a50a8a0ca15d60eeef187a`.
+- **Актуальный source SHA:** `cfa27825b542f7e1bc45e0201ecc1c8a5c0db72c`.
 - **Результат:** подтверждены реальные файлы, symbol map на текущем source SHA, AgentBridge boundary, persistence boundary, policy boundary и execution boundary; размеры файлов не используются как контракт.
 - **Ограничение:** AgentBridge v1 и существующие публичные операции сохраняются.
 - **Exit criterion:** фактическая структура и контрольный SHA зафиксированы до hardening-изменений.

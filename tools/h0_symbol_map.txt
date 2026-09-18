@@ -1,5 +1,5 @@
 # H0 symbol map
-source_sha=f0eed662a69697e919a50a8a0ca15d60eeef187a
+source_sha=cfa27825b542f7e1bc45e0201ecc1c8a5c0db72c
 branch=codex/p1-a-controlled-write-git-pr
 generated_at=2026-09-18
 mode=static source scan; no behavior/runtime validation performed
@@ -150,7 +150,7 @@ app/src/main/java/dev/deepagent/mobile/agent/tools/ToolRegistry.kt
   public_methods: definitions@10, definition@14
 
 app/src/main/java/dev/deepagent/mobile/agent/tools/ToolRouter.kt
-  lines: 1259
+  lines: 1261
   classes: AgentToolDefinition@33, ToolExecutionResult@47, ToolRouter@107, ArgumentSchema@632, BoundedRead@1003, CapturedOutput@1008
   public_methods: toModelJson@58, previewPatch@114, applyPatch@189, rollbackPatch@337, readProjectRules@378, inspectGit@391, currentGitHeadSha@394, createGitBranch@401, commitGit@406, pushGit@411, execute@416, visit@946, definitions@1234, definition@1239, authorize@1252
 
