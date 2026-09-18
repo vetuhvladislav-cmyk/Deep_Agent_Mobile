@@ -1224,7 +1224,9 @@ class AgentCore(context: Context) : AgentBridge {
         request: ActionsArtifactRequest,
     ): ActionsArtifactSaveResult {
         check(!closed) { "AgentCore уже закрыт" }
-        if (
+        externalMutationMutex.lock()
+        try {
+            if (
             _state.value.status == AgentSessionStatus.RUNNING ||
             _state.value.status == AgentSessionStatus.WAITING_APPROVAL
         ) {
@@ -1381,8 +1383,11 @@ class AgentCore(context: Context) : AgentBridge {
                 )
             }
         }
-        persistAsync()
-        return finalResult
+            persistAsync()
+            return finalResult
+        } finally {
+            externalMutationMutex.unlock()
+        }
     }
 
     private suspend fun runActionsInternal(
@@ -1547,8 +1552,9 @@ class AgentCore(context: Context) : AgentBridge {
 
     override suspend fun rollbackLastPatch(): PatchRollbackResult {
         check(!closed) { "AgentCore уже закрыт" }
-
-        val recovery = _patchRecovery.value
+        externalMutationMutex.lock()
+        try {
+            val recovery = _patchRecovery.value
             ?: return recordPatchRollbackFailure(
                 operationId = null,
                 summary = "Нет подтверждённого patch checkpoint для rollback",
@@ -1691,7 +1697,10 @@ class AgentCore(context: Context) : AgentBridge {
             result.summary,
             result.toJson().toString(),
         )
-        return result
+            return result
+        } finally {
+            externalMutationMutex.unlock()
+        }
     }
 
     override fun close() {
@@ -2438,7 +2447,9 @@ class AgentCore(context: Context) : AgentBridge {
 
         patchApplyJob?.cancel()
         val job = coreScope.launch {
-            val targetShaCheck = runCatching {
+            externalMutationMutex.lock()
+            try {
+                val targetShaCheck = runCatching {
                 toolRouter.currentGitHeadSha(pending.workspaceId)
             }
             if (
@@ -2588,7 +2599,10 @@ class AgentCore(context: Context) : AgentBridge {
                     canonicalArgsSha256 = pending.approvalToken.argumentsSha256,
                 ),
             )
-            append(AgentEventKind.SESSION, "Сессия завершена после применения patch")
+                append(AgentEventKind.SESSION, "Сессия завершена после применения patch")
+            } finally {
+                externalMutationMutex.unlock()
+            }
         }
         patchApplyJob = job
         job.invokeOnCompletion {
