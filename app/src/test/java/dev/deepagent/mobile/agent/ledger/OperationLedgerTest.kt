@@ -417,17 +417,21 @@ class OperationLedgerTest {
         val offsets = mutableListOf<Int>()
         var cursor = 0
         while (cursor + 24 <= bytes.size) {
-            val header = ByteBuffer.wrap(bytes, cursor, 24).order(ByteOrder.BIG_ENDIAN)
-            if (header.int != 0x44414C47) break
-            header.int
-            header.int
-            header.int
-            val payloadLength = header.int
-            val checksumLength = header.int
+            if (readInt(bytes, cursor) != 0x44414C47) break
+            val payloadLength = readInt(bytes, cursor + 16)
+            val checksumLength = readInt(bytes, cursor + 20)
+            if (payloadLength <= 0 || checksumLength <= 0) break
             offsets += cursor
             cursor += 24 + payloadLength + checksumLength
         }
         return offsets
+    }
+
+    private fun readInt(bytes: ByteArray, offset: Int): Int {
+        return ((bytes[offset].toInt() and 0xFF) shl 24) or
+            ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
+            ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
+            (bytes[offset + 3].toInt() and 0xFF)
     }
 
     private fun indexOf(haystack: ByteArray, needle: ByteArray): Int {
