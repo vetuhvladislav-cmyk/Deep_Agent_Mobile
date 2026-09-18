@@ -429,3 +429,33 @@ Agent Console использует собственную визуальную �
 - Pipe-backed interactive adapter не объявляется PTY. Неподтверждённое завершение процесса публикуется как `CLEANUP_UNKNOWN`, не восстанавливается автоматически и требует отдельной проверки.
 - **Validation:** статический source audit выполнен; compile, tests, CI, Android device/runtime и PTY process-tree acceptance не выполнялись.
 
+### ADR-006 — Formal capability contract и границы его внедрения
+
+- **Дата:** 2026-09-18.
+- **Статус:** accepted как план реализации; Phase 1 в работе, Phase 2–4 запланированы.
+- **Контекст:** обсуждение формального security-контракта зафиксировало семь свойств: capability algebra, constrained `SessionPolicy`, отдельный `ReconcilePolicy`, non-reusable grant после UNKNOWN, tamper-evident ledger, user-presence-bound issuance и dependent `OperationChain`.
+- **Решение:** внедрять контракт поэтапно, начиная с трёх точечных фиксов, которые закрывают существующие дыры и проверяются unit-тестами, и только затем вводить capability-алгебру. Обоснование: capability-алгебра — самая объёмная часть (затрагивает все resolvers, connectors и tool adapters), но она не закрывает ни одной текущей дыры, поскольку ограничения уже выражены привязками в `ApprovalBinding`. Порядок по зависимостям («capability-модель первым слоем») отклонён в пользу порядка по риску.
+
+Соответствие семи свойств текущему коду:
+
+| Свойство | Состояние | Факт |
+| --- | --- | --- |
+| Capability algebra | отсутствует | `PermissionMode` — enum из 5 значений с грубым `allows()`; `ToolCapability` — обёртка 1:1; нет `RepositorySelector`, `RefPattern`, `CanonicalPathSet` |
+| Constrained SessionPolicy | частично | `ApprovalBinding` связывает session/workspace/fingerprint/path/old-sha/new-sha/canonical-args, но без общего `maxCapabilities` и бюджета сессии |
+| ReconcilePolicy | отсутствует как domain | есть только `LedgerRecoveryAction.RECHECK_REQUIRED`; ни один `reconcile.*` endpoint не реализован |
+| Non-reusable grant после UNKNOWN | частично | replay блокируется по `operationId` и есть cached result для пары session/operation, но у токена нет состояния `CONSUMED`, а `clearPendingPatch()` лишь обнуляет `StateFlow` |
+| Tamper-evident Ledger | почти | есть Keystore HMAC, `bootId`, `sequence` с детектом разрывов, детект middle/prefix corruption; нет chain/Merkle и signed checkpoints, поэтому удаление префикса записей невидимо |
+| User-presence-bound issuance | частично | UI approval и единственный PDP есть; нет биометрии, `setUserAuthenticationRequired` и подписи grant |
+| Dependent OperationChain | отсутствует | ledger ключуется одним `operationId`: `records[operationId] = record` перезаписывает запись, `retryUnknown()` удаляет предыдущий UNKNOWN, attempt history не хранится |
+
+Отсутствует во всём коде: `executionAttemptId`, `grantId`, `toolSchemaHash`, `SessionBudget`, `OperationBudget` — 0 вхождений.
+
+Что уже соответствует контракту и не переписывается:
+
+- Граница атомарности ledger совпадает с контрактом: `OperationLedger.execute()` при исключении из side effect пишет `UNKNOWN`, а не `FAILED`; автоматический retry запрещён.
+- `ToolOutputEnvelope` реализует prompt-injection defense: `content_is_data`, `instructions_are_data`, `ToolTrust`.
+- `ADR-004` уже содержит модель угроз (assets, trust boundaries, malicious inputs, residual risks) — она дополняется capability-моделью, а не создаётся заново.
+- `CanonicalArgs` и `EnvelopePolicy` остаются неизменными точками проверки аргументов.
+
+Порядок реализации и критерии выхода зафиксированы в [IMPLEMENTATION_ROADMAP_RU.md](./IMPLEMENTATION_ROADMAP_RU.md), раздел «1B. Formal capability contract». Контракт считается внедрённым только при наличии теста на обход PEP, а не happy-path теста.
+

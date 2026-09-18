@@ -137,6 +137,53 @@
 - После тестов выполняется независимый review итогового SHA; изменения после review требуют нового review.
 - P1/P2 до закрытия этого блока не начинать.
 
+## 1B. Formal capability contract (план реализации)
+
+Источник: ADR-006 в [ANDROID_AGENT_ARCHITECTURE_RU.md](./ANDROID_AGENT_ARCHITECTURE_RU.md). Порядок выбран по риску, а не по зависимостям: сначала три точечных фикса существующих дыр, затем capability-алгебра.
+
+Правила приёмки для всех тикетов ниже:
+
+- ни один тикет не закрывается без теста, который падает до правки и проходит после;
+- тест на обход PEP обязателен там, где тикет затрагивает путь approval → side effect;
+- ни один side effect не считается доказанным только записью в ledger: внешний результат подтверждается reconcile;
+- уровень проверки указывается явно: unit (JVM), CI (Linux build job), device (эмулятор/устройство).
+
+### Phase 1 — закрытие существующих дыр
+
+| ID | Задача | Уровень проверки | Критерий выхода |
+| --- | --- | --- | --- |
+| SEC-01 | Single-use approval token: состояние `ISSUED → CONSUMED`, guard от повторного предъявления, запись consumption в ledger | unit | повторное предъявление того же токена отклоняется и не порождает side effect; тест падает без guard |
+| SEC-02 | Монотонное время для TTL: injectable time source, `bootId` в binding, wall clock только для отображения | unit | перевод wall clock назад не продлевает окно approval; смена `bootId` инвалидирует outstanding токены |
+| SEC-03 | Attempt history в `OperationLedger`: попытки адресуются парой (`operationId`, `attempt`), явный `nextAttempt()`, `retryUnknown()` не удаляет предыдущую попытку | unit | UNKNOWN-попытка остаётся в ledger и в diagnostic export; повтор использует тот же `operationId` с новым attempt |
+| SEC-04 | Chain integrity: rolling previous-hash в каждом кадре, signed checkpoint, детект удаления префикса записей | unit | удаление или перестановка любой записи делает ledger невалидным; checkpoint проверяется отдельно |
+
+### Phase 2 — capability-модель
+
+| ID | Задача | Уровень проверки | Критерий выхода |
+| --- | --- | --- | --- |
+| SEC-05 | Capability algebra: constrained domains (`RepositorySelector`, `RefPattern`, `CanonicalPathSet`, `HostSet`, `ArgsProfile`), subsumption, intersection, canonicalization, equality; `PermissionMode` становится пресетом над capability set | unit + property-based | для каждой capability определена алгебра; пресеты не кумулятивны; canonicalization идемпотентна |
+| SEC-06 | `OperationGrant` + PDP/PEP: `grantId`, `executionAttemptId`, `toolSchemaHash`, состояние grant, TTL, повторная проверка в PEP непосредственно перед side effect | unit + CI | ни один side effect не выполняется без ACTIVE grant; тест на обход PEP падает при попытке вызвать PEP напрямую |
+
+### Phase 3 — reconcile и provenance
+
+| ID | Задача | Уровень проверки | Критерий выхода |
+| --- | --- | --- | --- |
+| SEC-07 | `ReconcilePolicy` как отдельный read-only domain: `reconcile.git.remote_ref`, `reconcile.github.workflow_run`, `reconcile.github.pull_request`, `reconcile.artifact.sha256`; разделение `expectedCommitSha` / `actualCommitSha` и статусов `UNVERIFIED` / `UNBOUND` / `USER_PROVIDED` | unit + CI | reconcile не требует mutation capabilities; артефакт без commit SHA не принимается |
+
+### Phase 4 — доказательства
+
+| ID | Задача | Уровень проверки | Критерий выхода |
+| --- | --- | --- | --- |
+| SEC-08 | Replay и fault injection: crash между approve и side effect, между side effect и ledger write, между ledger write и UI projection; conformance harness для provider; регресс-набор на обход PEP | unit + CI | каждый сценарий имеет детерминированный ожидаемый terminal state или UNKNOWN; тест на обход PEP существует и проходит |
+
+### Ограничения и открытые вопросы
+
+- Монотонное время на Android: `SystemClock.elapsedRealtime()` + `bootId`; при перезапуске процесса outstanding токены инвалидируются, потому что их окно нельзя доказать. Это осознанный fail-closed выбор.
+- Wall clock остаётся в journal/UI как метаданные отображения и не участвует в решении о доступе.
+- Частичное завершение цепочки получает явный статус `PARTIAL`; правила продолжения цепочки фиксируются при реализации SEC-06/SEC-07.
+- Отображение constrained capability в UI (без показа JSON) остаётся открытым вопросом Phase 2 и входит в SEC-06.
+- Биометрия и `setUserAuthenticationRequired` не входят в Phase 1–4 и остаются отдельным тикетом после device-acceptance.
+
 ## 1. Правила статусов и этапов
 
 Допустимые значения capabilityStatus:
