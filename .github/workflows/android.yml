@@ -206,6 +206,12 @@ jobs:
             --name deep-agent-api-35 \
             --package "system-images;android-35;google_apis;x86_64" \
             --device "pixel_2"
+          # По умолчанию AVD просит под userdata около 7.4 ГБ и падает на диске
+          # runner'а; уменьшаем раздел данных до 2 ГБ.
+          avd_config="$ANDROID_AVD_HOME/deep-agent-api-35.avd/config.ini"
+          test -f "$avd_config"
+          sed -i '/^disk\.dataPartition\.size=/d' "$avd_config"
+          printf 'disk.dataPartition.size=2G\n' >> "$avd_config"
           android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           test -n "$android_sdk_root"
           emulator_bin="$android_sdk_root/emulator/emulator"
