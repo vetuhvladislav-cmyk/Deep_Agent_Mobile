@@ -108,7 +108,7 @@ jobs:
     name: Android UI runtime acceptance
     continue-on-error: true
     timeout-minutes: 30
-    runs-on: macos-15-large
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -142,6 +142,55 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0" "emulator" "system-images;android-35;google_apis;x86_64"
 
+      # На Linux-образе эмулятору нужны системные библиотеки, которых нет в
+      # минимальной поставке. Ставим только необходимый набор.
+      - name: Системные библиотеки эмулятора
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpulse0 libnss3 libxcomposite1 libxcursor1 libxi6 libxtst6 libglu1-mesa
+
+      # KVM доступен на стандартном Linux-runner. Разрешения выдаются явно, а job
+      # проверяет их сам: без /dev/kvm падаем на понятной диагностике, а не на
+      # таймауте загрузки эмулятора.
+      - name: Включение KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Проверка окружения UI runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          echo "Архитектура хоста: $arch"
+          test "$arch" = "x86_64" || { echo "Ожидался x86_64 host, получен $arch" >&2; exit 1; }
+          test -r /dev/kvm || { echo "/dev/kvm недоступен на чтение" >&2; exit 1; }
+          test -w /dev/kvm || { echo "/dev/kvm недоступен на запись" >&2; exit 1; }
+          android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$android_sdk_root"
+          test -d "$android_sdk_root/system-images/android-35/google_apis/x86_64" || {
+            echo "Не установлен system-images;android-35;google_apis;x86_64" >&2
+            exit 1
+          }
+          emulator_bin="$android_sdk_root/emulator/emulator"
+          test -x "$emulator_bin" || { echo "emulator не установлен: $emulator_bin" >&2; exit 1; }
+          missing="$(ldd "$emulator_bin" 2>/dev/null | awk '/not found/ {print $1}' | sort -u || true)"
+          if [ -n "$missing" ]; then
+            echo "Эмулятору не хватает библиотек:" >&2
+            echo "$missing" >&2
+            exit 1
+          fi
+          # Диагностика ускорения печатается в лог; падать здесь не нужно —
+          # отсутствие KVM уже отловлено проверками выше.
+          "$emulator_bin" -accel-check || true
+
       - name: Компиляция instrumentation tests
         run: ./gradlew --no-daemon assembleDebugAndroidTest
 
@@ -157,6 +206,12 @@ jobs:
             --name deep-agent-api-35 \
             --package "system-images;android-35;google_apis;x86_64" \
             --device "pixel_2"
+          # По умолчанию AVD просит под userdata около 7.4 ГБ и падает на диске
+          # runner'а; уменьшаем раздел данных до 2 ГБ.
+          avd_config="$ANDROID_AVD_HOME/deep-agent-api-35.avd/config.ini"
+          test -f "$avd_config"
+          sed -i '/^disk\.dataPartition\.size=/d' "$avd_config"
+          printf 'disk.dataPartition.size=2G\n' >> "$avd_config"
           android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           test -n "$android_sdk_root"
           emulator_bin="$android_sdk_root/emulator/emulator"
